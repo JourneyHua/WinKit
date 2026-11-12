@@ -1,0 +1,316 @@
+using System.IO;
+using System.Text.Json;
+using System.Text.Json.Nodes;
+using System.Text.Json.Serialization;
+using Microsoft.Win32;
+
+namespace WinKit.Core;
+
+public sealed class SnapshotValue
+{
+    public string Name { get; set; } = "";
+    public string Kind { get; set; } = "String";
+    public JsonNode? Data { get; set; }
+}
+
+public sealed class SnapshotKey
+{
+    public string Hive { get; set; } = "HKCU";
+    public string SubKey { get; set; } = "";
+    public bool Existed { get; set; }
+    public List<SnapshotValue> Values { get; set; } = new();
+    public List<SnapshotKey> Children { get; set; } = new();
+}
+
+public sealed class OperationSnapshot
+{
+    public string Id { get; set; } = Guid.NewGuid().ToString("N");
+    public DateTime TimestampUtc { get; set; } = DateTime.UtcNow;
+    public string Title { get; set; } = "";
+    public List<SnapshotKey> Keys { get; set; } = new();
+    public int KeyCount { get; set; }
+
+    [JsonIgnore]
+    public string LocalTimeText => TimestampUtc.ToLocalTime().ToString("MM-dd HH:mm:ss");
+}
+
+public static class SnapshotEngine
+{
+    private const int MaxNodes = 20000;
+
+    public static SnapshotKey Capture(HiveKind hive, string subKey, int budget = MaxNodes)
+    {
+        var node = new SnapshotKey
+        {
+            Hive = hive == HiveKind.CurrentUser ? "HKCU" : "HKLM",
+            SubKey = subKey
+        };
+
+        using var key = Reg.Open(new RegPath(hive, subKey), false);
+        node.Existed = key is not null;
+        if (key is null) return node;
+
+        foreach (var valueName in key.GetValueNames())
+        {
+            var kind = key.GetValueKind(valueName);
+            var raw = key.GetValue(valueName, null, RegistryValueOptions.DoNotExpandEnvironmentNames);
+            node.Values.Add(new SnapshotValue
+            {
+                Name = valueName,
+                Kind = kind.ToString(),
+                Data = ToJson(kind, raw)
+            });
+        }
+
+        if (budget <= 0) return node;
+
+        foreach (var child in key.GetSubKeyNames())
+        {
+            node.Children.Add(Capture(hive, subKey + "\\" + child, budget - 1));
+            budget--;
+            if (budget <= 0) break;
+        }
+
+        return node;
+    }
+
+    private static JsonNode? ToJson(RegistryValueKind kind, object? raw)
+    {
+        switch (kind)
+        {
+            case RegistryValueKind.String:
+            case RegistryValueKind.ExpandString:
+                return JsonValue.Create(raw?.ToString() ?? "");
+            case RegistryValueKind.DWord:
+                return JsonValue.Create(Convert.ToInt32(raw ?? 0));
+            case RegistryValueKind.QWord:
+                return JsonValue.Create(Convert.ToInt64(raw ?? 0L));
+            case RegistryValueKind.MultiString:
+                return raw is string[] arr
+                    ? new JsonArray(arr.Select(v => (JsonNode?)JsonValue.Create(v)).ToArray())
+                    : new JsonArray();
+            case RegistryValueKind.Binary:
+                return JsonValue.Create(raw is byte[] bytes ? Convert.ToBase64String(bytes) : "");
+            case RegistryValueKind.None:
+                return null;
+            default:
+                return JsonValue.Create(raw?.ToString() ?? "");
+        }
+    }
+
+    public static void Restore(SnapshotKey node)
+    {
+        var hive = node.Hive == "HKCU" ? HiveKind.CurrentUser : HiveKind.LocalMachine;
+        var path = new RegPath(hive, node.SubKey);
+
+        if (!node.Existed)
+        {
+            Reg.DeleteTree(path);
+            return;
+        }
+
+        Reg.DeleteTree(path);
+        using var key = Reg.Create(path);
+        if (key is null) return;
+
+        foreach (var value in node.Values)
+        {
+            try
+            {
+                var kind = Enum.TryParse<RegistryValueKind>(value.Kind, out var parsed)
+                    ? parsed
+                    : RegistryValueKind.String;
+                key.SetValue(value.Name, FromJson(kind, value.Data), kind);
+            }
+            catch (Exception)
+            {
+                // 单个值写回失败不应阻断整体还原
+            }
+        }
+
+        foreach (var child in node.Children)
+            Restore(child);
+    }
+
+    private static object FromJson(RegistryValueKind kind, JsonNode? node)
+    {
+        if (node is null) return Array.Empty<byte>();
+
+        switch (kind)
+        {
+            case RegistryValueKind.DWord:
+                return node.GetValue<int>();
+            case RegistryValueKind.QWord:
+                return node.GetValue<long>();
+            case RegistryValueKind.MultiString:
+                return node is JsonArray array
+                    ? array.Select(v => v?.GetValue<string>() ?? "").ToArray()
+                    : Array.Empty<string>();
+            case RegistryValueKind.Binary:
+                var b64 = node.GetValue<string>();
+                return string.IsNullOrEmpty(b64) ? Array.Empty<byte>() : Convert.FromBase64String(b64);
+            case RegistryValueKind.None:
+                return Array.Empty<byte>();
+            default:
+                return node.GetValue<string>();
+        }
+    }
+
+    public static int CountKeys(IEnumerable<SnapshotKey> keys)
+        => keys.Sum(k => 1 + CountKeys(k.Children));
+}
+
+public sealed class ChangeJournal
+{
+    private static readonly JsonSerializerOptions JsonOptions = new()
+    {
+        WriteIndented = false,
+        DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull
+    };
+
+    private readonly List<OperationSnapshot> _session = new();
+
+    public ChangeJournal()
+    {
+        Directory.CreateDirectory(BackupDirectory);
+    }
+
+    public static string BackupDirectory { get; } = Path.Combine(
+        Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+        "WinKit", "Backups");
+
+    public event Action<string>? Changed;
+
+    public bool CanUndo => _session.Count > 0;
+
+    public int SessionCount => _session.Count;
+
+    public string? LastTitle => _session.Count > 0 ? _session[^1].Title : null;
+
+    public OperationSnapshot Record(string title, IEnumerable<(HiveKind Hive, string SubKey)> tracked, Action action)
+    {
+        var snapshot = new OperationSnapshot { Title = title };
+        foreach (var (hive, subKey) in tracked.Distinct())
+            snapshot.Keys.Add(SnapshotEngine.Capture(hive, subKey));
+
+        snapshot.KeyCount = SnapshotEngine.CountKeys(snapshot.Keys);
+
+        try
+        {
+            action();
+        }
+        catch
+        {
+            // 操作失败立即自动回滚，避免留下半截状态
+            foreach (var key in snapshot.Keys)
+                SnapshotEngine.Restore(key);
+            throw;
+        }
+
+        _session.Add(snapshot);
+        Save(snapshot);
+        Changed?.Invoke($"已执行：{title}");
+        return snapshot;
+    }
+
+    public string? UndoLast()
+    {
+        if (_session.Count == 0) return null;
+        var snapshot = _session[^1];
+        _session.RemoveAt(_session.Count - 1);
+        foreach (var key in snapshot.Keys)
+            SnapshotEngine.Restore(key);
+        TryDeleteFile(snapshot);
+        Changed?.Invoke($"已撤销：{snapshot.Title}");
+        return snapshot.Title;
+    }
+
+    public string? RollbackSession()
+    {
+        if (_session.Count == 0) return null;
+        for (var i = _session.Count - 1; i >= 0; i--)
+        {
+            foreach (var key in _session[i].Keys)
+                SnapshotEngine.Restore(key);
+            TryDeleteFile(_session[i]);
+        }
+
+        var count = _session.Count;
+        _session.Clear();
+        Changed?.Invoke($"已回滚本次会话的 {count} 次改动");
+        return $"已回滚 {count} 次改动";
+    }
+
+    private void Save(OperationSnapshot snapshot)
+    {
+        try
+        {
+            var safeTitle = string.Concat(snapshot.Title.Select(c => Path.GetInvalidFileNameChars().Contains(c) ? '_' : c));
+            if (safeTitle.Length > 40) safeTitle = safeTitle[..40];
+            var name = $"{snapshot.TimestampUtc.ToLocalTime():yyyyMMdd_HHmmss_fff}_{safeTitle}.json";
+            var path = Path.Combine(BackupDirectory, name);
+            File.WriteAllText(path, JsonSerializer.Serialize(snapshot, JsonOptions));
+            Prune();
+        }
+        catch (Exception)
+        {
+            // 备份失败不应阻断用户操作，但会在状态栏提示
+        }
+    }
+
+    private void Prune()
+    {
+        try
+        {
+            var files = new DirectoryInfo(BackupDirectory)
+                .GetFiles("*.json")
+                .OrderByDescending(f => f.CreationTimeUtc)
+                .Skip(50)
+                .ToList();
+
+            foreach (var file in files) file.Delete();
+        }
+        catch (Exception)
+        {
+            // 忽略清理失败
+        }
+    }
+
+    private static void TryDeleteFile(OperationSnapshot snapshot)
+    {
+        try
+        {
+            foreach (var file in new DirectoryInfo(BackupDirectory).GetFiles("*" + snapshot.Id + "*.json"))
+                file.Delete();
+        }
+        catch (Exception)
+        {
+            // 忽略
+        }
+    }
+
+    public IReadOnlyList<FileInfo> ListBackups()
+    {
+        try
+        {
+            return new DirectoryInfo(BackupDirectory)
+                .GetFiles("*.json")
+                .OrderByDescending(f => f.CreationTimeUtc)
+                .ToList();
+        }
+        catch (Exception)
+        {
+            return Array.Empty<FileInfo>();
+        }
+    }
+
+    public void RestoreBackup(string filePath)
+    {
+        var json = File.ReadAllText(filePath);
+        var snapshot = JsonSerializer.Deserialize<OperationSnapshot>(json, JsonOptions)
+                       ?? throw new InvalidOperationException("备份文件无法解析");
+        foreach (var key in snapshot.Keys)
+            SnapshotEngine.Restore(key);
+        Changed?.Invoke($"已从备份还原：{snapshot.Title}");
+    }
+}

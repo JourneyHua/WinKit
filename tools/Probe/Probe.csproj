@@ -1,0 +1,30 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net10.0-windows</TargetFramework>
+    <UseWPF>true</UseWPF>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <LangVersion>latest</LangVersion>
+    <AssemblyName>WinKitProbe</AssemblyName>
+    <RootNamespace>WinKitProbe</RootNamespace>
+    <EnableDefaultCompileItems>false</EnableDefaultCompileItems>
+    <InvariantGlobalization>false</InvariantGlobalization>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <Compile Include="Program.cs" />
+    <Compile Include="..\..\src\WinKit\Core\Registry.cs" Link="Core\Registry.cs" />
+    <Compile Include="..\..\src\WinKit\Core\Snapshots.cs" Link="Core\Snapshots.cs" />
+    <Compile Include="..\..\src\WinKit\Core\Native.cs" Link="Core\Native.cs" />
+    <Compile Include="..\..\src\WinKit\Core\Mvvm.cs" Link="Core\Mvvm.cs" />
+    <Compile Include="..\..\src\WinKit\Services\MenuModels.cs" Link="Services\MenuModels.cs" />
+    <Compile Include="..\..\src\WinKit\Services\AppxManifest.cs" Link="Services\AppxManifest.cs" />
+    <Compile Include="..\..\src\WinKit\Services\ContextMenuService.cs" Link="Services\ContextMenuService.cs" />
+    <Compile Include="..\..\src\WinKit\Services\NewMenuService.cs" Link="Services\NewMenuService.cs" />
+    <Compile Include="..\..\src\WinKit\Services\ThisPcService.cs" Link="Services\ThisPcService.cs" />
+    <Compile Include="..\..\src\WinKit\Services\NavPaneService.cs" Link="Services\NavPaneService.cs" />
+  </ItemGroup>
+
+</Project>

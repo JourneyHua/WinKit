@@ -1,0 +1,61 @@
+name: build-and-release
+
+on:
+  push:
+    branches: [master]
+    tags: ['v*']
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: windows-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup .NET 10
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.x'
+
+      - name: Restore & build
+        run: dotnet build WinKit.slnx -c Release --nologo
+
+      - name: Publish (framework-dependent)
+        run: dotnet publish src/WinKit/WinKit.csproj -c Release -o publish/framework-dependent --nologo
+
+      - name: Publish (self-contained)
+        run: dotnet publish src/WinKit/WinKit.csproj -c Release -r win-x64 --self-contained true -o publish/self-contained --nologo
+
+      - name: Package
+        shell: pwsh
+        run: |
+          Compress-Archive -Path publish/framework-dependent/* -DestinationPath WinKit-${{ github.ref_name }}-framework-dependent.zip -Force
+          Compress-Archive -Path publish/self-contained/*     -DestinationPath WinKit-${{ github.ref_name }}-self-contained.zip -Force
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: WinKit-${{ github.ref_name }}
+          path: |
+            WinKit-${{ github.ref_name }}-framework-dependent.zip
+            WinKit-${{ github.ref_name }}-self-contained.zip
+
+      - name: Create GitHub Release
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          generate_release_notes: true
+          body: |
+            ### 下载哪个
+
+            - **framework-dependent**：约 330 KB，需要先装 [.NET 10 Desktop Runtime](https://dotnet.microsoft.com/download/dotnet/10.0)
+            - **self-contained**：约 160 MB，解压即用，不需要装任何运行时
+
+            双击 `WinKit.exe`，接受 UAC 提权即可。所有改动都会先存快照，出错可「撤销上一步」。
+          files: |
+            WinKit-${{ github.ref_name }}-framework-dependent.zip
+            WinKit-${{ github.ref_name }}-self-contained.zip

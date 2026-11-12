@@ -1,0 +1,15 @@
+bin/
+obj/
+dist/
+dist-standalone/
+preview/
+smoke/
+smoke-release/
+*.user
+*.suo
+.vs/
+probe-report.txt
+_v/
+manifest-probe.txt
+*.user
+dist-next/
