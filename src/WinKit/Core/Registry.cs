@@ -118,6 +118,8 @@ public static class Reg
         key?.SetValue(name, value, RegistryValueKind.DWord);
     }
 
+    public static void SetDword(RegPath path, string name, int value) => SetInt(path, name, value);
+
     public static void DeleteValue(RegPath path, string name)
     {
         using var key = Open(path, true);
@@ -128,6 +130,12 @@ public static class Reg
     {
         using var key = Open(path, false);
         return key?.GetSubKeyNames() ?? Array.Empty<string>();
+    }
+
+    public static IReadOnlyList<string> ValueNames(RegPath path)
+    {
+        using var key = Open(path, false);
+        return key?.GetValueNames() ?? Array.Empty<string>();
     }
 
     public static bool HasValue(RegPath path, string name)

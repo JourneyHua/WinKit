@@ -63,7 +63,7 @@ public sealed class MainViewModel : ObservableObject
             {
                 Key = "apps",
                 Title = "应用管理",
-                Subtitle = "卸载桌面与商店应用、winget 检测更新、常用运行库体检与一键安装",
+                Subtitle = "卸载桌面与商店应用、winget 检测更新、常用运行库体检与常用系统工具库",
                 AccentBrush = new System.Windows.Media.SolidColorBrush(System.Windows.Media.Color.FromRgb(0x18, 0x64, 0xAB)),
                 Factory = () => new AppManagerViewModel(_journal, SetStatus, SetBusy)
             },
@@ -74,6 +74,30 @@ public sealed class MainViewModel : ObservableObject
                 Subtitle = "管理本机第三方驱动包、自动备份与卸载、检测安装官方与本地驱动更新",
                 AccentBrush = new System.Windows.Media.SolidColorBrush(System.Windows.Media.Color.FromRgb(0x0B, 0x72, 0x85)),
                 Factory = () => new DriverManagerViewModel(SetStatus, SetBusy)
+            },
+            new()
+            {
+                Key = "startup",
+                Title = "启动与服务",
+                Subtitle = "管理开机启动项（原生无损启用/禁用）、第三方后台服务与系统计划任务",
+                AccentBrush = new System.Windows.Media.SolidColorBrush(System.Windows.Media.Color.FromRgb(0xD9, 0x48, 0x0F)),
+                Factory = () => new StartupServiceViewModel(_journal, SetStatus, SetBusy)
+            },
+            new()
+            {
+                Key = "clean",
+                Title = "系统清理",
+                Subtitle = "安全清理临时文件、系统更新缓存、崩溃转储、缩略图缓存及扫描大文件",
+                AccentBrush = new System.Windows.Media.SolidColorBrush(System.Windows.Media.Color.FromRgb(0x2B, 0x8A, 0x3E)),
+                Factory = () => new SystemCleanViewModel(SetStatus, SetBusy)
+            },
+            new()
+            {
+                Key = "tweaks",
+                Title = "系统调优与百宝箱",
+                Subtitle = "Win11 体验与隐私开关、TCP/UDP 端口占用查询与网络修复、16 项深层管理面板直达",
+                AccentBrush = new System.Windows.Media.SolidColorBrush(System.Windows.Media.Color.FromRgb(0xAE, 0x3E, 0xC9)),
+                Factory = () => new SystemTweakViewModel(_journal, SetStatus, SetBusy)
             },
             new()
             {

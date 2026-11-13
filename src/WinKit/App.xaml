@@ -37,6 +37,15 @@
             <DataTemplate DataType="{x:Type vm:DriverManagerViewModel}">
                 <views:DriverManagerView />
             </DataTemplate>
+            <DataTemplate DataType="{x:Type vm:StartupServiceViewModel}">
+                <views:StartupServiceView />
+            </DataTemplate>
+            <DataTemplate DataType="{x:Type vm:SystemCleanViewModel}">
+                <views:SystemCleanView />
+            </DataTemplate>
+            <DataTemplate DataType="{x:Type vm:SystemTweakViewModel}">
+                <views:SystemTweakView />
+            </DataTemplate>
         </ResourceDictionary>
     </Application.Resources>
 </Application>

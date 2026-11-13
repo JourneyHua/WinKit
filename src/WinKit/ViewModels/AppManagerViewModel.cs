@@ -12,21 +12,26 @@ public sealed class AppManagerViewModel : ObservableObject, IModule
 {
     private readonly AppManagerService _service;
     private readonly RuntimeCheckService _runtimeService = new();
+    private readonly SystemToolCatalogService _toolService = new();
     private readonly UninstallService _uninstall = new();
     private readonly Action<string> _status;
     private readonly Action<bool>? _setBusy;
 
     private List<InstalledAppItem> _all = new();
     private List<RuntimeComponentItem> _allRuntimes = new();
+    private List<SystemToolItem> _allTools = new();
     private string _searchText = "";
     private string _runtimeSearchText = "";
+    private string _toolSearchText = "";
     private string _sourceFilter = "all"; // all | desktop | store
+    private string _subView = "apps"; // apps | runtimes | tools
     private bool _onlyUpdatable;
     private bool _onlyMissingRuntimes;
-    private bool _showRuntimes;
+    private bool _onlyUninstalledTools;
     private bool _isBusy;
     private string _summaryText = "";
     private string _runtimeSummaryText = "";
+    private string _toolSummaryText = "";
     private string _hintText = "汇总本机已安装的传统桌面软件与 Microsoft Store / MSIX 打包应用。点「检查更新」将通过系统内置 winget 对比最新版本；卸载后自动扫描注册表残留（支持一键快照清理）与残留目录。";
 
     private DispatcherTimer? _uninstallTimer;
@@ -41,6 +46,7 @@ public sealed class AppManagerViewModel : ObservableObject, IModule
 
         Apps = new ObservableCollection<InstalledAppItem>();
         Runtimes = new ObservableCollection<RuntimeComponentItem>();
+        Tools = new ObservableCollection<SystemToolItem>();
 
         RefreshCommand = new RelayCommand(ManualRefresh);
         CheckUpdatesCommand = new RelayCommand(() => _ = CheckUpdatesAsync());
@@ -57,15 +63,24 @@ public sealed class AppManagerViewModel : ObservableObject, IModule
         FilterDesktopCommand = new RelayCommand(() => SourceFilter = "desktop");
         FilterStoreCommand = new RelayCommand(() => SourceFilter = "store");
 
-        ShowAppsViewCommand = new RelayCommand(() => ShowRuntimes = false);
-        ShowRuntimesViewCommand = new RelayCommand(() => ShowRuntimes = true);
+        ShowAppsViewCommand = new RelayCommand(() => SubView = "apps");
+        ShowRuntimesViewCommand = new RelayCommand(() => SubView = "runtimes");
+        ShowToolsViewCommand = new RelayCommand(() => SubView = "tools");
         CheckRuntimesCommand = new RelayCommand(RefreshRuntimes);
         InstallRuntimeCommand = new RelayCommand(p => _ = InstallRuntimeAsync(p as RuntimeComponentItem));
         InstallAllMissingRuntimesCommand = new RelayCommand(() => _ = InstallAllMissingRuntimesAsync());
+
+        RefreshToolsCommand = new RelayCommand(RefreshTools);
+        LaunchToolCommand = new RelayCommand(p => LaunchTool(p as SystemToolItem));
+        InstallToolCommand = new RelayCommand(p => _ = InstallToolAsync(p as SystemToolItem));
+        InstallSelectedToolsCommand = new RelayCommand(() => _ = InstallSelectedToolsAsync());
+        SelectUninstalledToolsCommand = new RelayCommand(SelectUninstalledTools);
+        OpenToolLocationCommand = new RelayCommand(p => OpenToolLocation(p as SystemToolItem));
     }
 
     public ObservableCollection<InstalledAppItem> Apps { get; }
     public ObservableCollection<RuntimeComponentItem> Runtimes { get; }
+    public ObservableCollection<SystemToolItem> Tools { get; }
 
     public RelayCommand RefreshCommand { get; }
     public RelayCommand CheckUpdatesCommand { get; }
@@ -84,25 +99,73 @@ public sealed class AppManagerViewModel : ObservableObject, IModule
 
     public RelayCommand ShowAppsViewCommand { get; }
     public RelayCommand ShowRuntimesViewCommand { get; }
+    public RelayCommand ShowToolsViewCommand { get; }
     public RelayCommand CheckRuntimesCommand { get; }
     public RelayCommand InstallRuntimeCommand { get; }
     public RelayCommand InstallAllMissingRuntimesCommand { get; }
 
-    public bool ShowRuntimes
+    public RelayCommand RefreshToolsCommand { get; }
+    public RelayCommand LaunchToolCommand { get; }
+    public RelayCommand InstallToolCommand { get; }
+    public RelayCommand InstallSelectedToolsCommand { get; }
+    public RelayCommand SelectUninstalledToolsCommand { get; }
+    public RelayCommand OpenToolLocationCommand { get; }
+
+    public string SubView
     {
-        get => _showRuntimes;
+        get => _subView;
         set
         {
-            if (!Set(ref _showRuntimes, value)) return;
+            if (!Set(ref _subView, value)) return;
             OnPropertyChanged(nameof(ShowInstalledApps));
-            if (value && _allRuntimes.Count == 0)
-            {
+            OnPropertyChanged(nameof(ShowRuntimes));
+            OnPropertyChanged(nameof(ShowTools));
+            if (value == "runtimes" && _allRuntimes.Count == 0)
                 RefreshRuntimes();
-            }
+            if (value == "tools" && _allTools.Count == 0)
+                RefreshTools();
         }
     }
 
-    public bool ShowInstalledApps => !_showRuntimes;
+    public bool ShowInstalledApps => _subView == "apps";
+    public bool ShowRuntimes
+    {
+        get => _subView == "runtimes";
+        set => SubView = value ? "runtimes" : "apps";
+    }
+    public bool ShowTools
+    {
+        get => _subView == "tools";
+        set => SubView = value ? "tools" : "apps";
+    }
+
+    public string ToolSearchText
+    {
+        get => _toolSearchText;
+        set
+        {
+            if (Set(ref _toolSearchText, value)) ApplyToolFilter();
+        }
+    }
+
+    public bool OnlyUninstalledTools
+    {
+        get => _onlyUninstalledTools;
+        set
+        {
+            if (Set(ref _onlyUninstalledTools, value)) ApplyToolFilter();
+        }
+    }
+
+    public string ToolSummaryText
+    {
+        get => _toolSummaryText;
+        private set => Set(ref _toolSummaryText, value);
+    }
+
+    public int SelectedToolsCount => _allTools.Count(t => t.IsSelected);
+    public bool HasSelectedTools => SelectedToolsCount > 0;
+    public string InstallSelectedToolsText => $"一键安装勾选项（{SelectedToolsCount}）";
 
     public string RuntimeSearchText
     {
@@ -242,7 +305,11 @@ public sealed class AppManagerViewModel : ObservableObject, IModule
                 _allRuntimes = _runtimeService.CheckAll();
                 ApplyRuntimeFilter();
             }
-            _status($"已加载 {_all.Count} 个应用，检测到 {_allRuntimes.Count(r => r.IsInstalled)}/{_allRuntimes.Count} 项运行库已就绪");
+            if (_allTools.Count == 0)
+            {
+                LoadToolsInternal();
+            }
+            _status($"已加载 {_all.Count} 个应用 · 运行库就绪 {_allRuntimes.Count(r => r.IsInstalled)}/{_allRuntimes.Count} · 常用工具已装 {_allTools.Count(t => t.IsInstalled)}/{_allTools.Count}");
         }
         catch (Exception ex)
         {
@@ -746,6 +813,169 @@ public sealed class AppManagerViewModel : ObservableObject, IModule
                 MessageBox.Show(
                     $"已成功安装 {okCount} 项运行库，以下 {failed.Count} 项未完成：\n\n• " + string.Join("\n• ", failed),
                     "运行库批量安装结果", MessageBoxButton.OK, MessageBoxImage.Warning);
+            }
+        }
+        finally
+        {
+            IsBusy = false;
+        }
+    }
+
+    public void RefreshTools()
+    {
+        try
+        {
+            LoadToolsInternal();
+            var installed = _allTools.Count(t => t.IsInstalled);
+            _status($"系统工具库检测完成：收录 {_allTools.Count} 款，已安装 {installed} 款，未安装 {_allTools.Count - installed} 款");
+        }
+        catch (Exception ex)
+        {
+            _status($"检测系统工具库失败：{ex.Message}");
+        }
+    }
+
+    private void LoadToolsInternal()
+    {
+        _allTools = _toolService.LoadCatalog();
+        foreach (var tool in _allTools)
+        {
+            tool.SelectionChanged = OnToolSelectionChanged;
+        }
+        ApplyToolFilter();
+    }
+
+    private void OnToolSelectionChanged()
+    {
+        OnPropertyChanged(nameof(SelectedToolsCount));
+        OnPropertyChanged(nameof(HasSelectedTools));
+        OnPropertyChanged(nameof(InstallSelectedToolsText));
+    }
+
+    private void ApplyToolFilter()
+    {
+        Tools.Clear();
+        var kw = _toolSearchText.Trim().ToLowerInvariant();
+
+        var query = _allTools
+            .Where(t => !_onlyUninstalledTools || !t.IsInstalled)
+            .Where(t => kw.Length == 0 || t.SearchBlob.Contains(kw));
+
+        foreach (var item in query) Tools.Add(item);
+
+        var installedCount = _allTools.Count(t => t.IsInstalled);
+        ToolSummaryText = $"共收录 {_allTools.Count} 款纯净系统与装机工具 · 已安装 {installedCount} 款 · 未安装 {_allTools.Count - installedCount} 款 · 当前显示 {Tools.Count} 款";
+        OnToolSelectionChanged();
+    }
+
+    private void SelectUninstalledTools()
+    {
+        var uninstalled = Tools.Where(t => !t.IsInstalled).ToList();
+        var allSelected = uninstalled.Count > 0 && uninstalled.All(t => t.IsSelected);
+        foreach (var t in uninstalled)
+            t.IsSelected = !allSelected;
+        OnToolSelectionChanged();
+    }
+
+    private void LaunchTool(SystemToolItem? tool)
+    {
+        if (tool is null) return;
+        var (ok, msg) = _toolService.LaunchTool(tool);
+        _status(msg);
+        if (!ok)
+        {
+            MessageBox.Show(msg, "WinKit", MessageBoxButton.OK, MessageBoxImage.Warning);
+        }
+    }
+
+    private void OpenToolLocation(SystemToolItem? tool)
+    {
+        if (tool is null || string.IsNullOrWhiteSpace(tool.InstallLocation) || !Directory.Exists(tool.InstallLocation))
+            return;
+
+        try
+        {
+            Process.Start(new ProcessStartInfo
+            {
+                FileName = tool.InstallLocation,
+                UseShellExecute = true
+            });
+        }
+        catch (Exception ex)
+        {
+            MessageBox.Show($"打开目录失败：{ex.Message}", "WinKit", MessageBoxButton.OK, MessageBoxImage.Warning);
+        }
+    }
+
+    private async Task InstallToolAsync(SystemToolItem? tool)
+    {
+        if (tool is null || IsBusy) return;
+
+        var actionName = tool.IsInstalled ? "更新 / 重装" : "安装";
+        var confirm = MessageBox.Show(
+            $"即将通过系统 winget 官方源{actionName}「{tool.Name}」：\n\n" +
+            $"Winget ID：{tool.WingetId}\n" +
+            $"分类：{tool.Category}\n" +
+            $"简介：{tool.Description}\n\n" +
+            "确定继续吗？",
+            $"{actionName}系统工具", MessageBoxButton.OKCancel, MessageBoxImage.Information);
+
+        if (confirm != MessageBoxResult.OK) return;
+
+        IsBusy = true;
+        try
+        {
+            var (ok, msg) = await _toolService.InstallOrUpdateToolAsync(tool, s => _status(s));
+            _status(msg);
+            RefreshTools();
+            if (!ok)
+            {
+                MessageBox.Show(msg, "工具安装结果", MessageBoxButton.OK, MessageBoxImage.Warning);
+            }
+        }
+        finally
+        {
+            IsBusy = false;
+        }
+    }
+
+    private async Task InstallSelectedToolsAsync()
+    {
+        var targets = _allTools.Where(t => t.IsSelected).ToList();
+        if (targets.Count == 0 || IsBusy) return;
+
+        var preview = string.Join("\n• ", targets.Take(10).Select(t => $"{t.Name} ({t.WingetId})"));
+        if (targets.Count > 10) preview += $"\n…等共 {targets.Count} 款工具";
+
+        var confirm = MessageBox.Show(
+            $"将依次通过系统 winget 官方源安装/更新以下 {targets.Count} 款工具：\n\n• {preview}\n\n确定开始批量安装吗？",
+            "批量安装系统工具", MessageBoxButton.OKCancel, MessageBoxImage.Information);
+
+        if (confirm != MessageBoxResult.OK) return;
+
+        IsBusy = true;
+        var okCount = 0;
+        var failed = new List<string>();
+
+        try
+        {
+            for (var i = 0; i < targets.Count; i++)
+            {
+                var item = targets[i];
+                var prefix = $"[{i + 1}/{targets.Count}] ";
+                var (ok, msg) = await _toolService.InstallOrUpdateToolAsync(item, s => _status(prefix + s));
+                if (ok) okCount++;
+                else failed.Add($"{item.Name}：{msg}");
+            }
+
+            RefreshTools();
+            _status($"批量安装系统工具完成：成功 {okCount} 款，失败 {failed.Count} 款");
+
+            if (failed.Count > 0)
+            {
+                MessageBox.Show(
+                    $"已成功安装 {okCount} 款工具，以下 {failed.Count} 款未完成：\n\n• " + string.Join("\n• ", failed),
+                    "批量安装结果", MessageBoxButton.OK, MessageBoxImage.Warning);
             }
         }
         finally

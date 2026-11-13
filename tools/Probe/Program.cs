@@ -311,6 +311,24 @@ internal static class Program
         Check("常用运行库分类覆盖四大类",
             runtimes.Select(r => r.Category).Distinct().Count() == 4);
 
+        // 7. 常用系统工具库、清理与端口解析自测
+        var toolCatalog = new SystemToolCatalogService().LoadCatalog();
+        Check("常用系统工具库清单完整（22 款，5 大分类）",
+            toolCatalog.Count == 22 && toolCatalog.Select(t => t.Category).Distinct().Count() == 5);
+
+        var cleanTargets = new SystemCleanService().BuildTargets();
+        Check("系统清理目标清单完整（10 类）", cleanTargets.Count == 10);
+
+        var sampleNetstat = """
+            活动连接
+              协议  本地地址          外部地址        状态           PID
+              TCP    0.0.0.0:135            0.0.0.0:0              LISTENING       1024
+              UDP    127.0.0.1:5353         *:*                                    2048
+            """;
+        var parsedPorts = SystemTweakService.ParseNetstatOutput(sampleNetstat);
+        Check("netstat 端口占用表解析成功",
+            parsedPorts.Count == 2 && parsedPorts[0].LocalPort == 135 && parsedPorts[1].LocalPort == 5353);
+
         // 清理
         Reg.DeleteTree(testPath);
         Reg.DeleteTree(RegPath.Hkcu(blockedKey));

@@ -1,0 +1,234 @@
+<UserControl x:Class="WinKit.Views.SystemCleanView"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             FontFamily="Microsoft YaHei UI, Segoe UI">
+
+    <UserControl.Resources>
+        <Style x:Key="CellText" TargetType="TextBlock">
+            <Setter Property="VerticalAlignment" Value="Center" />
+            <Setter Property="TextTrimming" Value="CharacterEllipsis" />
+            <Setter Property="Foreground" Value="{StaticResource Brush.Text}" />
+            <Setter Property="FontSize" Value="13" />
+        </Style>
+        <Style x:Key="CellMuted" TargetType="TextBlock" BasedOn="{StaticResource CellText}">
+            <Setter Property="Foreground" Value="{StaticResource Brush.TextMuted}" />
+            <Setter Property="FontSize" Value="12" />
+        </Style>
+    </UserControl.Resources>
+
+    <Grid Margin="24,16,24,16">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="*" />
+        </Grid.RowDefinitions>
+
+        <StackPanel Grid.Row="0" Orientation="Horizontal" Margin="0,0,0,10">
+            <ToggleButton Content="垃圾与缓存清理" Style="{StaticResource Chip}" Margin="0,0,6,0"
+                          IsChecked="{Binding ShowJunkView, Mode=OneWay}"
+                          Command="{Binding ShowJunkViewCommand}" />
+            <ToggleButton Content="大文件扫描 (>100 MB)" Style="{StaticResource Chip}"
+                          IsChecked="{Binding ShowLargeView, Mode=OneWay}"
+                          Command="{Binding ShowLargeViewCommand}" />
+        </StackPanel>
+
+        <!-- 子视图 1：垃圾与缓存清理 -->
+        <Grid Grid.Row="1" Visibility="{Binding ShowJunkView, Converter={StaticResource BoolToVis}}">
+            <Grid.RowDefinitions>
+                <RowDefinition Height="Auto" />
+                <RowDefinition Height="*" />
+            </Grid.RowDefinitions>
+
+            <Border Grid.Row="0" Style="{StaticResource Card}" Margin="0,0,0,10" Padding="16,12">
+                <Grid>
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="*" />
+                        <ColumnDefinition Width="Auto" />
+                    </Grid.ColumnDefinitions>
+                    <StackPanel Grid.Column="0" VerticalAlignment="Center">
+                        <TextBlock Text="{Binding JunkSummaryText}" Style="{StaticResource H2}" />
+                        <TextBlock Style="{StaticResource Muted}" Margin="0,4,0,0"
+                                   Text="默认仅勾选 100% 安全的系统临时文件、更新下载缓存与崩溃转储；回收站、历史快捷方式与开发包缓存默认不勾选，按需选择。" />
+                    </StackPanel>
+                    <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Center" Margin="12,0,0,0">
+                        <Button Content="{Binding CleanButtonText}" Style="{StaticResource BtnPrimary}" Margin="0,0,8,0"
+                                Command="{Binding CleanSelectedCommand}" />
+                        <Button Content="DISM 组件清理" Style="{StaticResource BtnBase}" Margin="0,0,8,0"
+                                ToolTip="调用系统 DISM /StartComponentCleanup 清理 WinSxS 旧组件备份"
+                                Command="{Binding RunDismCleanCommand}" />
+                        <Button Content="系统存储感知" Style="{StaticResource BtnBase}" Margin="0,0,8,0"
+                                Command="{Binding OpenStorageSenseCommand}" />
+                        <Button Content="重新扫描" Style="{StaticResource BtnBase}"
+                                Command="{Binding ScanJunkCommand}" />
+                    </StackPanel>
+                </Grid>
+            </Border>
+
+            <Border Grid.Row="1" Style="{StaticResource Card}" Padding="0">
+                <DataGrid ItemsSource="{Binding Targets}" Style="{StaticResource Grid}">
+                    <DataGrid.Columns>
+                        <DataGridTemplateColumn Header="选" Width="48" SortMemberPath="IsSelected">
+                            <DataGridTemplateColumn.CellTemplate>
+                                <DataTemplate>
+                                    <CheckBox IsChecked="{Binding IsSelected, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
+                                              HorizontalAlignment="Center" VerticalAlignment="Center" Cursor="Hand" />
+                                </DataTemplate>
+                            </DataGridTemplateColumn.CellTemplate>
+                        </DataGridTemplateColumn>
+                        <DataGridTemplateColumn Header="分类" Width="115" SortMemberPath="Category">
+                            <DataGridTemplateColumn.CellTemplate>
+                                <DataTemplate>
+                                    <TextBlock Text="{Binding Category}" Style="{StaticResource CellMuted}" />
+                                </DataTemplate>
+                            </DataGridTemplateColumn.CellTemplate>
+                        </DataGridTemplateColumn>
+                        <DataGridTemplateColumn Header="清理项目" Width="1.5*" SortMemberPath="Title">
+                            <DataGridTemplateColumn.CellTemplate>
+                                <DataTemplate>
+                                    <TextBlock Text="{Binding Title}" Style="{StaticResource CellText}"
+                                               ToolTip="{Binding PrimaryPath}" />
+                                </DataTemplate>
+                            </DataGridTemplateColumn.CellTemplate>
+                        </DataGridTemplateColumn>
+                        <DataGridTemplateColumn Header="说明" Width="2.1*" SortMemberPath="Description">
+                            <DataGridTemplateColumn.CellTemplate>
+                                <DataTemplate>
+                                    <TextBlock Text="{Binding Description}" Style="{StaticResource CellMuted}"
+                                               ToolTip="{Binding Description}" />
+                                </DataTemplate>
+                            </DataGridTemplateColumn.CellTemplate>
+                        </DataGridTemplateColumn>
+                        <DataGridTemplateColumn Header="文件数" Width="95" SortMemberPath="FileCount">
+                            <DataGridTemplateColumn.CellTemplate>
+                                <DataTemplate>
+                                    <TextBlock Text="{Binding CountText}" Style="{StaticResource CellMuted}" />
+                                </DataTemplate>
+                            </DataGridTemplateColumn.CellTemplate>
+                        </DataGridTemplateColumn>
+                        <DataGridTemplateColumn Header="可释放体积" Width="105" SortMemberPath="SizeBytes">
+                            <DataGridTemplateColumn.CellTemplate>
+                                <DataTemplate>
+                                    <TextBlock Text="{Binding SizeText}" Style="{StaticResource CellText}" />
+                                </DataTemplate>
+                            </DataGridTemplateColumn.CellTemplate>
+                        </DataGridTemplateColumn>
+                        <DataGridTemplateColumn Header="操作" Width="95" CanUserSort="False">
+                            <DataGridTemplateColumn.CellTemplate>
+                                <DataTemplate>
+                                    <Button Content="打开目录" Style="{StaticResource BtnSmall}"
+                                            Visibility="{Binding HasDirectory, Converter={StaticResource BoolToVis}}"
+                                            Command="{Binding DataContext.OpenTargetFolderCommand, RelativeSource={RelativeSource AncestorType=DataGrid}}"
+                                            CommandParameter="{Binding}" />
+                                </DataTemplate>
+                            </DataGridTemplateColumn.CellTemplate>
+                        </DataGridTemplateColumn>
+                    </DataGrid.Columns>
+                </DataGrid>
+            </Border>
+        </Grid>
+
+        <!-- 子视图 2：大文件扫描 -->
+        <Grid Grid.Row="1" Visibility="{Binding ShowLargeView, Converter={StaticResource BoolToVis}}">
+            <Grid.RowDefinitions>
+                <RowDefinition Height="Auto" />
+                <RowDefinition Height="*" />
+            </Grid.RowDefinitions>
+
+            <Grid Grid.Row="0" Margin="0,0,0,10">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="260" />
+                    <ColumnDefinition Width="*" />
+                    <ColumnDefinition Width="Auto" />
+                </Grid.ColumnDefinitions>
+
+                <ComboBox Grid.Column="0" ItemsSource="{Binding Scopes}"
+                          SelectedItem="{Binding SelectedScope, Mode=TwoWay}"
+                          DisplayMemberPath="Title" Height="34" VerticalContentAlignment="Center"
+                          Margin="0,0,10,0" />
+
+                <Grid Grid.Column="1" Margin="0,0,10,0">
+                    <TextBox Style="{StaticResource SearchBox}"
+                             Text="{Binding LargeSearchText, UpdateSourceTrigger=PropertyChanged}" />
+                    <TextBlock Text="按文件名、目录或扩展名 (.iso / .zip / .mp4 / .vhdx) 筛选…" Margin="12,0,0,0"
+                               VerticalAlignment="Center" IsHitTestVisible="False"
+                               FontSize="13" Foreground="{StaticResource Brush.TextMuted}"
+                               Visibility="{Binding LargeSearchText, Converter={StaticResource EmptyToVis}}" />
+                </Grid>
+
+                <Button Grid.Column="2" Content="开始扫描大文件" Style="{StaticResource BtnPrimary}"
+                        Command="{Binding ScanLargeFilesCommand}" />
+            </Grid>
+
+            <Border Grid.Row="1" Style="{StaticResource Card}" Padding="0">
+                <Grid>
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="Auto" />
+                        <RowDefinition Height="*" />
+                    </Grid.RowDefinitions>
+
+                    <TextBlock Grid.Row="0" Text="{Binding LargeSummaryText}" Style="{StaticResource Muted}"
+                               Margin="14,10,14,6" />
+
+                    <DataGrid Grid.Row="1" ItemsSource="{Binding LargeFiles}" Style="{StaticResource Grid}">
+                        <DataGrid.Columns>
+                            <DataGridTemplateColumn Header="文件名" Width="1.6*" SortMemberPath="FileName">
+                                <DataGridTemplateColumn.CellTemplate>
+                                    <DataTemplate>
+                                        <TextBlock Text="{Binding FileName}" Style="{StaticResource CellText}"
+                                                   ToolTip="{Binding FilePath}" />
+                                    </DataTemplate>
+                                </DataGridTemplateColumn.CellTemplate>
+                            </DataGridTemplateColumn>
+                            <DataGridTemplateColumn Header="类型" Width="80" SortMemberPath="Extension">
+                                <DataGridTemplateColumn.CellTemplate>
+                                    <DataTemplate>
+                                        <TextBlock Text="{Binding Extension}" Style="{StaticResource CellMuted}" />
+                                    </DataTemplate>
+                                </DataGridTemplateColumn.CellTemplate>
+                            </DataGridTemplateColumn>
+                            <DataGridTemplateColumn Header="大小" Width="96" SortMemberPath="SizeBytes">
+                                <DataGridTemplateColumn.CellTemplate>
+                                    <DataTemplate>
+                                        <TextBlock Text="{Binding SizeText}" Style="{StaticResource CellText}" />
+                                    </DataTemplate>
+                                </DataGridTemplateColumn.CellTemplate>
+                            </DataGridTemplateColumn>
+                            <DataGridTemplateColumn Header="修改时间" Width="130" SortMemberPath="LastModified">
+                                <DataGridTemplateColumn.CellTemplate>
+                                    <DataTemplate>
+                                        <TextBlock Text="{Binding LastModifiedText}" Style="{StaticResource CellMuted}" />
+                                    </DataTemplate>
+                                </DataGridTemplateColumn.CellTemplate>
+                            </DataGridTemplateColumn>
+                            <DataGridTemplateColumn Header="所在目录" Width="2*" SortMemberPath="DirectoryPath">
+                                <DataGridTemplateColumn.CellTemplate>
+                                    <DataTemplate>
+                                        <TextBlock Text="{Binding DirectoryPath}" Style="{StaticResource CellMuted}"
+                                                   ToolTip="{Binding DirectoryPath}" />
+                                    </DataTemplate>
+                                </DataGridTemplateColumn.CellTemplate>
+                            </DataGridTemplateColumn>
+                            <DataGridTemplateColumn Header="操作" Width="220" CanUserSort="False">
+                                <DataGridTemplateColumn.CellTemplate>
+                                    <DataTemplate>
+                                        <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
+                                            <Button Content="定位文件" Style="{StaticResource BtnSmall}" Margin="0,0,6,0"
+                                                    Command="{Binding DataContext.OpenLargeFileFolderCommand, RelativeSource={RelativeSource AncestorType=DataGrid}}"
+                                                    CommandParameter="{Binding}" />
+                                            <Button Content="复制路径" Style="{StaticResource BtnSmall}" Margin="0,0,6,0"
+                                                    Command="{Binding DataContext.CopyLargeFilePathCommand, RelativeSource={RelativeSource AncestorType=DataGrid}}"
+                                                    CommandParameter="{Binding}" />
+                                            <Button Content="移入回收站" Style="{StaticResource BtnSmall}"
+                                                    Foreground="{StaticResource Brush.Danger}"
+                                                    Command="{Binding DataContext.RecycleLargeFileCommand, RelativeSource={RelativeSource AncestorType=DataGrid}}"
+                                                    CommandParameter="{Binding}" />
+                                        </StackPanel>
+                                    </DataTemplate>
+                                </DataGridTemplateColumn.CellTemplate>
+                            </DataGridTemplateColumn>
+                        </DataGrid.Columns>
+                    </DataGrid>
+                </Grid>
+            </Border>
+        </Grid>
+    </Grid>
+</UserControl>

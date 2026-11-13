@@ -26,9 +26,12 @@
             <ToggleButton Content="已安装应用" Style="{StaticResource Chip}" Margin="0,0,6,0"
                           IsChecked="{Binding ShowInstalledApps, Mode=OneWay}"
                           Command="{Binding ShowAppsViewCommand}" />
-            <ToggleButton Content="常用运行库体检与安装" Style="{StaticResource Chip}"
+            <ToggleButton Content="常用运行库体检与安装" Style="{StaticResource Chip}" Margin="0,0,6,0"
                           IsChecked="{Binding ShowRuntimes, Mode=OneWay}"
                           Command="{Binding ShowRuntimesViewCommand}" />
+            <ToggleButton Content="常用系统工具库" Style="{StaticResource Chip}"
+                          IsChecked="{Binding ShowTools, Mode=OneWay}"
+                          Command="{Binding ShowToolsViewCommand}" />
         </StackPanel>
 
         <!-- 子视图 1：已安装应用 -->
@@ -325,6 +328,147 @@
                                                 HorizontalAlignment="Left" VerticalAlignment="Center"
                                                 Command="{Binding DataContext.InstallRuntimeCommand, RelativeSource={RelativeSource AncestorType=DataGrid}}"
                                                 CommandParameter="{Binding}" />
+                                    </DataTemplate>
+                                </DataGridTemplateColumn.CellTemplate>
+                            </DataGridTemplateColumn>
+                        </DataGrid.Columns>
+                    </DataGrid>
+                </Grid>
+            </Border>
+        </Grid>
+
+        <!-- 子视图 3：常用系统工具库 -->
+        <Grid Grid.Row="1" Visibility="{Binding ShowTools, Converter={StaticResource BoolToVis}}">
+            <Grid.RowDefinitions>
+                <RowDefinition Height="Auto" />
+                <RowDefinition Height="Auto" />
+                <RowDefinition Height="*" />
+            </Grid.RowDefinitions>
+
+            <Grid Grid.Row="0" Margin="0,0,0,10">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="Auto" />
+                    <ColumnDefinition Width="*" />
+                    <ColumnDefinition Width="Auto" />
+                </Grid.ColumnDefinitions>
+
+                <StackPanel Grid.Column="0" Orientation="Horizontal" VerticalAlignment="Center" Margin="0,0,12,0">
+                    <ToggleButton Content="仅看未安装" Style="{StaticResource Chip}" Margin="0,0,6,0"
+                                  IsChecked="{Binding OnlyUninstalledTools, Mode=TwoWay}" />
+                    <Button Content="全选未安装" Style="{StaticResource BtnSmall}"
+                            Command="{Binding SelectUninstalledToolsCommand}" />
+                </StackPanel>
+
+                <Grid Grid.Column="1" Margin="0,0,12,0">
+                    <TextBox Style="{StaticResource SearchBox}"
+                             Text="{Binding ToolSearchText, UpdateSourceTrigger=PropertyChanged}"
+                             ToolTip="按工具名称、分类、Winget ID 或用途搜索" />
+                    <TextBlock Text="搜索 PowerToys / Everything / WizTree / 7-Zip / CPU-Z…" Margin="12,0,0,0"
+                               VerticalAlignment="Center" IsHitTestVisible="False"
+                               FontSize="13" Foreground="{StaticResource Brush.TextMuted}"
+                               Visibility="{Binding ToolSearchText, Converter={StaticResource EmptyToVis}}" />
+                </Grid>
+
+                <StackPanel Grid.Column="2" Orientation="Horizontal" VerticalAlignment="Center">
+                    <Button Content="{Binding InstallSelectedToolsText}" Style="{StaticResource BtnPrimary}" Margin="0,0,8,0"
+                            Visibility="{Binding HasSelectedTools, Converter={StaticResource BoolToVis}}"
+                            Command="{Binding InstallSelectedToolsCommand}" />
+                    <Button Content="重新检测" Style="{StaticResource BtnBase}"
+                            Command="{Binding RefreshToolsCommand}" />
+                </StackPanel>
+            </Grid>
+
+            <Border Grid.Row="1" Style="{StaticResource Card}" Padding="14,10" Margin="0,0,0,10"
+                    Background="{StaticResource Brush.AccentSoft}" BorderBrush="#FFC9D5F8">
+                <TextBlock Style="{StaticResource Muted}" Foreground="{StaticResource Brush.Accent}"
+                           Text="精选五大类 22 款无广告、高口碑的系统管理与装机必备工具（微软官方增强、文件搜索与磁盘分析、卸载与启动盘维护、硬件检测监控、开发终端增强）。已安装工具支持直接启动或打开目录，未安装工具支持勾选后通过系统 winget 官方源一键批量安装。" />
+            </Border>
+
+            <Border Grid.Row="2" Style="{StaticResource Card}" Padding="0">
+                <Grid>
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="Auto" />
+                        <RowDefinition Height="*" />
+                    </Grid.RowDefinitions>
+
+                    <TextBlock Grid.Row="0" Text="{Binding ToolSummaryText}" Style="{StaticResource Muted}"
+                               Margin="14,10,14,6" />
+
+                    <DataGrid Grid.Row="1" ItemsSource="{Binding Tools}" Style="{StaticResource Grid}">
+                        <DataGrid.Columns>
+                            <DataGridTemplateColumn Header="选" Width="44" SortMemberPath="IsSelected">
+                                <DataGridTemplateColumn.CellTemplate>
+                                    <DataTemplate>
+                                        <CheckBox IsChecked="{Binding IsSelected, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
+                                                  HorizontalAlignment="Center" VerticalAlignment="Center" Cursor="Hand" />
+                                    </DataTemplate>
+                                </DataGridTemplateColumn.CellTemplate>
+                            </DataGridTemplateColumn>
+                            <DataGridTemplateColumn Header="分类" Width="115" SortMemberPath="Category">
+                                <DataGridTemplateColumn.CellTemplate>
+                                    <DataTemplate>
+                                        <TextBlock Text="{Binding Category}" Style="{StaticResource CellMuted}" />
+                                    </DataTemplate>
+                                </DataGridTemplateColumn.CellTemplate>
+                            </DataGridTemplateColumn>
+                            <DataGridTemplateColumn Header="工具名称" Width="1.4*" SortMemberPath="Name">
+                                <DataGridTemplateColumn.CellTemplate>
+                                    <DataTemplate>
+                                        <TextBlock Text="{Binding Name}" Style="{StaticResource CellText}"
+                                                   ToolTip="{Binding WingetId}" />
+                                    </DataTemplate>
+                                </DataGridTemplateColumn.CellTemplate>
+                            </DataGridTemplateColumn>
+                            <DataGridTemplateColumn Header="本机版本" Width="105" SortMemberPath="VersionDisplay">
+                                <DataGridTemplateColumn.CellTemplate>
+                                    <DataTemplate>
+                                        <TextBlock Text="{Binding VersionDisplay}" Style="{StaticResource CellMuted}" />
+                                    </DataTemplate>
+                                </DataGridTemplateColumn.CellTemplate>
+                            </DataGridTemplateColumn>
+                            <DataGridTemplateColumn Header="状态" Width="80" SortMemberPath="StatusText">
+                                <DataGridTemplateColumn.CellTemplate>
+                                    <DataTemplate>
+                                        <TextBlock Text="{Binding StatusText}" FontSize="12" VerticalAlignment="Center">
+                                            <TextBlock.Style>
+                                                <Style TargetType="TextBlock">
+                                                    <Setter Property="Foreground" Value="{StaticResource Brush.Success}" />
+                                                    <Style.Triggers>
+                                                        <DataTrigger Binding="{Binding IsInstalled}" Value="False">
+                                                            <Setter Property="Foreground" Value="{StaticResource Brush.TextMuted}" />
+                                                        </DataTrigger>
+                                                    </Style.Triggers>
+                                                </Style>
+                                            </TextBlock.Style>
+                                        </TextBlock>
+                                    </DataTemplate>
+                                </DataGridTemplateColumn.CellTemplate>
+                            </DataGridTemplateColumn>
+                            <DataGridTemplateColumn Header="功能简介" Width="2.1*" SortMemberPath="Description">
+                                <DataGridTemplateColumn.CellTemplate>
+                                    <DataTemplate>
+                                        <TextBlock Text="{Binding Description}" Style="{StaticResource CellMuted}"
+                                                   ToolTip="{Binding Description}" />
+                                    </DataTemplate>
+                                </DataGridTemplateColumn.CellTemplate>
+                            </DataGridTemplateColumn>
+                            <DataGridTemplateColumn Header="操作" Width="210" CanUserSort="False">
+                                <DataGridTemplateColumn.CellTemplate>
+                                    <DataTemplate>
+                                        <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
+                                            <Button Content="启动" Style="{StaticResource BtnPrimary}"
+                                                    Padding="10,3" FontSize="12" Margin="0,0,6,0"
+                                                    Visibility="{Binding CanLaunch, Converter={StaticResource BoolToVis}}"
+                                                    Command="{Binding DataContext.LaunchToolCommand, RelativeSource={RelativeSource AncestorType=DataGrid}}"
+                                                    CommandParameter="{Binding}" />
+                                            <Button Content="目录" Style="{StaticResource BtnSmall}" Margin="0,0,6,0"
+                                                    Visibility="{Binding HasLocation, Converter={StaticResource BoolToVis}}"
+                                                    Command="{Binding DataContext.OpenToolLocationCommand, RelativeSource={RelativeSource AncestorType=DataGrid}}"
+                                                    CommandParameter="{Binding}" />
+                                            <Button Content="{Binding ActionButtonText}" Style="{StaticResource BtnSmall}"
+                                                    Command="{Binding DataContext.InstallToolCommand, RelativeSource={RelativeSource AncestorType=DataGrid}}"
+                                                    CommandParameter="{Binding}" />
+                                        </StackPanel>
                                     </DataTemplate>
                                 </DataGridTemplateColumn.CellTemplate>
                             </DataGridTemplateColumn>

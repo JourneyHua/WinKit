@@ -178,7 +178,29 @@ public partial class App : Application
                     window.UpdateLayout();
                     Pump();
                     Capture(window, outputDir, "apps-runtimes", log);
-                    appVm.ShowRuntimes = false;
+
+                    appVm.ShowTools = true;
+                    Pump();
+                    window.UpdateLayout();
+                    Pump();
+                    Capture(window, outputDir, "apps-tools", log);
+                    appVm.ShowTools = false;
+                }
+
+                if (vm.CurrentViewModel is SystemTweakViewModel tweakVm)
+                {
+                    tweakVm.SubView = "ports";
+                    Pump();
+                    window.UpdateLayout();
+                    Pump();
+                    Capture(window, outputDir, "tweaks-ports", log);
+
+                    tweakVm.SubView = "panels";
+                    Pump();
+                    window.UpdateLayout();
+                    Pump();
+                    Capture(window, outputDir, "tweaks-panels", log);
+                    tweakVm.SubView = "tweaks";
                 }
             }
 
