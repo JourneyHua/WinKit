@@ -27,6 +27,7 @@
     <Compile Include="..\..\src\WinKit\Services\NavPaneService.cs" Link="Services\NavPaneService.cs" />
     <Compile Include="..\..\src\WinKit\Services\UninstallService.cs" Link="Services\UninstallService.cs" />
     <Compile Include="..\..\src\WinKit\Services\AppManagerService.cs" Link="Services\AppManagerService.cs" />
+    <Compile Include="..\..\src\WinKit\Services\RuntimeCheckService.cs" Link="Services\RuntimeCheckService.cs" />
     <Compile Include="..\..\src\WinKit\Services\DriverManagerService.cs" Link="Services\DriverManagerService.cs" />
   </ItemGroup>
 

@@ -170,6 +170,16 @@ public partial class App : Application
                     Pump();
                     Capture(window, outputDir, "menu-new-drive", log);
                 }
+
+                if (vm.CurrentViewModel is AppManagerViewModel appVm)
+                {
+                    appVm.ShowRuntimes = true;
+                    Pump();
+                    window.UpdateLayout();
+                    Pump();
+                    Capture(window, outputDir, "apps-runtimes", log);
+                    appVm.ShowRuntimes = false;
+                }
             }
 
             window.Close();

@@ -110,4 +110,58 @@ public static class Native
 
         return killed;
     }
+
+    public static bool OpenInRegedit(string? rawRegistryPath)
+    {
+        if (string.IsNullOrWhiteSpace(rawRegistryPath)) return false;
+
+        var path = rawRegistryPath.Trim();
+        var hkeyIdx = path.IndexOf("HKEY_", StringComparison.OrdinalIgnoreCase);
+        if (hkeyIdx > 0) path = path[hkeyIdx..];
+
+        if (path.StartsWith(@"HKCU\", StringComparison.OrdinalIgnoreCase))
+            path = @"HKEY_CURRENT_USER\" + path[5..];
+        else if (path.StartsWith(@"HKLM\", StringComparison.OrdinalIgnoreCase))
+            path = @"HKEY_LOCAL_MACHINE\" + path[5..];
+
+        if (!path.StartsWith("HKEY_", StringComparison.OrdinalIgnoreCase))
+            return false;
+
+        try
+        {
+            Reg.SetString(RegPath.Hkcu(@"Software\Microsoft\Windows\CurrentVersion\Applets\Regedit"), "LastKey", path);
+            Process.Start(new ProcessStartInfo
+            {
+                FileName = "regedit.exe",
+                Arguments = "-m",
+                UseShellExecute = true
+            });
+            return true;
+        }
+        catch (Exception)
+        {
+            return false;
+        }
+    }
+
+    public static bool RestartAsAdmin()
+    {
+        var exe = Environment.ProcessPath;
+        if (string.IsNullOrWhiteSpace(exe)) return false;
+
+        try
+        {
+            Process.Start(new ProcessStartInfo
+            {
+                FileName = exe,
+                UseShellExecute = true,
+                Verb = "runas"
+            });
+            return true;
+        }
+        catch (Exception)
+        {
+            return false;
+        }
+    }
 }

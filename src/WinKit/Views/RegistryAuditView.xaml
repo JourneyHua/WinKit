@@ -29,7 +29,16 @@
                     <RowDefinition Height="*" />
                 </Grid.RowDefinitions>
 
-                <TextBlock Grid.Row="0" Text="分类" Style="{StaticResource H2}" Margin="16,14,16,6" />
+                <Grid Grid.Row="0" Margin="16,12,12,6">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="*" />
+                        <ColumnDefinition Width="Auto" />
+                    </Grid.ColumnDefinitions>
+                    <TextBlock Grid.Column="0" Text="分类" Style="{StaticResource H2}" VerticalAlignment="Center" />
+                    <Button Grid.Column="1" Content="全分类体检" Style="{StaticResource BtnSmall}"
+                            ToolTip="一次性扫描全部 7 个分类并统计各分类可疑项数量"
+                            Command="{Binding ScanAllCategoriesCommand}" />
+                </Grid>
 
                 <ListBox Grid.Row="1" ItemsSource="{Binding Categories}"
                          SelectedItem="{Binding SelectedCategory, Mode=TwoWay}"
@@ -87,6 +96,8 @@
                     <Button Content="{Binding RemoveAllText}" Style="{StaticResource BtnDanger}" Margin="0,0,8,0"
                             Visibility="{Binding CanRemoveAll, Converter={StaticResource BoolToVis}}"
                             Command="{Binding RemoveAllCommand}" />
+                    <Button Content="全分类体检" Style="{StaticResource BtnBase}" Margin="0,0,8,0"
+                            Command="{Binding ScanAllCategoriesCommand}" />
                     <Button Content="重新扫描" Style="{StaticResource BtnBase}" Command="{Binding RefreshCommand}" />
                 </StackPanel>
             </Grid>
@@ -114,13 +125,16 @@
                                 <MenuItem Header="复制注册表路径"
                                           Command="{Binding PlacementTarget.DataContext.CopyPathCommand, RelativeSource={RelativeSource AncestorType=ContextMenu}}"
                                           CommandParameter="{Binding PlacementTarget.SelectedItem, RelativeSource={RelativeSource AncestorType=ContextMenu}}" />
+                                <MenuItem Header="在注册表编辑器 (regedit) 中定位"
+                                          Command="{Binding PlacementTarget.DataContext.OpenRegeditCommand, RelativeSource={RelativeSource AncestorType=ContextMenu}}"
+                                          CommandParameter="{Binding PlacementTarget.SelectedItem, RelativeSource={RelativeSource AncestorType=ContextMenu}}" />
                                 <MenuItem Header="复制详情内容"
                                           Command="{Binding PlacementTarget.DataContext.CopyDetailCommand, RelativeSource={RelativeSource AncestorType=ContextMenu}}"
                                           CommandParameter="{Binding PlacementTarget.SelectedItem, RelativeSource={RelativeSource AncestorType=ContextMenu}}" />
                             </ContextMenu>
                         </DataGrid.ContextMenu>
                         <DataGrid.Columns>
-                            <DataGridTemplateColumn Header="名称" Width="2*">
+                            <DataGridTemplateColumn Header="名称" Width="2*" SortMemberPath="Name">
                                 <DataGridTemplateColumn.CellTemplate>
                                     <DataTemplate>
                                         <TextBlock Text="{Binding Name}" Style="{StaticResource CellText}"
@@ -128,7 +142,7 @@
                                     </DataTemplate>
                                 </DataGridTemplateColumn.CellTemplate>
                             </DataGridTemplateColumn>
-                            <DataGridTemplateColumn Header="详情" Width="3*">
+                            <DataGridTemplateColumn Header="详情" Width="3*" SortMemberPath="Detail">
                                 <DataGridTemplateColumn.CellTemplate>
                                     <DataTemplate>
                                         <TextBlock Text="{Binding Detail}" Style="{StaticResource CellMuted}"
@@ -136,24 +150,28 @@
                                     </DataTemplate>
                                 </DataGridTemplateColumn.CellTemplate>
                             </DataGridTemplateColumn>
-                            <DataGridTemplateColumn Header="风险" Width="72">
+                            <DataGridTemplateColumn Header="风险" Width="76" SortMemberPath="Risk">
                                 <DataGridTemplateColumn.CellTemplate>
                                     <DataTemplate>
                                         <TextBlock Text="{Binding RiskText}" Style="{StaticResource CellMuted}" />
                                     </DataTemplate>
                                 </DataGridTemplateColumn.CellTemplate>
                             </DataGridTemplateColumn>
-                            <DataGridTemplateColumn Header="状态" Width="72">
+                            <DataGridTemplateColumn Header="状态" Width="76" SortMemberPath="IsInvalid">
                                 <DataGridTemplateColumn.CellTemplate>
                                     <DataTemplate>
                                         <TextBlock Text="{Binding StatusText}" Style="{StaticResource CellMuted}" />
                                     </DataTemplate>
                                 </DataGridTemplateColumn.CellTemplate>
                             </DataGridTemplateColumn>
-                            <DataGridTemplateColumn Header="操作" Width="148">
+                            <DataGridTemplateColumn Header="操作" Width="210" CanUserSort="False">
                                 <DataGridTemplateColumn.CellTemplate>
                                     <DataTemplate>
                                         <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
+                                            <Button Content="定位" Style="{StaticResource BtnSmall}" Margin="0,0,6,0"
+                                                    ToolTip="在注册表编辑器 (regedit) 中定位"
+                                                    Command="{Binding DataContext.OpenRegeditCommand, RelativeSource={RelativeSource AncestorType=DataGrid}}"
+                                                    CommandParameter="{Binding}" />
                                             <Button Content="复制路径" Style="{StaticResource BtnSmall}" Margin="0,0,6,0"
                                                     Command="{Binding DataContext.CopyPathCommand, RelativeSource={RelativeSource AncestorType=DataGrid}}"
                                                     CommandParameter="{Binding}" />

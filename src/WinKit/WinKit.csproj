@@ -10,7 +10,7 @@
     <AssemblyName>WinKit</AssemblyName>
     <RootNamespace>WinKit</RootNamespace>
     <ApplicationManifest>app.manifest</ApplicationManifest>
-    <Version>1.1.0</Version>
+    <Version>1.2.0</Version>
     <Product>WinKit 系统管家</Product>
     <Company>WinKit</Company>
     <Description>Windows 11 右键菜单、此电脑、导航栏、应用管理、驱动管理、注册表体检工具</Description>

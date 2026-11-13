@@ -49,6 +49,10 @@
 
                 <StackPanel Grid.Row="2" Margin="20,10,20,16">
                     <TextBlock Text="{Binding ElevationText}" Style="{StaticResource Muted}" />
+                    <Button Content="以管理员身份重启" Style="{StaticResource BtnSmall}" Margin="0,6,0,2"
+                            HorizontalAlignment="Left"
+                            Visibility="{Binding ShowElevateButton, Converter={StaticResource BoolToVis}}"
+                            Command="{Binding ElevateCommand}" />
                     <TextBlock Text="{Binding VersionText}" Style="{StaticResource Muted}" Margin="0,4,0,0" />
                 </StackPanel>
             </Grid>
@@ -81,7 +85,16 @@
                 </Grid>
             </Border>
 
-            <ContentControl Grid.Row="1" Content="{Binding CurrentViewModel}" Margin="0" />
+            <Grid Grid.Row="1">
+                <Grid.RowDefinitions>
+                    <RowDefinition Height="Auto" />
+                    <RowDefinition Height="*" />
+                </Grid.RowDefinitions>
+                <ProgressBar Grid.Row="0" Height="3" IsIndeterminate="True" BorderThickness="0"
+                             Background="Transparent" Foreground="{StaticResource Brush.Accent}"
+                             Visibility="{Binding IsGlobalBusy, Converter={StaticResource BoolToVis}}" />
+                <ContentControl Grid.Row="1" Content="{Binding CurrentViewModel}" Margin="0" />
+            </Grid>
 
             <Border Grid.Row="2" Padding="20,8" Background="{StaticResource Brush.Card}"
                     BorderBrush="{StaticResource Brush.Border}" BorderThickness="0,1,0,0">

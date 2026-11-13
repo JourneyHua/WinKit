@@ -104,112 +104,142 @@
                         </ListBox>
                     </Border>
 
-                    <Border Grid.Column="1" Style="{StaticResource Card}" Padding="0">
-                        <Grid>
-                            <Grid.RowDefinitions>
-                                <RowDefinition Height="Auto" />
-                                <RowDefinition Height="*" />
-                            </Grid.RowDefinitions>
+                    <Grid Grid.Column="1">
+                        <Grid.RowDefinitions>
+                            <RowDefinition Height="Auto" />
+                            <RowDefinition Height="*" />
+                        </Grid.RowDefinitions>
 
-                            <TextBlock Grid.Row="0" Text="{Binding NewMenuCountText}" Style="{StaticResource Muted}"
-                                       Margin="14,10,14,6" />
-
-                            <DataGrid Grid.Row="1" ItemsSource="{Binding FilteredNewItems}" Style="{StaticResource Grid}">
-                                <DataGrid.ContextMenu>
-                                    <ContextMenu>
-                                        <MenuItem Header="复制包名与 CLSID"
-                                                  Command="{Binding PlacementTarget.DataContext.CopyPathCommand, RelativeSource={RelativeSource AncestorType=ContextMenu}}"
-                                                  CommandParameter="{Binding PlacementTarget.SelectedItem, RelativeSource={RelativeSource AncestorType=ContextMenu}}" />
-                                        <MenuItem Header="复制安装路径"
-                                                  Command="{Binding PlacementTarget.DataContext.CopyCommandPathCommand, RelativeSource={RelativeSource AncestorType=ContextMenu}}"
-                                                  CommandParameter="{Binding PlacementTarget.SelectedItem, RelativeSource={RelativeSource AncestorType=ContextMenu}}" />
-                                    </ContextMenu>
-                                </DataGrid.ContextMenu>
-                                <DataGrid.Columns>
-                                    <DataGridTemplateColumn Width="60" Header="屏蔽">
-                                        <DataGridTemplateColumn.CellTemplate>
-                                            <DataTemplate>
-                                                <CheckBox Style="{StaticResource RowCheck}"
-                                                          IsChecked="{Binding IsBlockedOn, Mode=TwoWay}" />
-                                            </DataTemplate>
-                                        </DataGridTemplateColumn.CellTemplate>
-                                    </DataGridTemplateColumn>
-                                    <DataGridTemplateColumn Header="软件" Width="1.8*">
-                                        <DataGridTemplateColumn.CellTemplate>
-                                            <DataTemplate>
-                                                <TextBlock Text="{Binding DisplayName}" Style="{StaticResource CellText}"
-                                                           ToolTip="{Binding Package}" />
-                                            </DataTemplate>
-                                        </DataGridTemplateColumn.CellTemplate>
-                                    </DataGridTemplateColumn>
-                                    <DataGridTemplateColumn Header="作用域" Width="1.4*">
-                                        <DataGridTemplateColumn.CellTemplate>
-                                            <DataTemplate>
-                                                <TextBlock Text="{Binding ScopeText}" Style="{StaticResource CellMuted}"
-                                                           ToolTip="{Binding ScopeText}" />
-                                            </DataTemplate>
-                                        </DataGridTemplateColumn.CellTemplate>
-                                    </DataGridTemplateColumn>
-                                    <DataGridTemplateColumn Header="继承" Width="56">
-                                        <DataGridTemplateColumn.CellTemplate>
-                                            <DataTemplate>
-                                                <TextBlock Text="继承" Style="{StaticResource CellMuted}"
-                                                           Foreground="{StaticResource Brush.Warn}"
-                                                           ToolTip="该软件只声明了文件夹作用域，驱动器菜单会一并显示"
-                                                           Visibility="{Binding ShowDriveInherited, Converter={StaticResource BoolToVis}}" />
-                                            </DataTemplate>
-                                        </DataGridTemplateColumn.CellTemplate>
-                                    </DataGridTemplateColumn>
-                                    <DataGridTemplateColumn Header="菜单项" Width="1.1*">
-                                        <DataGridTemplateColumn.CellTemplate>
-                                            <DataTemplate>
-                                                <TextBlock Text="{Binding ClassNames}" Style="{StaticResource CellMuted}"
-                                                           ToolTip="{Binding ClsidText}" />
-                                            </DataTemplate>
-                                        </DataGridTemplateColumn.CellTemplate>
-                                    </DataGridTemplateColumn>
-                                    <DataGridTemplateColumn Header="安装位置" Width="*">
-                                        <DataGridTemplateColumn.CellTemplate>
-                                            <DataTemplate>
-                                                <TextBlock Text="{Binding Location}" Style="{StaticResource CellMuted}" />
-                                            </DataTemplate>
-                                        </DataGridTemplateColumn.CellTemplate>
-                                    </DataGridTemplateColumn>
-                                    <DataGridTemplateColumn Header="状态" Width="72">
-                                        <DataGridTemplateColumn.CellTemplate>
-                                            <DataTemplate>
-                                                <TextBlock Text="{Binding StatusText}" Style="{StaticResource CellMuted}" />
-                                            </DataTemplate>
-                                        </DataGridTemplateColumn.CellTemplate>
-                                    </DataGridTemplateColumn>
-                                    <DataGridTemplateColumn Header="操作" Width="196">
-                                        <DataGridTemplateColumn.CellTemplate>
-                                            <DataTemplate>
-                                                <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
-                                                    <Button Content="{Binding BlockToggleText}" Style="{StaticResource BtnSmall}"
-                                                            Margin="0,0,6,0"
-                                                            Command="{Binding DataContext.ToggleBlockCommand, RelativeSource={RelativeSource AncestorType=DataGrid}}"
-                                                            CommandParameter="{Binding}" />
-                                                    <Button Content="复制路径" Style="{StaticResource BtnSmall}"
-                                                            Margin="0,0,6,0"
-                                                            Command="{Binding DataContext.CopyCommandPathCommand, RelativeSource={RelativeSource AncestorType=DataGrid}}"
-                                                            CommandParameter="{Binding}" />
-                                                    <Button Content="卸载" Style="{StaticResource BtnSmall}"
-                                                            Foreground="{StaticResource Brush.Danger}"
-                                                            Command="{Binding DataContext.UninstallCommand, RelativeSource={RelativeSource AncestorType=DataGrid}}"
-                                                            CommandParameter="{Binding}" />
-                                                </StackPanel>
-                                            </DataTemplate>
-                                        </DataGridTemplateColumn.CellTemplate>
-                                    </DataGridTemplateColumn>
-                                </DataGrid.Columns>
-                            </DataGrid>
-
-                            <TextBlock Grid.Row="1" Text="当前分组下没有条目" Style="{StaticResource Muted}"
-                                       HorizontalAlignment="Center" VerticalAlignment="Center"
-                                       Visibility="{Binding FilteredNewItems.Count, Converter={StaticResource EmptyToVis}}" />
+                        <Grid Grid.Row="0" Margin="0,0,0,10">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*" />
+                                <ColumnDefinition Width="Auto" />
+                            </Grid.ColumnDefinitions>
+                            <Grid Grid.Column="0">
+                                <TextBox Style="{StaticResource SearchBox}"
+                                         Text="{Binding NewSearchText, UpdateSourceTrigger=PropertyChanged}"
+                                         ToolTip="按软件名、包名、菜单类名或安装路径搜索" />
+                                <TextBlock Text="搜索一级菜单软件 / 包名 / 安装位置…" Margin="12,0,0,0"
+                                           VerticalAlignment="Center" IsHitTestVisible="False"
+                                           FontSize="13" Foreground="{StaticResource Brush.TextMuted}"
+                                           Visibility="{Binding NewSearchText, Converter={StaticResource EmptyToVis}}" />
+                            </Grid>
+                            <StackPanel Grid.Column="1" Orientation="Horizontal" Margin="10,0,0,0">
+                                <ToggleButton Content="仅已屏蔽" Style="{StaticResource Chip}"
+                                              IsChecked="{Binding OnlyBlockedNew, Mode=TwoWay}" />
+                            </StackPanel>
                         </Grid>
-                    </Border>
+
+                        <Border Grid.Row="1" Style="{StaticResource Card}" Padding="0">
+                            <Grid>
+                                <Grid.RowDefinitions>
+                                    <RowDefinition Height="Auto" />
+                                    <RowDefinition Height="*" />
+                                </Grid.RowDefinitions>
+
+                                <TextBlock Grid.Row="0" Text="{Binding NewMenuCountText}" Style="{StaticResource Muted}"
+                                           Margin="14,10,14,6" />
+
+                                <DataGrid Grid.Row="1" ItemsSource="{Binding FilteredNewItems}" Style="{StaticResource Grid}">
+                                    <DataGrid.ContextMenu>
+                                        <ContextMenu>
+                                            <MenuItem Header="复制包名与 CLSID"
+                                                      Command="{Binding PlacementTarget.DataContext.CopyPathCommand, RelativeSource={RelativeSource AncestorType=ContextMenu}}"
+                                                      CommandParameter="{Binding PlacementTarget.SelectedItem, RelativeSource={RelativeSource AncestorType=ContextMenu}}" />
+                                            <MenuItem Header="复制安装路径"
+                                                      Command="{Binding PlacementTarget.DataContext.CopyCommandPathCommand, RelativeSource={RelativeSource AncestorType=ContextMenu}}"
+                                                      CommandParameter="{Binding PlacementTarget.SelectedItem, RelativeSource={RelativeSource AncestorType=ContextMenu}}" />
+                                            <MenuItem Header="在注册表编辑器 (regedit) 中定位"
+                                                      Command="{Binding PlacementTarget.DataContext.OpenRegeditCommand, RelativeSource={RelativeSource AncestorType=ContextMenu}}"
+                                                      CommandParameter="{Binding PlacementTarget.SelectedItem, RelativeSource={RelativeSource AncestorType=ContextMenu}}" />
+                                        </ContextMenu>
+                                    </DataGrid.ContextMenu>
+                                    <DataGrid.Columns>
+                                        <DataGridTemplateColumn Width="64" Header="屏蔽" SortMemberPath="IsBlocked">
+                                            <DataGridTemplateColumn.CellTemplate>
+                                                <DataTemplate>
+                                                    <CheckBox Style="{StaticResource RowCheck}"
+                                                              IsChecked="{Binding IsBlockedOn, Mode=TwoWay}" />
+                                                </DataTemplate>
+                                            </DataGridTemplateColumn.CellTemplate>
+                                        </DataGridTemplateColumn>
+                                        <DataGridTemplateColumn Header="软件" Width="1.8*" SortMemberPath="DisplayName">
+                                            <DataGridTemplateColumn.CellTemplate>
+                                                <DataTemplate>
+                                                    <TextBlock Text="{Binding DisplayName}" Style="{StaticResource CellText}"
+                                                               ToolTip="{Binding Package}" />
+                                                </DataTemplate>
+                                            </DataGridTemplateColumn.CellTemplate>
+                                        </DataGridTemplateColumn>
+                                        <DataGridTemplateColumn Header="作用域" Width="1.2*" SortMemberPath="ScopeText">
+                                            <DataGridTemplateColumn.CellTemplate>
+                                                <DataTemplate>
+                                                    <TextBlock Text="{Binding ScopeText}" Style="{StaticResource CellMuted}"
+                                                               ToolTip="{Binding ScopeText}" />
+                                                </DataTemplate>
+                                            </DataGridTemplateColumn.CellTemplate>
+                                        </DataGridTemplateColumn>
+                                        <DataGridTemplateColumn Header="继承" Width="56" SortMemberPath="ShowDriveInherited">
+                                            <DataGridTemplateColumn.CellTemplate>
+                                                <DataTemplate>
+                                                    <TextBlock Text="继承" Style="{StaticResource CellMuted}"
+                                                               Foreground="{StaticResource Brush.Warn}"
+                                                               ToolTip="该软件只声明了文件夹作用域，驱动器菜单会一并显示"
+                                                               Visibility="{Binding ShowDriveInherited, Converter={StaticResource BoolToVis}}" />
+                                                </DataTemplate>
+                                            </DataGridTemplateColumn.CellTemplate>
+                                        </DataGridTemplateColumn>
+                                        <DataGridTemplateColumn Header="菜单项" Width="1.1*" SortMemberPath="ClassNames">
+                                            <DataGridTemplateColumn.CellTemplate>
+                                                <DataTemplate>
+                                                    <TextBlock Text="{Binding ClassNames}" Style="{StaticResource CellMuted}"
+                                                               ToolTip="{Binding ClsidText}" />
+                                                </DataTemplate>
+                                            </DataGridTemplateColumn.CellTemplate>
+                                        </DataGridTemplateColumn>
+                                        <DataGridTemplateColumn Header="安装位置" Width="1.25*" SortMemberPath="Location">
+                                            <DataGridTemplateColumn.CellTemplate>
+                                                <DataTemplate>
+                                                    <TextBlock Text="{Binding Location}" Style="{StaticResource CellMuted}" />
+                                                </DataTemplate>
+                                            </DataGridTemplateColumn.CellTemplate>
+                                        </DataGridTemplateColumn>
+                                        <DataGridTemplateColumn Header="状态" Width="82" SortMemberPath="StatusText">
+                                            <DataGridTemplateColumn.CellTemplate>
+                                                <DataTemplate>
+                                                    <TextBlock Text="{Binding StatusText}" Style="{StaticResource CellMuted}" />
+                                                </DataTemplate>
+                                            </DataGridTemplateColumn.CellTemplate>
+                                        </DataGridTemplateColumn>
+                                        <DataGridTemplateColumn Header="操作" Width="196" CanUserSort="False">
+                                            <DataGridTemplateColumn.CellTemplate>
+                                                <DataTemplate>
+                                                    <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
+                                                        <Button Content="{Binding BlockToggleText}" Style="{StaticResource BtnSmall}"
+                                                                Margin="0,0,6,0"
+                                                                Command="{Binding DataContext.ToggleBlockCommand, RelativeSource={RelativeSource AncestorType=DataGrid}}"
+                                                                CommandParameter="{Binding}" />
+                                                        <Button Content="复制路径" Style="{StaticResource BtnSmall}"
+                                                                Margin="0,0,6,0"
+                                                                Command="{Binding DataContext.CopyCommandPathCommand, RelativeSource={RelativeSource AncestorType=DataGrid}}"
+                                                                CommandParameter="{Binding}" />
+                                                        <Button Content="卸载" Style="{StaticResource BtnSmall}"
+                                                                Foreground="{StaticResource Brush.Danger}"
+                                                                Command="{Binding DataContext.UninstallCommand, RelativeSource={RelativeSource AncestorType=DataGrid}}"
+                                                                CommandParameter="{Binding}" />
+                                                    </StackPanel>
+                                                </DataTemplate>
+                                            </DataGridTemplateColumn.CellTemplate>
+                                        </DataGridTemplateColumn>
+                                    </DataGrid.Columns>
+                                </DataGrid>
+
+                                <TextBlock Grid.Row="1" Text="当前分组下没有条目" Style="{StaticResource Muted}"
+                                           HorizontalAlignment="Center" VerticalAlignment="Center"
+                                           Visibility="{Binding FilteredNewItems.Count, Converter={StaticResource EmptyToVis}}" />
+                            </Grid>
+                        </Border>
+                    </Grid>
                 </Grid>
             </Grid>
 
@@ -279,10 +309,13 @@
                                         <MenuItem Header="复制命令路径"
                                                   Command="{Binding PlacementTarget.DataContext.CopyCommandPathCommand, RelativeSource={RelativeSource AncestorType=ContextMenu}}"
                                                   CommandParameter="{Binding PlacementTarget.SelectedItem, RelativeSource={RelativeSource AncestorType=ContextMenu}}" />
+                                        <MenuItem Header="在注册表编辑器 (regedit) 中定位"
+                                                  Command="{Binding PlacementTarget.DataContext.OpenRegeditCommand, RelativeSource={RelativeSource AncestorType=ContextMenu}}"
+                                                  CommandParameter="{Binding PlacementTarget.SelectedItem, RelativeSource={RelativeSource AncestorType=ContextMenu}}" />
                                     </ContextMenu>
                                 </DataGrid.ContextMenu>
                                 <DataGrid.Columns>
-                                    <DataGridTemplateColumn Width="56" Header="启用">
+                                    <DataGridTemplateColumn Width="64" Header="启用" SortMemberPath="IsEnabledOn">
                                         <DataGridTemplateColumn.CellTemplate>
                                             <DataTemplate>
                                                 <CheckBox Style="{StaticResource RowCheck}"
@@ -290,7 +323,7 @@
                                             </DataTemplate>
                                         </DataGridTemplateColumn.CellTemplate>
                                     </DataGridTemplateColumn>
-                                    <DataGridTemplateColumn Header="名称" Width="2*">
+                                    <DataGridTemplateColumn Header="名称" Width="2*" SortMemberPath="DisplayName">
                                         <DataGridTemplateColumn.CellTemplate>
                                             <DataTemplate>
                                                 <TextBlock Text="{Binding DisplayName}" Style="{StaticResource CellText}"
@@ -298,7 +331,7 @@
                                             </DataTemplate>
                                         </DataGridTemplateColumn.CellTemplate>
                                     </DataGridTemplateColumn>
-                                    <DataGridTemplateColumn Header="发布者" Width="*">
+                                    <DataGridTemplateColumn Header="发布者" Width="*" SortMemberPath="Publisher">
                                         <DataGridTemplateColumn.CellTemplate>
                                             <DataTemplate>
                                                 <TextBlock Text="{Binding Publisher}" Style="{StaticResource CellMuted}"
@@ -306,21 +339,21 @@
                                             </DataTemplate>
                                         </DataGridTemplateColumn.CellTemplate>
                                     </DataGridTemplateColumn>
-                                    <DataGridTemplateColumn Header="范围" Width="80">
+                                    <DataGridTemplateColumn Header="范围" Width="88" SortMemberPath="DomainTitle">
                                         <DataGridTemplateColumn.CellTemplate>
                                             <DataTemplate>
                                                 <TextBlock Text="{Binding DomainTitle}" Style="{StaticResource CellMuted}" />
                                             </DataTemplate>
                                         </DataGridTemplateColumn.CellTemplate>
                                     </DataGridTemplateColumn>
-                                    <DataGridTemplateColumn Header="状态" Width="72">
+                                    <DataGridTemplateColumn Header="状态" Width="80" SortMemberPath="StatusText">
                                         <DataGridTemplateColumn.CellTemplate>
                                             <DataTemplate>
                                                 <TextBlock Text="{Binding StatusText}" Style="{StaticResource CellMuted}" />
                                             </DataTemplate>
                                         </DataGridTemplateColumn.CellTemplate>
                                     </DataGridTemplateColumn>
-                                    <DataGridTemplateColumn Header="操作" Width="196">
+                                    <DataGridTemplateColumn Header="操作" Width="196" CanUserSort="False">
                                         <DataGridTemplateColumn.CellTemplate>
                                             <DataTemplate>
                                                 <StackPanel Orientation="Horizontal" VerticalAlignment="Center">

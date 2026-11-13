@@ -96,6 +96,9 @@ public sealed class NewMenuItem : ObservableObject
     public string StatusText => !IsBlocked ? "显示中" : DeepBlocked ? "已屏蔽·深度" : "已屏蔽";
 
     public string BlockToggleText => IsBlocked ? "恢复" : "屏蔽";
+
+    public string SearchBlob =>
+        $"{DisplayName} {Package} {ClassNames} {Location} {ScopeText} {ClsidText}".ToLowerInvariant();
 }
 
 /// <summary>

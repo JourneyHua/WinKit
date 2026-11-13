@@ -32,7 +32,7 @@
                 <StackPanel Grid.Column="0">
                     <TextBlock Text="{Binding SessionText}" Style="{StaticResource H2}" />
                     <TextBlock Style="{StaticResource Muted}" Margin="0,4,0,0"
-                               Text="每次改动前都会自动保存一份只包含改动键的快照。回滚按相反顺序执行，逐步还原。" />
+                               Text="每次改动前都会自动保存一份只包含改动键或文件的快照。回滚按相反顺序执行，逐步还原。" />
                     <TextBlock Text="{Binding BackupDirectory}" Style="{StaticResource Muted}" Margin="0,4,0,0"
                                FontSize="11" />
                 </StackPanel>
@@ -52,14 +52,14 @@
             <Grid>
                 <DataGrid ItemsSource="{Binding Backups}" Style="{StaticResource Grid}">
                     <DataGrid.Columns>
-                        <DataGridTemplateColumn Header="时间" Width="150">
+                        <DataGridTemplateColumn Header="时间" Width="155" SortMemberPath="CreatedTime">
                             <DataGridTemplateColumn.CellTemplate>
                                 <DataTemplate>
                                     <TextBlock Text="{Binding TimeText}" Style="{StaticResource CellMuted}" />
                                 </DataTemplate>
                             </DataGridTemplateColumn.CellTemplate>
                         </DataGridTemplateColumn>
-                        <DataGridTemplateColumn Header="操作" Width="*">
+                        <DataGridTemplateColumn Header="操作摘要" Width="*" SortMemberPath="Title">
                             <DataGridTemplateColumn.CellTemplate>
                                 <DataTemplate>
                                     <TextBlock Text="{Binding Title}" Style="{StaticResource CellText}"
@@ -67,26 +67,35 @@
                                 </DataTemplate>
                             </DataGridTemplateColumn.CellTemplate>
                         </DataGridTemplateColumn>
-                        <DataGridTemplateColumn Header="涉及键" Width="90">
+                        <DataGridTemplateColumn Header="涉及项" Width="90" SortMemberPath="KeyCount">
                             <DataGridTemplateColumn.CellTemplate>
                                 <DataTemplate>
                                     <TextBlock Text="{Binding KeyCountText}" Style="{StaticResource CellMuted}" />
                                 </DataTemplate>
                             </DataGridTemplateColumn.CellTemplate>
                         </DataGridTemplateColumn>
-                        <DataGridTemplateColumn Header="大小" Width="80">
+                        <DataGridTemplateColumn Header="大小" Width="85" SortMemberPath="SizeBytes">
                             <DataGridTemplateColumn.CellTemplate>
                                 <DataTemplate>
                                     <TextBlock Text="{Binding SizeText}" Style="{StaticResource CellMuted}" />
                                 </DataTemplate>
                             </DataGridTemplateColumn.CellTemplate>
                         </DataGridTemplateColumn>
-                        <DataGridTemplateColumn Header="操作" Width="90">
+                        <DataGridTemplateColumn Header="操作" Width="190" CanUserSort="False">
                             <DataGridTemplateColumn.CellTemplate>
                                 <DataTemplate>
-                                    <Button Content="还原" Style="{StaticResource BtnSmall}"
-                                            Command="{Binding DataContext.RestoreCommand, RelativeSource={RelativeSource AncestorType=DataGrid}}"
-                                            CommandParameter="{Binding}" />
+                                    <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
+                                        <Button Content="还原" Style="{StaticResource BtnSmall}" Margin="0,0,6,0"
+                                                Command="{Binding DataContext.RestoreCommand, RelativeSource={RelativeSource AncestorType=DataGrid}}"
+                                                CommandParameter="{Binding}" />
+                                        <Button Content="详情" Style="{StaticResource BtnSmall}" Margin="0,0,6,0"
+                                                Command="{Binding DataContext.ViewDetailCommand, RelativeSource={RelativeSource AncestorType=DataGrid}}"
+                                                CommandParameter="{Binding}" />
+                                        <Button Content="删除" Style="{StaticResource BtnSmall}"
+                                                Foreground="{StaticResource Brush.Danger}"
+                                                Command="{Binding DataContext.DeleteBackupCommand, RelativeSource={RelativeSource AncestorType=DataGrid}}"
+                                                CommandParameter="{Binding}" />
+                                    </StackPanel>
                                 </DataTemplate>
                             </DataGridTemplateColumn.CellTemplate>
                         </DataGridTemplateColumn>

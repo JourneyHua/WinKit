@@ -304,6 +304,13 @@ internal static class Program
             && parsedDrivers[0].OriginalName == "nv_dispi.inf"
             && parsedDrivers[0].IsCritical);
 
+        // 6. 常用运行库体检引擎自测
+        var runtimeService = new RuntimeCheckService();
+        var runtimes = runtimeService.CheckAll();
+        Check("常用运行库检测清单完整（21 项）", runtimes.Count >= 21);
+        Check("常用运行库分类覆盖四大类",
+            runtimes.Select(r => r.Category).Distinct().Count() == 4);
+
         // 清理
         Reg.DeleteTree(testPath);
         Reg.DeleteTree(RegPath.Hkcu(blockedKey));

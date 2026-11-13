@@ -26,16 +26,19 @@ public sealed class DriverManagerViewModel : ObservableObject, IModule
 {
     private readonly DriverManagerService _service = new();
     private readonly Action<string> _status;
+    private readonly Action<bool>? _setBusy;
 
     private List<DriverPackageItem> _all = new();
     private DriverClassNode? _selectedClass;
     private string _searchText = "";
+    private string _levelFilter = "all"; // all | critical | peripheral
     private string _summaryText = "";
     private bool _isBusy;
 
-    public DriverManagerViewModel(Action<string> status)
+    public DriverManagerViewModel(Action<string> status, Action<bool>? setBusy = null)
     {
         _status = status;
+        _setBusy = setBusy;
 
         Classes = new ObservableCollection<DriverClassNode>();
         Drivers = new ObservableCollection<DriverPackageItem>();
@@ -52,6 +55,11 @@ public sealed class DriverManagerViewModel : ObservableObject, IModule
         UninstallDriverCommand = new RelayCommand(p => _ = UninstallDriverAsync(p as DriverPackageItem));
         CopyDriverInfoCommand = new RelayCommand(p => CopyDriverInfo(p as DriverPackageItem));
         OpenBackupFolderCommand = new RelayCommand(OpenBackupFolder);
+        OpenDeviceManagerCommand = new RelayCommand(OpenDeviceManager);
+
+        FilterLevelAllCommand = new RelayCommand(() => LevelFilter = "all");
+        FilterLevelCriticalCommand = new RelayCommand(() => LevelFilter = "critical");
+        FilterLevelPeripheralCommand = new RelayCommand(() => LevelFilter = "peripheral");
     }
 
     public ObservableCollection<DriverClassNode> Classes { get; }
@@ -69,6 +77,28 @@ public sealed class DriverManagerViewModel : ObservableObject, IModule
     public RelayCommand UninstallDriverCommand { get; }
     public RelayCommand CopyDriverInfoCommand { get; }
     public RelayCommand OpenBackupFolderCommand { get; }
+    public RelayCommand OpenDeviceManagerCommand { get; }
+
+    public RelayCommand FilterLevelAllCommand { get; }
+    public RelayCommand FilterLevelCriticalCommand { get; }
+    public RelayCommand FilterLevelPeripheralCommand { get; }
+
+    public string LevelFilter
+    {
+        get => _levelFilter;
+        set
+        {
+            if (!Set(ref _levelFilter, value)) return;
+            OnPropertyChanged(nameof(IsLevelAll));
+            OnPropertyChanged(nameof(IsLevelCritical));
+            OnPropertyChanged(nameof(IsLevelPeripheral));
+            ApplyFilter();
+        }
+    }
+
+    public bool IsLevelAll => _levelFilter == "all";
+    public bool IsLevelCritical => _levelFilter == "critical";
+    public bool IsLevelPeripheral => _levelFilter == "peripheral";
 
     public DriverClassNode? SelectedClass
     {
@@ -97,7 +127,13 @@ public sealed class DriverManagerViewModel : ObservableObject, IModule
     public bool IsBusy
     {
         get => _isBusy;
-        private set => Set(ref _isBusy, value);
+        private set
+        {
+            if (Set(ref _isBusy, value))
+            {
+                _setBusy?.Invoke(value);
+            }
+        }
     }
 
     public bool HasWindowsUpdates => WindowsUpdates.Count > 0;
@@ -196,6 +232,12 @@ public sealed class DriverManagerViewModel : ObservableObject, IModule
 
         var query = _all
             .Where(d => cls is null || cls.IsAll || d.ClassTitle == cls.Title)
+            .Where(d => _levelFilter switch
+            {
+                "critical" => d.IsCritical,
+                "peripheral" => !d.IsCritical,
+                _ => true
+            })
             .Where(d => kw.Length == 0 || d.SearchBlob.Contains(kw))
             .OrderBy(d => d.ClassTitle, StringComparer.CurrentCulture)
             .ThenBy(d => d.Provider, StringComparer.CurrentCulture)
@@ -521,6 +563,23 @@ public sealed class DriverManagerViewModel : ObservableObject, IModule
         catch (Exception ex)
         {
             MessageBox.Show($"打开备份目录失败：{ex.Message}", "WinKit", MessageBoxButton.OK, MessageBoxImage.Warning);
+        }
+    }
+
+    private void OpenDeviceManager()
+    {
+        try
+        {
+            Process.Start(new ProcessStartInfo
+            {
+                FileName = "devmgmt.msc",
+                UseShellExecute = true
+            });
+            _status("已打开系统设备管理器 (devmgmt.msc)");
+        }
+        catch (Exception ex)
+        {
+            MessageBox.Show($"打开设备管理器失败：{ex.Message}", "WinKit", MessageBoxButton.OK, MessageBoxImage.Warning);
         }
     }
 }

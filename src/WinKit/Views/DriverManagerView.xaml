@@ -73,8 +73,8 @@
                 <Grid Grid.Column="0">
                     <TextBox Style="{StaticResource SearchBox}"
                              Text="{Binding SearchText, UpdateSourceTrigger=PropertyChanged}"
-                             ToolTip="按驱动包名 (oem*.inf)、原始 .inf、厂商或类别搜索" />
-                    <TextBlock Text="搜索驱动包 / 厂商 / 类别…" Margin="12,0,0,0"
+                             ToolTip="按驱动包名 (oem*.inf)、原始 .inf、厂商、数字签名或类别搜索" />
+                    <TextBlock Text="搜索驱动包 / 厂商 / 数字签名…" Margin="12,0,0,0"
                                VerticalAlignment="Center" IsHitTestVisible="False"
                                FontSize="13" Foreground="{StaticResource Brush.TextMuted}"
                                Visibility="{Binding SearchText, Converter={StaticResource EmptyToVis}}" />
@@ -87,12 +87,15 @@
                     <Button Content="检查官方更新" Style="{StaticResource BtnBase}" Margin="0,0,6,0"
                             ToolTip="通过 Windows Update 检索微软官方 WHQL 驱动更新"
                             Command="{Binding CheckWindowsUpdatesCommand}" />
-                    <Button Content="安装本地 .inf…" Style="{StaticResource BtnBase}" Margin="0,0,6,0"
+                    <Button Content="安装 .inf…" Style="{StaticResource BtnBase}" Margin="0,0,6,0"
                             ToolTip="选择本地 .inf 驱动包调用 pnputil 安装或升级"
                             Command="{Binding InstallLocalInfCommand}" />
                     <Button Content="{Binding RestoreBackupText}" Style="{StaticResource BtnBase}" Margin="0,0,6,0"
                             Visibility="{Binding HasBackups, Converter={StaticResource BoolToVis}}"
                             Command="{Binding RestoreFromBackupCommand}" />
+                    <Button Content="设备管理器" Style="{StaticResource BtnBase}" Margin="0,0,6,0"
+                            ToolTip="打开系统设备管理器 (devmgmt.msc)"
+                            Command="{Binding OpenDeviceManagerCommand}" />
                     <Button Content="扫描硬件" Style="{StaticResource BtnBase}" Margin="0,0,6,0"
                             Command="{Binding ScanHardwareCommand}" />
                     <Button Content="重新扫描" Style="{StaticResource BtnBase}"
@@ -138,8 +141,28 @@
                         <RowDefinition Height="*" />
                     </Grid.RowDefinitions>
 
-                    <TextBlock Grid.Row="0" Text="{Binding SummaryText}" Style="{StaticResource Muted}"
-                               Margin="14,10,14,6" />
+                    <Grid Grid.Row="0" Margin="14,8,14,6">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="Auto" />
+                        </Grid.ColumnDefinitions>
+                        <TextBlock Grid.Column="0" Text="{Binding SummaryText}" Style="{StaticResource Muted}"
+                                   VerticalAlignment="Center" />
+                        <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Center">
+                            <ToggleButton Content="全部级别" Style="{StaticResource Chip}" Margin="0,0,6,0"
+                                          Padding="10,3" FontSize="12"
+                                          IsChecked="{Binding IsLevelAll, Mode=OneWay}"
+                                          Command="{Binding FilterLevelAllCommand}" />
+                            <ToggleButton Content="核心驱动" Style="{StaticResource Chip}" Margin="0,0,6,0"
+                                          Padding="10,3" FontSize="12"
+                                          IsChecked="{Binding IsLevelCritical, Mode=OneWay}"
+                                          Command="{Binding FilterLevelCriticalCommand}" />
+                            <ToggleButton Content="普通外设" Style="{StaticResource Chip}"
+                                          Padding="10,3" FontSize="12"
+                                          IsChecked="{Binding IsLevelPeripheral, Mode=OneWay}"
+                                          Command="{Binding FilterLevelPeripheralCommand}" />
+                        </StackPanel>
+                    </Grid>
 
                     <DataGrid Grid.Row="1" ItemsSource="{Binding Drivers}" Style="{StaticResource Grid}">
                         <DataGrid.ContextMenu>
@@ -152,10 +175,12 @@
                                           CommandParameter="{Binding PlacementTarget.SelectedItem, RelativeSource={RelativeSource AncestorType=ContextMenu}}" />
                                 <MenuItem Header="打开驱动备份目录"
                                           Command="{Binding PlacementTarget.DataContext.OpenBackupFolderCommand, RelativeSource={RelativeSource AncestorType=ContextMenu}}" />
+                                <MenuItem Header="打开系统设备管理器 (devmgmt.msc)"
+                                          Command="{Binding PlacementTarget.DataContext.OpenDeviceManagerCommand, RelativeSource={RelativeSource AncestorType=ContextMenu}}" />
                             </ContextMenu>
                         </DataGrid.ContextMenu>
                         <DataGrid.Columns>
-                            <DataGridTemplateColumn Header="驱动包 (.inf)" Width="1.6*">
+                            <DataGridTemplateColumn Header="驱动包 (.inf)" Width="1.4*" SortMemberPath="DisplayTitle">
                                 <DataGridTemplateColumn.CellTemplate>
                                     <DataTemplate>
                                         <TextBlock Text="{Binding DisplayTitle}" Style="{StaticResource CellText}"
@@ -163,14 +188,14 @@
                                     </DataTemplate>
                                 </DataGridTemplateColumn.CellTemplate>
                             </DataGridTemplateColumn>
-                            <DataGridTemplateColumn Header="设备类别" Width="1.3*">
+                            <DataGridTemplateColumn Header="设备类别" Width="1.1*" SortMemberPath="ClassTitle">
                                 <DataGridTemplateColumn.CellTemplate>
                                     <DataTemplate>
                                         <TextBlock Text="{Binding ClassTitle}" Style="{StaticResource CellMuted}" />
                                     </DataTemplate>
                                 </DataGridTemplateColumn.CellTemplate>
                             </DataGridTemplateColumn>
-                            <DataGridTemplateColumn Header="厂商" Width="1.2*">
+                            <DataGridTemplateColumn Header="厂商" Width="1.1*" SortMemberPath="Provider">
                                 <DataGridTemplateColumn.CellTemplate>
                                     <DataTemplate>
                                         <TextBlock Text="{Binding Provider}" Style="{StaticResource CellMuted}"
@@ -178,7 +203,7 @@
                                     </DataTemplate>
                                 </DataGridTemplateColumn.CellTemplate>
                             </DataGridTemplateColumn>
-                            <DataGridTemplateColumn Header="版本与日期" Width="1.4*">
+                            <DataGridTemplateColumn Header="版本与日期" Width="1.2*" SortMemberPath="VersionAndDate">
                                 <DataGridTemplateColumn.CellTemplate>
                                     <DataTemplate>
                                         <TextBlock Text="{Binding VersionAndDate}" Style="{StaticResource CellMuted}"
@@ -186,14 +211,22 @@
                                     </DataTemplate>
                                 </DataGridTemplateColumn.CellTemplate>
                             </DataGridTemplateColumn>
-                            <DataGridTemplateColumn Header="级别" Width="76">
+                            <DataGridTemplateColumn Header="数字签名" Width="1.1*" SortMemberPath="Signer">
+                                <DataGridTemplateColumn.CellTemplate>
+                                    <DataTemplate>
+                                        <TextBlock Text="{Binding Signer}" Style="{StaticResource CellMuted}"
+                                                   ToolTip="{Binding Signer}" />
+                                    </DataTemplate>
+                                </DataGridTemplateColumn.CellTemplate>
+                            </DataGridTemplateColumn>
+                            <DataGridTemplateColumn Header="级别" Width="76" SortMemberPath="RiskText">
                                 <DataGridTemplateColumn.CellTemplate>
                                     <DataTemplate>
                                         <TextBlock Text="{Binding RiskText}" Style="{StaticResource CellMuted}" />
                                     </DataTemplate>
                                 </DataGridTemplateColumn.CellTemplate>
                             </DataGridTemplateColumn>
-                            <DataGridTemplateColumn Header="操作" Width="148">
+                            <DataGridTemplateColumn Header="操作" Width="140" CanUserSort="False">
                                 <DataGridTemplateColumn.CellTemplate>
                                     <DataTemplate>
                                         <StackPanel Orientation="Horizontal" VerticalAlignment="Center">

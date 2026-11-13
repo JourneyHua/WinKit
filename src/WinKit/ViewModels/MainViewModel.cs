@@ -29,6 +29,7 @@ public sealed class MainViewModel : ObservableObject
     private NavItem? _selectedNav;
     private object? _currentViewModel;
     private string _statusText = "就绪";
+    private int _busyCount;
 
     public MainViewModel()
     {
@@ -62,9 +63,9 @@ public sealed class MainViewModel : ObservableObject
             {
                 Key = "apps",
                 Title = "应用管理",
-                Subtitle = "卸载桌面与商店应用、清理注册表残留、通过 winget 检测与更新软件",
+                Subtitle = "卸载桌面与商店应用、winget 检测更新、常用运行库体检与一键安装",
                 AccentBrush = new System.Windows.Media.SolidColorBrush(System.Windows.Media.Color.FromRgb(0x18, 0x64, 0xAB)),
-                Factory = () => new AppManagerViewModel(_journal, SetStatus)
+                Factory = () => new AppManagerViewModel(_journal, SetStatus, SetBusy)
             },
             new()
             {
@@ -72,7 +73,7 @@ public sealed class MainViewModel : ObservableObject
                 Title = "驱动管理",
                 Subtitle = "管理本机第三方驱动包、自动备份与卸载、检测安装官方与本地驱动更新",
                 AccentBrush = new System.Windows.Media.SolidColorBrush(System.Windows.Media.Color.FromRgb(0x0B, 0x72, 0x85)),
-                Factory = () => new DriverManagerViewModel(SetStatus)
+                Factory = () => new DriverManagerViewModel(SetStatus, SetBusy)
             },
             new()
             {
@@ -80,7 +81,7 @@ public sealed class MainViewModel : ObservableObject
                 Title = "注册表管理",
                 Subtitle = "按分类体检，只清理可证明无效的项",
                 AccentBrush = new System.Windows.Media.SolidColorBrush(System.Windows.Media.Color.FromRgb(0x53, 0x4A, 0xB7)),
-                Factory = () => new RegistryAuditViewModel(_journal, SetStatus)
+                Factory = () => new RegistryAuditViewModel(_journal, SetStatus, SetBusy)
             },
             new()
             {
@@ -95,6 +96,7 @@ public sealed class MainViewModel : ObservableObject
         _journal.Changed += SetStatus;
         UndoCommand = new RelayCommand(Undo);
         RestartExplorerCommand = new RelayCommand(RestartExplorer);
+        ElevateCommand = new RelayCommand(Elevate);
     }
 
     public ObservableCollection<NavItem> NavItems { get; }
@@ -138,12 +140,16 @@ public sealed class MainViewModel : ObservableObject
 
     public string ElevationText => Native.IsElevated() ? "已以管理员身份运行" : "未提权（部分功能不可用）";
 
+    public bool ShowElevateButton => !Native.IsElevated();
+
+    public bool IsGlobalBusy => _busyCount > 0;
+
     public string VersionText
     {
         get
         {
             var v = typeof(MainViewModel).Assembly.GetName().Version;
-            var verText = v is null ? "1.1.0" : $"{v.Major}.{v.Minor}.{Math.Max(0, v.Build)}";
+            var verText = v is null ? "1.2.0" : $"{v.Major}.{v.Minor}.{Math.Max(0, v.Build)}";
             return $"v{verText} · .NET 10";
         }
     }
@@ -152,6 +158,8 @@ public sealed class MainViewModel : ObservableObject
 
     public RelayCommand RestartExplorerCommand { get; }
 
+    public RelayCommand ElevateCommand { get; }
+
     public void Initialize()
     {
         if (SelectedNav is null) SelectedNav = NavItems[0];
@@ -159,6 +167,18 @@ public sealed class MainViewModel : ObservableObject
     }
 
     private void SetStatus(string message) => StatusText = message;
+
+    private void SetBusy(bool busy)
+    {
+        _busyCount = Math.Max(0, _busyCount + (busy ? 1 : -1));
+        OnPropertyChanged(nameof(IsGlobalBusy));
+    }
+
+    private static void Elevate()
+    {
+        if (Native.RestartAsAdmin())
+            Application.Current.Shutdown();
+    }
 
     private void Undo()
     {

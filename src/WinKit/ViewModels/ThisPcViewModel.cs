@@ -20,6 +20,7 @@ public sealed class ThisPcViewModel : ObservableObject, IModule
         Nodes = new ObservableCollection<ThisPcItem>();
         Drives = new ObservableCollection<ThisPcItem>();
         RefreshCommand = new RelayCommand(Refresh);
+        CopyPathCommand = new RelayCommand(p => CopyPath(p as ThisPcItem));
     }
 
     public ObservableCollection<ThisPcItem> Folders { get; }
@@ -27,6 +28,21 @@ public sealed class ThisPcViewModel : ObservableObject, IModule
     public ObservableCollection<ThisPcItem> Drives { get; }
 
     public RelayCommand RefreshCommand { get; }
+    public RelayCommand CopyPathCommand { get; }
+
+    private void CopyPath(ThisPcItem? item)
+    {
+        if (item is null || string.IsNullOrWhiteSpace(item.Detail)) return;
+        try
+        {
+            Clipboard.SetText(item.Detail);
+            _status($"已复制路径：{item.Detail}");
+        }
+        catch (Exception ex)
+        {
+            _status("复制失败：" + ex.Message);
+        }
+    }
 
     public bool IsLoading
     {

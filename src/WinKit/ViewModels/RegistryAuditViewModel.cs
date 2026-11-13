@@ -29,6 +29,7 @@ public sealed class RegistryAuditViewModel : ObservableObject, IModule
 {
     private readonly RegistryAuditService _service;
     private readonly Action<string> _status;
+    private readonly Action<bool>? _setBusy;
 
     private CategoryNode? _selectedCategory;
     private string _searchText = "";
@@ -37,10 +38,11 @@ public sealed class RegistryAuditViewModel : ObservableObject, IModule
     private string _summaryText = "";
     private bool _isBusy;
 
-    public RegistryAuditViewModel(ChangeJournal journal, Action<string> status)
+    public RegistryAuditViewModel(ChangeJournal journal, Action<string> status, Action<bool>? setBusy = null)
     {
         _service = new RegistryAuditService(journal);
         _status = status;
+        _setBusy = setBusy;
 
         Categories = new ObservableCollection<CategoryNode>
         {
@@ -55,10 +57,12 @@ public sealed class RegistryAuditViewModel : ObservableObject, IModule
 
         Items = new ObservableCollection<RegistryItem>();
         RefreshCommand = new RelayCommand(() => Load(SelectedCategory));
+        ScanAllCategoriesCommand = new RelayCommand(() => _ = ScanAllCategoriesAsync());
         RemoveCommand = new RelayCommand(p => Remove(p as RegistryItem));
         RemoveAllCommand = new RelayCommand(RemoveAll);
         CopyPathCommand = new RelayCommand(p => CopyPath(p as RegistryItem));
         CopyDetailCommand = new RelayCommand(p => CopyDetail(p as RegistryItem));
+        OpenRegeditCommand = new RelayCommand(p => OpenRegedit(p as RegistryItem));
 
         _selectedCategory = Categories[0];
     }
@@ -68,6 +72,7 @@ public sealed class RegistryAuditViewModel : ObservableObject, IModule
     public ObservableCollection<RegistryItem> Items { get; }
 
     public RelayCommand RefreshCommand { get; }
+    public RelayCommand ScanAllCategoriesCommand { get; }
 
     public RelayCommand RemoveCommand { get; }
 
@@ -76,6 +81,7 @@ public sealed class RegistryAuditViewModel : ObservableObject, IModule
     public RelayCommand CopyPathCommand { get; }
 
     public RelayCommand CopyDetailCommand { get; }
+    public RelayCommand OpenRegeditCommand { get; }
 
     public bool CanRemoveAll => Items.Any(i => i.CanRemove);
 
@@ -129,7 +135,59 @@ public sealed class RegistryAuditViewModel : ObservableObject, IModule
     public bool IsBusy
     {
         get => _isBusy;
-        private set => Set(ref _isBusy, value);
+        private set
+        {
+            if (Set(ref _isBusy, value))
+            {
+                _setBusy?.Invoke(value);
+            }
+        }
+    }
+
+    private async Task ScanAllCategoriesAsync()
+    {
+        if (IsBusy) return;
+        IsBusy = true;
+
+        try
+        {
+            var totalInvalid = 0;
+            RegistryAuditResult? currentResult = null;
+            var activeCat = SelectedCategory ?? Categories[0];
+
+            foreach (var cat in Categories)
+            {
+                _status($"正在全分类体检：{cat.Title}…");
+                var res = await Task.Run(() => _service.Load(cat.Kind));
+                var invalidCount = res.Items.Count(i => i.IsInvalid);
+                cat.Count = invalidCount;
+                totalInvalid += invalidCount;
+                if (cat == activeCat)
+                {
+                    currentResult = res;
+                }
+            }
+
+            if (currentResult is not null)
+            {
+                _all = currentResult.Items;
+                NoteText = currentResult.Note ?? "";
+                _scannedText = currentResult.Truncated
+                    ? $"已扫描 {currentResult.Scanned} 项（超过上限，结果可能不完整）"
+                    : $"已扫描 {currentResult.Scanned} 项";
+                ApplyFilter();
+            }
+
+            _status($"全分类体检完成：7 个分类共发现 {totalInvalid} 个可疑项");
+        }
+        catch (Exception ex)
+        {
+            _status($"全分类体检失败：{ex.Message}");
+        }
+        finally
+        {
+            IsBusy = false;
+        }
     }
 
     private List<RegistryItem> _all = new();
@@ -256,6 +314,15 @@ public sealed class RegistryAuditViewModel : ObservableObject, IModule
         {
             // 剪贴板被占用时忽略
         }
+    }
+
+    private void OpenRegedit(RegistryItem? item)
+    {
+        if (item is null || string.IsNullOrWhiteSpace(item.CopyablePath)) return;
+        if (Native.OpenInRegedit(item.CopyablePath))
+            _status($"已在注册表编辑器中定位：{item.Name}");
+        else
+            _status("无法打开注册表编辑器");
     }
 
     private void Remove(RegistryItem? item)

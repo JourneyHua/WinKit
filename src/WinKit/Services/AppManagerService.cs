@@ -31,6 +31,11 @@ public sealed class InstalledAppItem : ObservableObject
     public string SizeText { get; init; } = "—";
     public string InstallDate { get; init; } = "";
 
+    public string InstallDateFormatted =>
+        InstallDate.Length == 8 && InstallDate.All(char.IsDigit)
+            ? $"{InstallDate[..4]}-{InstallDate[4..6]}-{InstallDate[6..8]}"
+            : string.IsNullOrWhiteSpace(InstallDate) ? "—" : InstallDate;
+
     public string KindText => Kind == AppSourceKind.Desktop ? "桌面软件" : "商店/打包";
 
     public string Version
@@ -278,10 +283,10 @@ public sealed class AppManagerService
     }
 
     /// <summary>
-    /// 调用 winget upgrade 获取本机可升级的软件列表，并写回匹配到的 InstalledAppItem。
+    /// 调用 winget upgrade 获取本机可升级的软件列表，并写回匹配到的 InstalledAppItem（未在本地列表中匹配到的 winget 可升级项也会自动补充）。
     /// </summary>
     public async Task<(int MatchedCount, List<WingetUpgradeEntry> RawUpgrades, string? Error)> CheckUpdatesAsync(
-        IReadOnlyList<InstalledAppItem> apps)
+        List<InstalledAppItem> apps)
     {
         var (exitCode, output, error) = await RunProcessAsync(
             "winget",
@@ -292,6 +297,7 @@ public sealed class AppManagerService
             return (0, new List<WingetUpgradeEntry>(), error);
 
         var upgrades = ParseWingetUpgradeTable(output);
+        apps.RemoveAll(a => a.Id.StartsWith("winget:", StringComparison.OrdinalIgnoreCase));
         foreach (var app in apps)
         {
             app.LatestVersion = "";
@@ -302,11 +308,29 @@ public sealed class AppManagerService
         foreach (var up in upgrades)
         {
             var target = MatchApp(apps, up);
-            if (target is null) continue;
-
-            target.WingetId = up.Id;
-            target.LatestVersion = up.AvailableVersion;
-            matched++;
+            if (target is not null)
+            {
+                target.WingetId = up.Id;
+                target.LatestVersion = up.AvailableVersion;
+                matched++;
+            }
+            else
+            {
+                var pub = up.Id.Contains('.') ? up.Id.Split('.')[0] : "winget";
+                apps.Add(new InstalledAppItem
+                {
+                    Id = $"winget:{up.Id}",
+                    Name = up.Name,
+                    Publisher = pub,
+                    Version = up.CurrentVersion,
+                    LatestVersion = up.AvailableVersion,
+                    WingetId = up.Id,
+                    Kind = AppSourceKind.Desktop,
+                    InstallLocation = $"winget 包 ({up.Id})",
+                    SizeText = "—"
+                });
+                matched++;
+            }
         }
 
         return (matched, upgrades, null);

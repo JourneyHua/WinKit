@@ -64,7 +64,14 @@
 
             <Border Grid.Row="1" Style="{StaticResource Card}" Margin="0,0,0,12" Padding="16,14">
                 <StackPanel>
-                    <TextBlock Text="导航栏固定项（软件节点）" Style="{StaticResource H2}" />
+                    <Grid>
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="Auto" />
+                        </Grid.ColumnDefinitions>
+                        <TextBlock Grid.Column="0" Text="导航栏固定项（软件节点）" Style="{StaticResource H2}" VerticalAlignment="Center" />
+                        <Button Grid.Column="1" Content="重新扫描" Style="{StaticResource BtnSmall}" Command="{Binding RefreshCommand}" />
+                    </Grid>
                     <TextBlock Style="{StaticResource Muted}" Margin="0,4,0,10"
                                Text="iCloud、网盘、应用宝这类软件自己钉在资源管理器左侧的节点。取消勾选即从导航栏消失，只改一个标志位（IsPinnedToNameSpaceTree），随时可恢复。" />
 
@@ -87,17 +94,31 @@
                                                   Cursor="Hand" />
 
                                         <StackPanel Grid.Column="1" VerticalAlignment="Center">
-                                            <TextBlock Text="{Binding DisplayName}" FontSize="13"
-                                                       Foreground="{StaticResource Brush.Text}"
-                                                       TextTrimming="CharacterEllipsis" />
+                                            <StackPanel Orientation="Horizontal">
+                                                <TextBlock Text="{Binding DisplayName}" FontSize="13"
+                                                           Foreground="{StaticResource Brush.Text}"
+                                                           TextTrimming="CharacterEllipsis" />
+                                                <TextBlock Text="{Binding Clsid}" FontSize="11"
+                                                           Foreground="{StaticResource Brush.TextMuted}"
+                                                           Margin="8,0,0,0" VerticalAlignment="Center" />
+                                            </StackPanel>
                                             <TextBlock Text="{Binding OwnerText}" FontSize="11"
                                                        Foreground="{StaticResource Brush.TextMuted}"
-                                                       TextTrimming="CharacterEllipsis" />
+                                                       TextTrimming="CharacterEllipsis"
+                                                       ToolTip="{Binding RegistryPath}" />
                                         </StackPanel>
 
-                                        <TextBlock Grid.Column="2" Text="{Binding StatusText}" FontSize="12"
-                                                   Foreground="{StaticResource Brush.TextMuted}"
-                                                   VerticalAlignment="Center" Margin="10,0,0,0" />
+                                        <StackPanel Grid.Column="2" Orientation="Horizontal" VerticalAlignment="Center" Margin="10,0,0,0">
+                                            <TextBlock Text="{Binding StatusText}" FontSize="12"
+                                                       Foreground="{StaticResource Brush.TextMuted}"
+                                                       VerticalAlignment="Center" Margin="0,0,8,0" />
+                                            <Button Content="复制路径" Style="{StaticResource BtnSmall}" Margin="0,0,4,0"
+                                                    Command="{Binding DataContext.CopyPinnedPathCommand, RelativeSource={RelativeSource AncestorType=UserControl}}"
+                                                    CommandParameter="{Binding}" />
+                                            <Button Content="定位注册表" Style="{StaticResource BtnSmall}"
+                                                    Command="{Binding DataContext.OpenPinnedRegeditCommand, RelativeSource={RelativeSource AncestorType=UserControl}}"
+                                                    CommandParameter="{Binding}" />
+                                        </StackPanel>
                                     </Grid>
                                 </Border>
                             </DataTemplate>

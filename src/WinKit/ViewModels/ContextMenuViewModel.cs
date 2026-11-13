@@ -38,8 +38,10 @@ public sealed class ContextMenuViewModel : ObservableObject, IModule
     private DomainNode? _selectedDomain;
     private DomainNode? _selectedNewDomain;
     private string _searchText = "";
+    private string _newSearchText = "";
     private bool _onlyThirdParty = true;
     private bool _onlyDisabled;
+    private bool _onlyBlockedNew;
     private bool _showNewMenu = true;
     private bool _useClassicMenuByDefault;
     private string _newMenuHint = "";
@@ -70,6 +72,7 @@ public sealed class ContextMenuViewModel : ObservableObject, IModule
         RenameCommand = new RelayCommand(p => Rename(p as MenuEntry));
         CopyPathCommand = new RelayCommand(CopyPath);
         CopyCommandPathCommand = new RelayCommand(CopyCommandPath);
+        OpenRegeditCommand = new RelayCommand(OpenRegedit);
         ShowNewMenuCommand = new RelayCommand(() => ShowNewMenu = true);
         ShowClassicMenuCommand = new RelayCommand(() => ShowNewMenu = false);
         UninstallCommand = new RelayCommand(p => Uninstall(p as NewMenuItem));
@@ -103,6 +106,7 @@ public sealed class ContextMenuViewModel : ObservableObject, IModule
     public RelayCommand RenameCommand { get; }
     public RelayCommand CopyPathCommand { get; }
     public RelayCommand CopyCommandPathCommand { get; }
+    public RelayCommand OpenRegeditCommand { get; }
     public RelayCommand ShowNewMenuCommand { get; }
     public RelayCommand ShowClassicMenuCommand { get; }
     public RelayCommand UninstallCommand { get; }
@@ -141,6 +145,24 @@ public sealed class ContextMenuViewModel : ObservableObject, IModule
         set
         {
             if (Set(ref _onlyDisabled, value)) ApplyFilter();
+        }
+    }
+
+    public string NewSearchText
+    {
+        get => _newSearchText;
+        set
+        {
+            if (Set(ref _newSearchText, value)) ApplyNewMenuFilter();
+        }
+    }
+
+    public bool OnlyBlockedNew
+    {
+        get => _onlyBlockedNew;
+        set
+        {
+            if (Set(ref _onlyBlockedNew, value)) ApplyNewMenuFilter();
         }
     }
 
@@ -349,6 +371,7 @@ public sealed class ContextMenuViewModel : ObservableObject, IModule
         if (SelectedNewDomain is null) return;
 
         var kind = SelectedNewDomain.Kind;
+        var kw = _newSearchText.Trim().ToLowerInvariant();
 
         IEnumerable<NewMenuItem> query = kind switch
         {
@@ -356,6 +379,10 @@ public sealed class ContextMenuViewModel : ObservableObject, IModule
             MenuDomainKind.Drive => NewMenuItems.Where(i => i.ScopeConfirmed && MatchesDriveScope(i)),
             _ => NewMenuItems.Where(i => i.ScopeConfirmed && i.Scopes.Contains(kind))
         };
+
+        query = query
+            .Where(i => !_onlyBlockedNew || i.IsBlocked)
+            .Where(i => kw.Length == 0 || i.SearchBlob.Contains(kw));
 
         foreach (var item in query.OrderBy(i => i.DisplayName, StringComparer.CurrentCulture))
             FilteredNewItems.Add(item);
@@ -644,5 +671,26 @@ public sealed class ContextMenuViewModel : ObservableObject, IModule
         {
             // 剪贴板被占用时忽略
         }
+    }
+
+    private void OpenRegedit(object? parameter)
+    {
+        string? regPath = parameter switch
+        {
+            MenuEntry entry when entry.RegistryPath.StartsWith("HKEY_", StringComparison.OrdinalIgnoreCase) => entry.RegistryPath,
+            NewMenuItem item when item.Packages.Count > 0 =>
+                $@"HKEY_LOCAL_MACHINE\SOFTWARE\Classes\PackagedCom\Package\{item.Packages[0]}",
+            _ => null
+        };
+
+        if (string.IsNullOrWhiteSpace(regPath))
+        {
+            MessageBox.Show("当前条目不是注册表键（如发送到快捷方式），无法在 regedit 中打开。",
+                "WinKit", MessageBoxButton.OK, MessageBoxImage.Information);
+            return;
+        }
+
+        if (Native.OpenInRegedit(regPath))
+            _status($"已在注册表编辑器中定位：{regPath}");
     }
 }

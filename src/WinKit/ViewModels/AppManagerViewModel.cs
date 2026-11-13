@@ -11,27 +11,36 @@ namespace WinKit.ViewModels;
 public sealed class AppManagerViewModel : ObservableObject, IModule
 {
     private readonly AppManagerService _service;
+    private readonly RuntimeCheckService _runtimeService = new();
     private readonly UninstallService _uninstall = new();
     private readonly Action<string> _status;
+    private readonly Action<bool>? _setBusy;
 
     private List<InstalledAppItem> _all = new();
+    private List<RuntimeComponentItem> _allRuntimes = new();
     private string _searchText = "";
+    private string _runtimeSearchText = "";
     private string _sourceFilter = "all"; // all | desktop | store
     private bool _onlyUpdatable;
+    private bool _onlyMissingRuntimes;
+    private bool _showRuntimes;
     private bool _isBusy;
     private string _summaryText = "";
+    private string _runtimeSummaryText = "";
     private string _hintText = "汇总本机已安装的传统桌面软件与 Microsoft Store / MSIX 打包应用。点「检查更新」将通过系统内置 winget 对比最新版本；卸载后自动扫描注册表残留（支持一键快照清理）与残留目录。";
 
     private DispatcherTimer? _uninstallTimer;
     private DateTime _uninstallDeadline;
     private InstalledAppItem? _lastUninstalled;
 
-    public AppManagerViewModel(ChangeJournal journal, Action<string> status)
+    public AppManagerViewModel(ChangeJournal journal, Action<string> status, Action<bool>? setBusy = null)
     {
         _service = new AppManagerService(journal);
         _status = status;
+        _setBusy = setBusy;
 
         Apps = new ObservableCollection<InstalledAppItem>();
+        Runtimes = new ObservableCollection<RuntimeComponentItem>();
 
         RefreshCommand = new RelayCommand(ManualRefresh);
         CheckUpdatesCommand = new RelayCommand(() => _ = CheckUpdatesAsync());
@@ -40,15 +49,23 @@ public sealed class AppManagerViewModel : ObservableObject, IModule
         UninstallAppCommand = new RelayCommand(p => _ = UninstallAppAsync(p as InstalledAppItem));
         OpenLocationCommand = new RelayCommand(p => OpenLocation(p as InstalledAppItem));
         CopyPathCommand = new RelayCommand(p => CopyPath(p as InstalledAppItem));
+        OpenRegeditCommand = new RelayCommand(p => OpenRegedit(p as InstalledAppItem));
         RecheckResidualCommand = new RelayCommand(RecheckResidual);
         ScanResidualCommand = new RelayCommand(p => ScanItemResidual(p as InstalledAppItem));
 
         FilterAllCommand = new RelayCommand(() => SourceFilter = "all");
         FilterDesktopCommand = new RelayCommand(() => SourceFilter = "desktop");
         FilterStoreCommand = new RelayCommand(() => SourceFilter = "store");
+
+        ShowAppsViewCommand = new RelayCommand(() => ShowRuntimes = false);
+        ShowRuntimesViewCommand = new RelayCommand(() => ShowRuntimes = true);
+        CheckRuntimesCommand = new RelayCommand(RefreshRuntimes);
+        InstallRuntimeCommand = new RelayCommand(p => _ = InstallRuntimeAsync(p as RuntimeComponentItem));
+        InstallAllMissingRuntimesCommand = new RelayCommand(() => _ = InstallAllMissingRuntimesAsync());
     }
 
     public ObservableCollection<InstalledAppItem> Apps { get; }
+    public ObservableCollection<RuntimeComponentItem> Runtimes { get; }
 
     public RelayCommand RefreshCommand { get; }
     public RelayCommand CheckUpdatesCommand { get; }
@@ -57,12 +74,63 @@ public sealed class AppManagerViewModel : ObservableObject, IModule
     public RelayCommand UninstallAppCommand { get; }
     public RelayCommand OpenLocationCommand { get; }
     public RelayCommand CopyPathCommand { get; }
+    public RelayCommand OpenRegeditCommand { get; }
     public RelayCommand RecheckResidualCommand { get; }
     public RelayCommand ScanResidualCommand { get; }
 
     public RelayCommand FilterAllCommand { get; }
     public RelayCommand FilterDesktopCommand { get; }
     public RelayCommand FilterStoreCommand { get; }
+
+    public RelayCommand ShowAppsViewCommand { get; }
+    public RelayCommand ShowRuntimesViewCommand { get; }
+    public RelayCommand CheckRuntimesCommand { get; }
+    public RelayCommand InstallRuntimeCommand { get; }
+    public RelayCommand InstallAllMissingRuntimesCommand { get; }
+
+    public bool ShowRuntimes
+    {
+        get => _showRuntimes;
+        set
+        {
+            if (!Set(ref _showRuntimes, value)) return;
+            OnPropertyChanged(nameof(ShowInstalledApps));
+            if (value && _allRuntimes.Count == 0)
+            {
+                RefreshRuntimes();
+            }
+        }
+    }
+
+    public bool ShowInstalledApps => !_showRuntimes;
+
+    public string RuntimeSearchText
+    {
+        get => _runtimeSearchText;
+        set
+        {
+            if (Set(ref _runtimeSearchText, value)) ApplyRuntimeFilter();
+        }
+    }
+
+    public bool OnlyMissingRuntimes
+    {
+        get => _onlyMissingRuntimes;
+        set
+        {
+            if (Set(ref _onlyMissingRuntimes, value)) ApplyRuntimeFilter();
+        }
+    }
+
+    public string RuntimeSummaryText
+    {
+        get => _runtimeSummaryText;
+        private set => Set(ref _runtimeSummaryText, value);
+    }
+
+    public int MissingRuntimeCount => _allRuntimes.Count(r => !r.IsInstalled);
+    public bool HasMissingRuntimes => MissingRuntimeCount > 0;
+    public string InstallAllMissingText => $"一键补齐缺失运行库（{MissingRuntimeCount}）";
 
     public string SearchText
     {
@@ -102,7 +170,13 @@ public sealed class AppManagerViewModel : ObservableObject, IModule
     public bool IsBusy
     {
         get => _isBusy;
-        private set => Set(ref _isBusy, value);
+        private set
+        {
+            if (Set(ref _isBusy, value))
+            {
+                _setBusy?.Invoke(value);
+            }
+        }
     }
 
     public string SummaryText
@@ -163,7 +237,12 @@ public sealed class AppManagerViewModel : ObservableObject, IModule
             }
 
             ApplyFilter();
-            _status($"已加载 {_all.Count} 个应用");
+            if (_allRuntimes.Count == 0)
+            {
+                _allRuntimes = _runtimeService.CheckAll();
+                ApplyRuntimeFilter();
+            }
+            _status($"已加载 {_all.Count} 个应用，检测到 {_allRuntimes.Count(r => r.IsInstalled)}/{_allRuntimes.Count} 项运行库已就绪");
         }
         catch (Exception ex)
         {
@@ -536,5 +615,142 @@ public sealed class AppManagerViewModel : ObservableObject, IModule
             _status($"已复制路径：{app.CopyablePath}");
         }
         catch (Exception) { }
+    }
+
+    private void OpenRegedit(InstalledAppItem? app)
+    {
+        if (app is null || string.IsNullOrWhiteSpace(app.RegistryPath))
+        {
+            MessageBox.Show("该条目没有直接关联的本地注册表路径。", "WinKit",
+                MessageBoxButton.OK, MessageBoxImage.Information);
+            return;
+        }
+
+        if (Native.OpenInRegedit(app.RegistryPath))
+            _status($"已在注册表编辑器中定位：{app.Name}");
+        else
+            _status("无法打开注册表编辑器");
+    }
+
+    public void RefreshRuntimes()
+    {
+        try
+        {
+            _allRuntimes = _runtimeService.CheckAll();
+            ApplyRuntimeFilter();
+            var installed = _allRuntimes.Count(r => r.IsInstalled);
+            _status($"运行库体检完成：共 {_allRuntimes.Count} 项，已安装 {installed} 项，缺失 {_allRuntimes.Count - installed} 项");
+        }
+        catch (Exception ex)
+        {
+            _status($"运行库检测失败：{ex.Message}");
+        }
+    }
+
+    private void ApplyRuntimeFilter()
+    {
+        Runtimes.Clear();
+        var kw = _runtimeSearchText.Trim().ToLowerInvariant();
+
+        var query = _allRuntimes
+            .Where(r => !_onlyMissingRuntimes || !r.IsInstalled)
+            .Where(r => kw.Length == 0 || r.SearchBlob.Contains(kw))
+            .OrderBy(r => r.IsInstalled ? 1 : 0)
+            .ThenBy(r => r.Category)
+            .ThenBy(r => r.Name);
+
+        foreach (var item in query) Runtimes.Add(item);
+
+        var installedCount = _allRuntimes.Count(r => r.IsInstalled);
+        var missingCount = _allRuntimes.Count - installedCount;
+        RuntimeSummaryText = $"共检测 {_allRuntimes.Count} 项核心运行库 · 已就绪 {installedCount} 项 · 缺失 {missingCount} 项 · 当前显示 {Runtimes.Count} 项";
+
+        OnPropertyChanged(nameof(MissingRuntimeCount));
+        OnPropertyChanged(nameof(HasMissingRuntimes));
+        OnPropertyChanged(nameof(InstallAllMissingText));
+    }
+
+    private async Task InstallRuntimeAsync(RuntimeComponentItem? item)
+    {
+        if (item is null || IsBusy) return;
+
+        var actionName = item.IsInstalled ? "重新安装 / 修复" : "安装";
+        var sourceDesc = item.InstallId.StartsWith("DISM:", StringComparison.OrdinalIgnoreCase)
+            ? $"系统 DISM 组件启用 ({item.InstallId})"
+            : string.IsNullOrWhiteSpace(item.InstallId)
+                ? "系统内置组件"
+                : $"winget 官方源 ({item.InstallId})";
+
+        var confirm = MessageBox.Show(
+            $"即将{actionName}「{item.Name} ({item.Architecture})」：\n\n" +
+            $"安装方式：{sourceDesc}\n" +
+            $"组件说明：{item.Description}\n\n" +
+            "确定继续吗？",
+            $"{actionName}运行库", MessageBoxButton.OKCancel, MessageBoxImage.Information);
+
+        if (confirm != MessageBoxResult.OK) return;
+
+        IsBusy = true;
+        try
+        {
+            var (ok, msg) = await _runtimeService.InstallRuntimeAsync(item, s => _status(s));
+            _status(msg);
+            RefreshRuntimes();
+
+            if (!ok)
+            {
+                MessageBox.Show(msg, "运行库安装结果", MessageBoxButton.OK, MessageBoxImage.Warning);
+            }
+        }
+        finally
+        {
+            IsBusy = false;
+        }
+    }
+
+    private async Task InstallAllMissingRuntimesAsync()
+    {
+        var missing = _allRuntimes.Where(r => !r.IsInstalled).ToList();
+        if (missing.Count == 0 || IsBusy) return;
+
+        var listPreview = string.Join("\n• ", missing.Take(10).Select(m => $"{m.Name} ({m.Architecture})"));
+        if (missing.Count > 10) listPreview += $"\n…等共 {missing.Count} 项";
+
+        var confirm = MessageBox.Show(
+            $"将依次通过官方源安装本机缺失的 {missing.Count} 项运行库：\n\n• {listPreview}\n\n" +
+            "确定开始一键补齐吗？",
+            "一键补齐缺失运行库", MessageBoxButton.OKCancel, MessageBoxImage.Information);
+
+        if (confirm != MessageBoxResult.OK) return;
+
+        IsBusy = true;
+        var okCount = 0;
+        var failed = new List<string>();
+
+        try
+        {
+            for (var i = 0; i < missing.Count; i++)
+            {
+                var item = missing[i];
+                var prefix = $"[{i + 1}/{missing.Count}] ";
+                var (ok, msg) = await _runtimeService.InstallRuntimeAsync(item, s => _status(prefix + s));
+                if (ok) okCount++;
+                else failed.Add($"{item.Name}：{msg}");
+            }
+
+            RefreshRuntimes();
+            _status($"运行库批量补齐完成：成功 {okCount} 项，失败 {failed.Count} 项");
+
+            if (failed.Count > 0)
+            {
+                MessageBox.Show(
+                    $"已成功安装 {okCount} 项运行库，以下 {failed.Count} 项未完成：\n\n• " + string.Join("\n• ", failed),
+                    "运行库批量安装结果", MessageBoxButton.OK, MessageBoxImage.Warning);
+            }
+        }
+        finally
+        {
+            IsBusy = false;
+        }
     }
 }

@@ -38,6 +38,8 @@ public sealed class NavPaneViewModel : ObservableObject, IModule
         RestartExplorerCommand = new RelayCommand(RestartExplorer);
         PurgeStubbornCommand = new RelayCommand(p => PurgeStubborn(p as StubbornGroup));
         StopRebuilderCommand = new RelayCommand(p => StopRebuilder(p as StubbornGroup));
+        CopyPinnedPathCommand = new RelayCommand(p => CopyPinnedPath(p as PinnedFolderItem));
+        OpenPinnedRegeditCommand = new RelayCommand(p => OpenPinnedRegedit(p as PinnedFolderItem));
     }
 
     public ObservableCollection<QuickAccessItem> Pinned { get; }
@@ -55,6 +57,33 @@ public sealed class NavPaneViewModel : ObservableObject, IModule
     public RelayCommand RestartExplorerCommand { get; }
     public RelayCommand PurgeStubbornCommand { get; }
     public RelayCommand StopRebuilderCommand { get; }
+    public RelayCommand CopyPinnedPathCommand { get; }
+    public RelayCommand OpenPinnedRegeditCommand { get; }
+
+    private void CopyPinnedPath(PinnedFolderItem? item)
+    {
+        if (item is null) return;
+        var text = $"{item.Hive}\\{item.RegistryPath}";
+        try
+        {
+            Clipboard.SetText(text);
+            _status($"已复制路径：{text}");
+        }
+        catch (Exception ex)
+        {
+            _status("复制失败：" + ex.Message);
+        }
+    }
+
+    private void OpenPinnedRegedit(PinnedFolderItem? item)
+    {
+        if (item is null) return;
+        var path = $"{item.Hive}\\{item.RegistryPath}";
+        if (Native.OpenInRegedit(path))
+            _status($"已在注册表编辑器中定位：{item.Clsid}");
+        else
+            _status("无法打开注册表编辑器");
+    }
 
     public string LoadError
     {
