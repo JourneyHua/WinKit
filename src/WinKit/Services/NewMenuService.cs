@@ -7,6 +7,7 @@ public sealed class NewMenuItem : ObservableObject
     private bool _isBlocked;
 
     public string Package { get; init; } = "";
+    public IReadOnlyList<string> Packages { get; init; } = Array.Empty<string>();
     public string DisplayName { get; init; } = "";
     public string ClassNames { get; init; } = "";
     public string Location { get; init; } = "";
@@ -156,8 +157,8 @@ public sealed class NewMenuService
             }
         }
 
-        // 同一个软件可能有多个版本的包，按显示名合并成一行
-        var merged = new Dictionary<string, (string Package, List<string> Clsids, string Location, ManifestScopeInfo Manifest)>(StringComparer.OrdinalIgnoreCase);
+        // 同一个软件可能有多个版本的包，按显示名合并成一行，并保留全部包名以免漏改
+        var merged = new Dictionary<string, (List<string> Packages, List<string> Clsids, string Location, ManifestScopeInfo Manifest)>(StringComparer.OrdinalIgnoreCase);
         var manifests = new Dictionary<string, ManifestScopeInfo>(StringComparer.OrdinalIgnoreCase);
 
         foreach (var pair in packages)
@@ -194,9 +195,12 @@ public sealed class NewMenuService
 
             if (!merged.TryGetValue(display!, out var entry))
             {
-                entry = (package, new List<string>(), location, manifest);
+                entry = (new List<string>(), new List<string>(), location, manifest);
                 merged[display!] = entry;
             }
+
+            if (!entry.Packages.Contains(package, StringComparer.OrdinalIgnoreCase))
+                entry.Packages.Add(package);
 
             foreach (var clsid in effective)
                 if (!entry.Clsids.Contains(clsid, StringComparer.OrdinalIgnoreCase))
@@ -206,7 +210,17 @@ public sealed class NewMenuService
                 entry.Location = location;
 
             if (!entry.Manifest.Found && manifest.Found)
+            {
                 entry.Manifest = manifest;
+            }
+            else if (entry.Manifest.Found && manifest.Found)
+            {
+                foreach (var scopeType in manifest.ScopeTypes)
+                {
+                    if (!entry.Manifest.ScopeTypes.Contains(scopeType, StringComparer.OrdinalIgnoreCase))
+                        entry.Manifest.ScopeTypes.Add(scopeType);
+                }
+            }
 
             merged[display!] = entry;
         }
@@ -216,8 +230,8 @@ public sealed class NewMenuService
         foreach (var pair in merged)
         {
             var display = pair.Key;
-            var (package, clsids, location, manifest) = pair.Value;
-            if (clsids.Count == 0) continue;
+            var (pkgList, clsids, location, manifest) = pair.Value;
+            if (clsids.Count == 0 || pkgList.Count == 0) continue;
 
             var blockedCount = clsids.Count(ContextMenuService.IsBlocked);
 
@@ -230,7 +244,8 @@ public sealed class NewMenuService
 
             items.Add(new NewMenuItem
             {
-                Package = package,
+                Package = string.Join(" / ", pkgList),
+                Packages = pkgList,
                 DisplayName = display,
                 ClassNames = DescribeClasses(clsids),
                 Location = location,
@@ -238,7 +253,7 @@ public sealed class NewMenuService
                 Scopes = scopes,
                 ScopeConfirmed = manifest.Found && manifest.ScopeTypes.Count > 0,
                 IsBlocked = blockedCount > 0,
-                DeepBlocked = blockedCount > 0 && clsids.Any(c => !ClassKeyActive(package, c)),
+                DeepBlocked = blockedCount > 0 && clsids.Any(c => !ClassKeyActive(pkgList, c)),
                 CanBlock = true,
                 Note = blockedCount > 0 && blockedCount < clsids.Count ? "部分类已被屏蔽" : ""
             });
@@ -338,6 +353,12 @@ public sealed class NewMenuService
         var clsids = item.Clsids.ToList();
         if (clsids.Count == 0) return;
 
+        var packages = item.Packages.Count > 0
+            ? item.Packages
+            : string.IsNullOrWhiteSpace(item.Package)
+                ? Array.Empty<string>()
+                : new[] { item.Package };
+
         var tracked = new List<(HiveKind Hive, string SubKey)>
         {
             (HiveKind.LocalMachine, BlockedHklm),
@@ -346,14 +367,17 @@ public sealed class NewMenuService
 
         // 打包应用的菜单项不光写屏蔽列表，还要把 PackagedCom 里的类登记改名——
         // 只写 Blocked 对 IExplorerCommand（稀疏包）经常不生效，这是实测结论。
-        foreach (var clsid in clsids)
+        foreach (var pkg in packages)
         {
-            var leaf = "{" + NormalizeClsid(clsid) + "}";
-            foreach (var hive in new[] { HiveKind.LocalMachine, HiveKind.CurrentUser })
+            foreach (var clsid in clsids)
             {
-                var classKey = $@"Software\Classes\PackagedCom\Package\{item.Package}\Class\{leaf}";
-                tracked.Add((hive, classKey));
-                tracked.Add((hive, classKey + DisabledSuffix));
+                var leaf = "{" + NormalizeClsid(clsid) + "}";
+                foreach (var hive in new[] { HiveKind.LocalMachine, HiveKind.CurrentUser })
+                {
+                    var classKey = $@"Software\Classes\PackagedCom\Package\{pkg}\Class\{leaf}";
+                    tracked.Add((hive, classKey));
+                    tracked.Add((hive, classKey + DisabledSuffix));
+                }
             }
         }
 
@@ -362,31 +386,36 @@ public sealed class NewMenuService
             foreach (var clsid in clsids)
             {
                 var leaf = "{" + NormalizeClsid(clsid) + "}";
-                var classKey = $@"Software\Classes\PackagedCom\Package\{item.Package}\Class\{leaf}";
 
-                foreach (var hive in new[] { HiveKind.LocalMachine, HiveKind.CurrentUser })
+                if (blocked)
                 {
-                    if (blocked)
+                    Reg.SetString(RegPath.Hklm(BlockedHklm), leaf, "");
+                }
+                else
+                {
+                    Reg.DeleteValue(RegPath.Hklm(BlockedHklm), leaf);
+                    Reg.DeleteValue(RegPath.Hkcu(BlockedHkcu), leaf);
+                }
+
+                foreach (var pkg in packages)
+                {
+                    var classKey = $@"Software\Classes\PackagedCom\Package\{pkg}\Class\{leaf}";
+                    foreach (var hive in new[] { HiveKind.LocalMachine, HiveKind.CurrentUser })
                     {
-                        Reg.SetString(RegPath.Hklm(BlockedHklm), leaf, "");
-                        DisableClassKey(hive, classKey, true);
-                    }
-                    else
-                    {
-                        Reg.DeleteValue(RegPath.Hklm(BlockedHklm), leaf);
-                        Reg.DeleteValue(RegPath.Hkcu(BlockedHkcu), leaf);
-                        DisableClassKey(hive, classKey, false);
+                        DisableClassKey(hive, classKey, blocked);
                     }
                 }
             }
         });
 
         item.IsBlocked = blocked;
-        item.DeepBlocked = blocked && clsids.Any(c => !ClassKeyActive(item.Package, c));
+        item.DeepBlocked = blocked && clsids.Any(c => !ClassKeyActive(packages, c));
         Native.NotifyAssociationsChanged();
     }
 
     private const string DisabledSuffix = ".WinKitDisabled";
+    private const string ClassicMenuClsidKey = @"Software\Classes\CLSID\{86ca1aa0-34aa-4e8b-a509-50c905bae2a2}";
+    private const string ClassicMenuInprocKey = ClassicMenuClsidKey + @"\InprocServer32";
 
     private static void DisableClassKey(HiveKind hive, string classKey, bool disable)
     {
@@ -406,12 +435,18 @@ public sealed class NewMenuService
 
     /// <summary>类登记是否还处于激活状态（改名走了就算停用）。</summary>
     public static bool ClassKeyActive(string package, string clsid)
+        => ClassKeyActive(new[] { package }, clsid);
+
+    public static bool ClassKeyActive(IReadOnlyList<string> packages, string clsid)
     {
         var leaf = "{" + NormalizeClsid(clsid) + "}";
-        foreach (var hive in new[] { HiveKind.LocalMachine, HiveKind.CurrentUser })
+        foreach (var package in packages)
         {
-            if (Reg.Exists(RegPath.Of(hive, $@"Software\Classes\PackagedCom\Package\{package}\Class\{leaf}")))
-                return true;
+            foreach (var hive in new[] { HiveKind.LocalMachine, HiveKind.CurrentUser })
+            {
+                if (Reg.Exists(RegPath.Of(hive, $@"Software\Classes\PackagedCom\Package\{package}\Class\{leaf}")))
+                    return true;
+            }
         }
 
         return false;
@@ -419,7 +454,22 @@ public sealed class NewMenuService
 
     public int ForcedClassicMenuState()
     {
-        const string key = @"Software\Classes\CLSID\{86ca1aa0-34aa-4e8b-a509-50c905bae2a2}\InprocServer32";
-        return Reg.Exists(RegPath.Hkcu(key)) ? 1 : 0;
+        return Reg.Exists(RegPath.Hkcu(ClassicMenuInprocKey)) ? 1 : 0;
+    }
+
+    public void SetForcedClassicMenu(bool enabled)
+    {
+        _journal.Record(
+            enabled ? "开启默认直接展开经典右键菜单" : "恢复 Win11 默认一级右键菜单",
+            new[] { (HiveKind.CurrentUser, ClassicMenuClsidKey) },
+            () =>
+            {
+                if (enabled)
+                    Reg.SetString(RegPath.Hkcu(ClassicMenuInprocKey), "", "");
+                else
+                    Reg.DeleteTree(RegPath.Hkcu(ClassicMenuClsidKey));
+            });
+
+        Native.NotifyAssociationsChanged();
     }
 }

@@ -247,15 +247,62 @@ internal static class Program
         Check("撤销后子键恢复", Reg.Exists(RegPath.Hkcu(testRoot + @"\command")));
         Check("撤销后值恢复", Reg.GetString(testPath, "MUIVerb") == "自测菜单项");
 
-        // 3. 屏蔽列表写入 → 撤销
+        // 3. 屏蔽列表写入 → 撤销（同时验证撤销后磁盘快照文件已被清理）
         var blockedKey = @"Software\Microsoft\Windows\CurrentVersion\Shell Extensions\BlockedSelfTest";
         var fakeClsid = "{00000000-WINKIT-SELFTEST-0000-0000000000}";
-        journal.Record("自测-屏蔽", new[] { (HiveKind.CurrentUser, blockedKey) },
+        var snap = journal.Record("自测-屏蔽", new[] { (HiveKind.CurrentUser, blockedKey) },
             () => Reg.SetString(RegPath.Hkcu(blockedKey), fakeClsid, ""));
         Check("写入屏蔽项", Reg.HasValue(RegPath.Hkcu(blockedKey), fakeClsid));
+        Check("快照文件已落盘", !string.IsNullOrWhiteSpace(snap.SavedFilePath) && File.Exists(snap.SavedFilePath));
 
         journal.UndoLast();
         Check("撤销后屏蔽项消失", !Reg.HasValue(RegPath.Hkcu(blockedKey), fakeClsid));
+        Check("撤销后快照文件自动删除", string.IsNullOrWhiteSpace(snap.SavedFilePath) || !File.Exists(snap.SavedFilePath));
+
+        // 4. 文件级快照（发送到） → 撤销恢复
+        var tempFile = Path.Combine(Path.GetTempPath(), $"winkit_selftest_{Guid.NewGuid():N}.lnk");
+        File.WriteAllText(tempFile, "self-test-shortcut", Encoding.UTF8);
+        journal.Record("自测-文件删除", Array.Empty<(HiveKind, string)>(),
+            () => File.Delete(tempFile),
+            new[] { tempFile });
+        Check("文件删除后不存在", !File.Exists(tempFile));
+
+        journal.UndoLast();
+        Check("文件撤销后恢复且内容一致", File.Exists(tempFile) && File.ReadAllText(tempFile, Encoding.UTF8) == "self-test-shortcut");
+        if (File.Exists(tempFile)) File.Delete(tempFile);
+
+        // 5. 应用管理与驱动管理解析器自测
+        var sampleWinget = """
+            名称                      ID                          版本         可用         源
+            -------------------------------------------------------------------------------------
+            7-Zip 23.01 (x64)         7zip.7zip                   23.01        24.08        winget
+            Microsoft Visual Studio Code Microsoft.VisualStudioCode 1.92.0     1.95.1       winget
+            2 个可用升级。
+            """;
+        var parsedUpgrades = AppManagerService.ParseWingetUpgradeTable(sampleWinget);
+        Check("winget 升级表解析数量正确", parsedUpgrades.Count == 2);
+        Check("winget 升级表字段匹配正确",
+            parsedUpgrades.Count == 2
+            && parsedUpgrades[0].Id == "7zip.7zip"
+            && parsedUpgrades[0].AvailableVersion == "24.08");
+
+        var samplePnp = """
+            Microsoft PnP 工具
+
+            发布名称:     oem12.inf
+            原始名称:     nv_dispi.inf
+            提供程序名称: NVIDIA
+            类名:         显示适配器
+            类 GUID:      {4d36e968-e325-11ce-bfc1-08002be10318}
+            驱动程序版本: 10/15/2025 32.0.15.6590
+            签名者姓名:   Microsoft Windows Hardware Compatibility Publisher
+            """;
+        var parsedDrivers = DriverManagerService.ParsePnpUtilDrivers(samplePnp);
+        Check("pnputil 驱动表解析成功",
+            parsedDrivers.Count == 1
+            && parsedDrivers[0].PublishedName == "oem12.inf"
+            && parsedDrivers[0].OriginalName == "nv_dispi.inf"
+            && parsedDrivers[0].IsCritical);
 
         // 清理
         Reg.DeleteTree(testPath);

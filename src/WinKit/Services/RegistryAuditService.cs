@@ -42,6 +42,10 @@ public sealed class RegistryItem : ObservableObject
     };
 
     public string StatusText => IsInvalid ? "可疑" : "正常";
+
+    public string CopyablePath => string.IsNullOrWhiteSpace(SubKey)
+        ? KeyPath
+        : RegPath.Of(Hive, SubKey).FullPath;
 }
 
 public sealed class RegistryAuditResult
@@ -455,31 +459,52 @@ public sealed class RegistryAuditService
 
         _journal.Record($"清理注册表项：{item.Name}", new[] { (item.Hive, item.SubKey) }, () =>
         {
-            if (item.EntryText is not null && item.ValueName is not null)
-            {
-                // PATH：重写整条值，去掉这一段
-                var regPath = RegPath.Of(item.Hive, item.SubKey);
-                var raw = Reg.GetString(regPath, item.ValueName, expand: false) ?? "";
-                var kept = raw.Split(';')
-                    .Where(s => !s.Trim().Equals(item.EntryText, StringComparison.OrdinalIgnoreCase))
-                    .Where(s => !string.IsNullOrWhiteSpace(s));
-                var next = string.Join(";", kept);
-
-                if (string.IsNullOrWhiteSpace(next)) Reg.DeleteValue(regPath, item.ValueName);
-                else Reg.SetExpandString(regPath, item.ValueName, next);
-                return;
-            }
-
-            if (item.ValueName is null)
-            {
-                Reg.DeleteTree(RegPath.Of(item.Hive, item.SubKey));
-            }
-            else
-            {
-                Reg.DeleteValue(RegPath.Of(item.Hive, item.SubKey), item.ValueName);
-            }
+            ApplyRemove(item);
         });
 
         Native.NotifyAssociationsChanged();
+    }
+
+    public int RemoveBatch(IReadOnlyList<RegistryItem> items, string categoryTitle)
+    {
+        var removable = items.Where(i => i.CanRemove).ToList();
+        if (removable.Count == 0) return 0;
+
+        var tracked = removable.Select(i => (i.Hive, i.SubKey)).Distinct().ToArray();
+        _journal.Record($"批量清理{categoryTitle}（{removable.Count} 项）", tracked, () =>
+        {
+            foreach (var item in removable)
+                ApplyRemove(item);
+        });
+
+        Native.NotifyAssociationsChanged();
+        return removable.Count;
+    }
+
+    private static void ApplyRemove(RegistryItem item)
+    {
+        if (item.EntryText is not null && item.ValueName is not null)
+        {
+            // PATH：重写整条值，去掉这一段
+            var regPath = RegPath.Of(item.Hive, item.SubKey);
+            var raw = Reg.GetString(regPath, item.ValueName, expand: false) ?? "";
+            var kept = raw.Split(';')
+                .Where(s => !s.Trim().Equals(item.EntryText, StringComparison.OrdinalIgnoreCase))
+                .Where(s => !string.IsNullOrWhiteSpace(s));
+            var next = string.Join(";", kept);
+
+            if (string.IsNullOrWhiteSpace(next)) Reg.DeleteValue(regPath, item.ValueName);
+            else Reg.SetExpandString(regPath, item.ValueName, next);
+            return;
+        }
+
+        if (item.ValueName is null)
+        {
+            Reg.DeleteTree(RegPath.Of(item.Hive, item.SubKey));
+        }
+        else
+        {
+            Reg.DeleteValue(RegPath.Of(item.Hive, item.SubKey), item.ValueName);
+        }
     }
 }

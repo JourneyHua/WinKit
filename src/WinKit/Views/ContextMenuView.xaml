@@ -33,16 +33,32 @@
             <RowDefinition Height="*" />
         </Grid.RowDefinitions>
 
-        <StackPanel Grid.Row="0" Orientation="Horizontal" Margin="0,0,0,12">
-            <ToggleButton Content="一级菜单（右键直接看到的）" Style="{StaticResource Chip}"
-                          IsChecked="{Binding ShowNewMenu, Mode=OneWay}"
-                          Command="{Binding ShowNewMenuCommand}" Margin="0,0,8,0" />
-            <ToggleButton Content="经典菜单（显示更多选项里的）" Style="{StaticResource Chip}"
-                          IsChecked="{Binding ShowClassicMenu, Mode=OneWay}"
-                          Command="{Binding ShowClassicMenuCommand}" />
-            <Button Content="重新扫描" Style="{StaticResource BtnSmall}" Margin="16,0,0,0"
-                    Command="{Binding RefreshCommand}" />
-        </StackPanel>
+        <Grid Grid.Row="0" Margin="0,0,0,12">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="*" />
+                <ColumnDefinition Width="Auto" />
+            </Grid.ColumnDefinitions>
+
+            <StackPanel Grid.Column="0" Orientation="Horizontal" VerticalAlignment="Center">
+                <ToggleButton Content="一级菜单（右键直接看到的）" Style="{StaticResource Chip}"
+                              IsChecked="{Binding ShowNewMenu, Mode=OneWay}"
+                              Command="{Binding ShowNewMenuCommand}" Margin="0,0,8,0" />
+                <ToggleButton Content="经典菜单（显示更多选项里的）" Style="{StaticResource Chip}"
+                              IsChecked="{Binding ShowClassicMenu, Mode=OneWay}"
+                              Command="{Binding ShowClassicMenuCommand}" />
+                <Button Content="重新扫描" Style="{StaticResource BtnSmall}" Margin="16,0,0,0"
+                        Command="{Binding RefreshCommand}" />
+                <Button Content="{Binding RecheckResidualText}" Style="{StaticResource BtnSmall}" Margin="8,0,0,0"
+                        Foreground="{StaticResource Brush.Warn}"
+                        Visibility="{Binding CanRecheckResidual, Converter={StaticResource BoolToVis}}"
+                        Command="{Binding RecheckResidualCommand}" />
+            </StackPanel>
+
+            <ToggleButton Grid.Column="1" Content="默认直接展开经典菜单（跳过一级菜单）"
+                          Style="{StaticResource Chip}" VerticalAlignment="Center"
+                          IsChecked="{Binding UseClassicMenuByDefault, Mode=TwoWay}"
+                          ToolTip="开启后 Win11 右键直接弹出完整经典菜单，无需再点“显示更多选项”（需重启资源管理器生效，支持撤销）" />
+        </Grid>
 
         <Grid Grid.Row="1">
             <Grid Visibility="{Binding ShowNewMenu, Converter={StaticResource BoolToVis}}">
@@ -99,6 +115,16 @@
                                        Margin="14,10,14,6" />
 
                             <DataGrid Grid.Row="1" ItemsSource="{Binding FilteredNewItems}" Style="{StaticResource Grid}">
+                                <DataGrid.ContextMenu>
+                                    <ContextMenu>
+                                        <MenuItem Header="复制包名与 CLSID"
+                                                  Command="{Binding PlacementTarget.DataContext.CopyPathCommand, RelativeSource={RelativeSource AncestorType=ContextMenu}}"
+                                                  CommandParameter="{Binding PlacementTarget.SelectedItem, RelativeSource={RelativeSource AncestorType=ContextMenu}}" />
+                                        <MenuItem Header="复制安装路径"
+                                                  Command="{Binding PlacementTarget.DataContext.CopyCommandPathCommand, RelativeSource={RelativeSource AncestorType=ContextMenu}}"
+                                                  CommandParameter="{Binding PlacementTarget.SelectedItem, RelativeSource={RelativeSource AncestorType=ContextMenu}}" />
+                                    </ContextMenu>
+                                </DataGrid.ContextMenu>
                                 <DataGrid.Columns>
                                     <DataGridTemplateColumn Width="60" Header="屏蔽">
                                         <DataGridTemplateColumn.CellTemplate>
@@ -156,13 +182,17 @@
                                             </DataTemplate>
                                         </DataGridTemplateColumn.CellTemplate>
                                     </DataGridTemplateColumn>
-                                    <DataGridTemplateColumn Header="操作" Width="132">
+                                    <DataGridTemplateColumn Header="操作" Width="196">
                                         <DataGridTemplateColumn.CellTemplate>
                                             <DataTemplate>
                                                 <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
                                                     <Button Content="{Binding BlockToggleText}" Style="{StaticResource BtnSmall}"
                                                             Margin="0,0,6,0"
                                                             Command="{Binding DataContext.ToggleBlockCommand, RelativeSource={RelativeSource AncestorType=DataGrid}}"
+                                                            CommandParameter="{Binding}" />
+                                                    <Button Content="复制路径" Style="{StaticResource BtnSmall}"
+                                                            Margin="0,0,6,0"
+                                                            Command="{Binding DataContext.CopyCommandPathCommand, RelativeSource={RelativeSource AncestorType=DataGrid}}"
                                                             CommandParameter="{Binding}" />
                                                     <Button Content="卸载" Style="{StaticResource BtnSmall}"
                                                             Foreground="{StaticResource Brush.Danger}"
@@ -241,6 +271,16 @@
                     <Border Grid.Row="1" Style="{StaticResource Card}" Padding="0">
                         <Grid>
                             <DataGrid ItemsSource="{Binding Entries}" Style="{StaticResource Grid}">
+                                <DataGrid.ContextMenu>
+                                    <ContextMenu>
+                                        <MenuItem Header="复制注册表路径"
+                                                  Command="{Binding PlacementTarget.DataContext.CopyPathCommand, RelativeSource={RelativeSource AncestorType=ContextMenu}}"
+                                                  CommandParameter="{Binding PlacementTarget.SelectedItem, RelativeSource={RelativeSource AncestorType=ContextMenu}}" />
+                                        <MenuItem Header="复制命令路径"
+                                                  Command="{Binding PlacementTarget.DataContext.CopyCommandPathCommand, RelativeSource={RelativeSource AncestorType=ContextMenu}}"
+                                                  CommandParameter="{Binding PlacementTarget.SelectedItem, RelativeSource={RelativeSource AncestorType=ContextMenu}}" />
+                                    </ContextMenu>
+                                </DataGrid.ContextMenu>
                                 <DataGrid.Columns>
                                     <DataGridTemplateColumn Width="56" Header="启用">
                                         <DataGridTemplateColumn.CellTemplate>
@@ -280,12 +320,16 @@
                                             </DataTemplate>
                                         </DataGridTemplateColumn.CellTemplate>
                                     </DataGridTemplateColumn>
-                                    <DataGridTemplateColumn Header="操作" Width="132">
+                                    <DataGridTemplateColumn Header="操作" Width="196">
                                         <DataGridTemplateColumn.CellTemplate>
                                             <DataTemplate>
                                                 <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
                                                     <Button Content="改名" Style="{StaticResource BtnSmall}" Margin="0,0,6,0"
+                                                            IsEnabled="{Binding CanRename}"
                                                             Command="{Binding DataContext.RenameCommand, RelativeSource={RelativeSource AncestorType=DataGrid}}"
+                                                            CommandParameter="{Binding}" />
+                                                    <Button Content="复制路径" Style="{StaticResource BtnSmall}" Margin="0,0,6,0"
+                                                            Command="{Binding DataContext.CopyPathCommand, RelativeSource={RelativeSource AncestorType=DataGrid}}"
                                                             CommandParameter="{Binding}" />
                                                     <Button Content="删除" Style="{StaticResource BtnSmall}"
                                                             Foreground="{StaticResource Brush.Danger}"

@@ -22,13 +22,24 @@ public sealed class SnapshotKey
     public List<SnapshotKey> Children { get; set; } = new();
 }
 
+public sealed class SnapshotFile
+{
+    public string Path { get; set; } = "";
+    public bool Existed { get; set; }
+    public string? Base64Data { get; set; }
+}
+
 public sealed class OperationSnapshot
 {
     public string Id { get; set; } = Guid.NewGuid().ToString("N");
     public DateTime TimestampUtc { get; set; } = DateTime.UtcNow;
     public string Title { get; set; } = "";
     public List<SnapshotKey> Keys { get; set; } = new();
+    public List<SnapshotFile> Files { get; set; } = new();
     public int KeyCount { get; set; }
+
+    [JsonIgnore]
+    public string? SavedFilePath { get; set; }
 
     [JsonIgnore]
     public string LocalTimeText => TimestampUtc.ToLocalTime().ToString("MM-dd HH:mm:ss");
@@ -158,6 +169,42 @@ public static class SnapshotEngine
 
     public static int CountKeys(IEnumerable<SnapshotKey> keys)
         => keys.Sum(k => 1 + CountKeys(k.Children));
+
+    public static SnapshotFile CaptureFile(string path)
+    {
+        var existed = File.Exists(path);
+        return new SnapshotFile
+        {
+            Path = path,
+            Existed = existed,
+            Base64Data = existed ? Convert.ToBase64String(File.ReadAllBytes(path)) : null
+        };
+    }
+
+    public static void RestoreFile(SnapshotFile file)
+    {
+        if (string.IsNullOrWhiteSpace(file.Path)) return;
+
+        try
+        {
+            if (!file.Existed)
+            {
+                if (File.Exists(file.Path)) File.Delete(file.Path);
+                return;
+            }
+
+            var dir = Path.GetDirectoryName(file.Path);
+            if (!string.IsNullOrWhiteSpace(dir)) Directory.CreateDirectory(dir);
+            var bytes = string.IsNullOrEmpty(file.Base64Data)
+                ? Array.Empty<byte>()
+                : Convert.FromBase64String(file.Base64Data);
+            File.WriteAllBytes(file.Path, bytes);
+        }
+        catch (Exception)
+        {
+            // 单个文件写回失败不应阻断整体还原
+        }
+    }
 }
 
 public sealed class ChangeJournal
@@ -187,13 +234,23 @@ public sealed class ChangeJournal
 
     public string? LastTitle => _session.Count > 0 ? _session[^1].Title : null;
 
-    public OperationSnapshot Record(string title, IEnumerable<(HiveKind Hive, string SubKey)> tracked, Action action)
+    public OperationSnapshot Record(
+        string title,
+        IEnumerable<(HiveKind Hive, string SubKey)> tracked,
+        Action action,
+        IEnumerable<string>? trackedFiles = null)
     {
         var snapshot = new OperationSnapshot { Title = title };
         foreach (var (hive, subKey) in tracked.Distinct())
             snapshot.Keys.Add(SnapshotEngine.Capture(hive, subKey));
 
-        snapshot.KeyCount = SnapshotEngine.CountKeys(snapshot.Keys);
+        if (trackedFiles is not null)
+        {
+            foreach (var file in trackedFiles.Where(f => !string.IsNullOrWhiteSpace(f)).Distinct(StringComparer.OrdinalIgnoreCase))
+                snapshot.Files.Add(SnapshotEngine.CaptureFile(file));
+        }
+
+        snapshot.KeyCount = SnapshotEngine.CountKeys(snapshot.Keys) + snapshot.Files.Count;
 
         try
         {
@@ -202,8 +259,7 @@ public sealed class ChangeJournal
         catch
         {
             // 操作失败立即自动回滚，避免留下半截状态
-            foreach (var key in snapshot.Keys)
-                SnapshotEngine.Restore(key);
+            RestoreSnapshot(snapshot);
             throw;
         }
 
@@ -213,13 +269,20 @@ public sealed class ChangeJournal
         return snapshot;
     }
 
+    private static void RestoreSnapshot(OperationSnapshot snapshot)
+    {
+        foreach (var key in snapshot.Keys)
+            SnapshotEngine.Restore(key);
+        foreach (var file in snapshot.Files)
+            SnapshotEngine.RestoreFile(file);
+    }
+
     public string? UndoLast()
     {
         if (_session.Count == 0) return null;
         var snapshot = _session[^1];
         _session.RemoveAt(_session.Count - 1);
-        foreach (var key in snapshot.Keys)
-            SnapshotEngine.Restore(key);
+        RestoreSnapshot(snapshot);
         TryDeleteFile(snapshot);
         Changed?.Invoke($"已撤销：{snapshot.Title}");
         return snapshot.Title;
@@ -230,8 +293,7 @@ public sealed class ChangeJournal
         if (_session.Count == 0) return null;
         for (var i = _session.Count - 1; i >= 0; i--)
         {
-            foreach (var key in _session[i].Keys)
-                SnapshotEngine.Restore(key);
+            RestoreSnapshot(_session[i]);
             TryDeleteFile(_session[i]);
         }
 
@@ -247,9 +309,11 @@ public sealed class ChangeJournal
         {
             var safeTitle = string.Concat(snapshot.Title.Select(c => Path.GetInvalidFileNameChars().Contains(c) ? '_' : c));
             if (safeTitle.Length > 40) safeTitle = safeTitle[..40];
-            var name = $"{snapshot.TimestampUtc.ToLocalTime():yyyyMMdd_HHmmss_fff}_{safeTitle}.json";
+            var shortId = snapshot.Id.Length >= 8 ? snapshot.Id[..8] : snapshot.Id;
+            var name = $"{snapshot.TimestampUtc.ToLocalTime():yyyyMMdd_HHmmss_fff}_{shortId}_{safeTitle}.json";
             var path = Path.Combine(BackupDirectory, name);
             File.WriteAllText(path, JsonSerializer.Serialize(snapshot, JsonOptions));
+            snapshot.SavedFilePath = path;
             Prune();
         }
         catch (Exception)
@@ -280,7 +344,14 @@ public sealed class ChangeJournal
     {
         try
         {
-            foreach (var file in new DirectoryInfo(BackupDirectory).GetFiles("*" + snapshot.Id + "*.json"))
+            if (!string.IsNullOrWhiteSpace(snapshot.SavedFilePath) && File.Exists(snapshot.SavedFilePath))
+            {
+                File.Delete(snapshot.SavedFilePath);
+                return;
+            }
+
+            var shortId = snapshot.Id.Length >= 8 ? snapshot.Id[..8] : snapshot.Id;
+            foreach (var file in new DirectoryInfo(BackupDirectory).GetFiles("*" + shortId + "*.json"))
                 file.Delete();
         }
         catch (Exception)
@@ -309,8 +380,7 @@ public sealed class ChangeJournal
         var json = File.ReadAllText(filePath);
         var snapshot = JsonSerializer.Deserialize<OperationSnapshot>(json, JsonOptions)
                        ?? throw new InvalidOperationException("备份文件无法解析");
-        foreach (var key in snapshot.Keys)
-            SnapshotEngine.Restore(key);
+        RestoreSnapshot(snapshot);
         Changed?.Invoke($"已从备份还原：{snapshot.Title}");
     }
 }

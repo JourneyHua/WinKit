@@ -54,11 +54,11 @@ public sealed class MenuEntry : ObservableObject
     public MenuEntryKind Kind { get; init; }
     public MenuDomainKind Domain { get; init; }
     public string DomainTitle { get; init; } = "";
-    public string HiveText { get; init; } = "";
-    public string Publisher { get; init; } = "";
+    public string HiveText { get; set; } = "";
+    public string Publisher { get; set; } = "";
     public bool IsSystem { get; init; }
-    public string RegistryPath { get; init; } = "";
-    public string CommandPath { get; init; } = "";
+    public string RegistryPath { get; set; } = "";
+    public string CommandPath { get; set; } = "";
     public string? Clsid { get; init; }
     public string Note { get; init; } = "";
     public bool CanToggle { get; init; } = true;

@@ -32,6 +32,7 @@ public sealed class ContextMenuViewModel : ObservableObject, IModule
     private DispatcherTimer? _uninstallTimer;
     private DateTime _uninstallDeadline;
     private NewMenuItem? _watching;
+    private NewMenuItem? _lastUninstalled;
 
     private List<MenuEntry> _all = new();
     private DomainNode? _selectedDomain;
@@ -40,6 +41,7 @@ public sealed class ContextMenuViewModel : ObservableObject, IModule
     private bool _onlyThirdParty = true;
     private bool _onlyDisabled;
     private bool _showNewMenu = true;
+    private bool _useClassicMenuByDefault;
     private string _newMenuHint = "";
     private bool _isLoading;
 
@@ -62,10 +64,12 @@ public sealed class ContextMenuViewModel : ObservableObject, IModule
         NewDomains = new ObservableCollection<DomainNode>();
         FilteredNewItems = new ObservableCollection<NewMenuItem>();
 
-        RefreshCommand = new RelayCommand(Refresh);
+        RefreshCommand = new RelayCommand(ManualRefresh);
+        RecheckResidualCommand = new RelayCommand(RecheckResidual);
         DeleteCommand = new RelayCommand(p => Delete(p as MenuEntry));
         RenameCommand = new RelayCommand(p => Rename(p as MenuEntry));
-        CopyPathCommand = new RelayCommand(p => CopyPath(p as MenuEntry));
+        CopyPathCommand = new RelayCommand(CopyPath);
+        CopyCommandPathCommand = new RelayCommand(CopyCommandPath);
         ShowNewMenuCommand = new RelayCommand(() => ShowNewMenu = true);
         ShowClassicMenuCommand = new RelayCommand(() => ShowNewMenu = false);
         UninstallCommand = new RelayCommand(p => Uninstall(p as NewMenuItem));
@@ -94,9 +98,11 @@ public sealed class ContextMenuViewModel : ObservableObject, IModule
     }
 
     public RelayCommand RefreshCommand { get; }
+    public RelayCommand RecheckResidualCommand { get; }
     public RelayCommand DeleteCommand { get; }
     public RelayCommand RenameCommand { get; }
     public RelayCommand CopyPathCommand { get; }
+    public RelayCommand CopyCommandPathCommand { get; }
     public RelayCommand ShowNewMenuCommand { get; }
     public RelayCommand ShowClassicMenuCommand { get; }
     public RelayCommand UninstallCommand { get; }
@@ -150,6 +156,36 @@ public sealed class ContextMenuViewModel : ObservableObject, IModule
 
     public bool ShowClassicMenu => !_showNewMenu;
 
+    public bool UseClassicMenuByDefault
+    {
+        get => _useClassicMenuByDefault;
+        set
+        {
+            if (value == _useClassicMenuByDefault) return;
+            try
+            {
+                _newService.SetForcedClassicMenu(value);
+                _useClassicMenuByDefault = value;
+                OnPropertyChanged();
+                UpdateNewMenuHint();
+                _status(value
+                    ? "已开启：默认直接展开经典右键菜单（重启资源管理器后生效）"
+                    : "已恢复：默认使用 Win11 一级右键菜单（重启资源管理器后生效）");
+            }
+            catch (Exception ex)
+            {
+                OnPropertyChanged();
+                MessageBox.Show($"切换默认菜单模式失败：{ex.Message}", "WinKit", MessageBoxButton.OK, MessageBoxImage.Warning);
+            }
+        }
+    }
+
+    public bool CanRecheckResidual => _lastUninstalled is not null;
+
+    public string RecheckResidualText => _lastUninstalled is null
+        ? "复查残留"
+        : $"复查残留（{_lastUninstalled.DisplayName}）";
+
     public string NewMenuHint
     {
         get => _newMenuHint;
@@ -164,6 +200,27 @@ public sealed class ContextMenuViewModel : ObservableObject, IModule
 
     public string EntryCountText => $"{Entries.Count} 项";
 
+    private void ManualRefresh()
+    {
+        if (_lastUninstalled is not null)
+        {
+            var pending = _lastUninstalled;
+            StopWatch();
+            ReportResidual(pending);
+            return;
+        }
+
+        Refresh();
+    }
+
+    private void RecheckResidual()
+    {
+        if (_lastUninstalled is null) return;
+        var pending = _lastUninstalled;
+        StopWatch();
+        ReportResidual(pending);
+    }
+
     public void Refresh()
     {
         if (IsLoading) return;
@@ -171,6 +228,9 @@ public sealed class ContextMenuViewModel : ObservableObject, IModule
 
         try
         {
+            _useClassicMenuByDefault = _newService.ForcedClassicMenuState() == 1;
+            OnPropertyChanged(nameof(UseClassicMenuByDefault));
+
             _all = new List<MenuEntry>();
             foreach (var domain in MenuDomain.All)
             {
@@ -194,20 +254,7 @@ public sealed class ContextMenuViewModel : ObservableObject, IModule
             }
 
             BuildNewDomains();
-
-            var (found, total) = _newService.LastManifestStats;
-            var manifestLine = total == 0
-                ? "未发现打包应用注册的菜单项。"
-                : found == 0
-                    ? $"清单解析：0/{total} 读取失败（AppRepository 可能被权限拦住），作用域一律标注“无法确认”。"
-                    : $"清单解析：{found}/{total} 成功，其余标注“无法确认”。";
-
-            NewMenuHint = manifestLine +
-                          " 屏蔽会做两层：① 把 CLSID 写进 Shell Extensions\\Blocked；② 把 PackagedCom 里该命令类的登记改名（加 .WinKitDisabled 后缀）。" +
-                          "只做①对打包应用经常无效，这正是 VS Code 之前删不掉的原因；状态列显示“已屏蔽·深度”才代表第二层生效。" +
-                          "注意：驱动器右键会继承“文件夹”作用域的项，这类项在「继承」列有标注。" +
-                          "内置项（打开、复制、粘贴、重命名、共享、发送到、属性、显示更多选项）由 Windows 硬编码，无法移除。";
-
+            UpdateNewMenuHint();
             ApplyFilter();
         }
         catch (Exception ex)
@@ -218,6 +265,25 @@ public sealed class ContextMenuViewModel : ObservableObject, IModule
         {
             IsLoading = false;
         }
+    }
+
+    private void UpdateNewMenuHint()
+    {
+        var (found, total) = _newService.LastManifestStats;
+        var classicPrefix = _useClassicMenuByDefault
+            ? "【当前已开启“默认直接展开经典菜单”（需重启资源管理器生效），系统右键会跳过一级菜单；你仍可在此管理一级菜单项】 "
+            : "";
+        var manifestLine = total == 0
+            ? "未发现打包应用注册的菜单项。"
+            : found == 0
+                ? $"清单解析：0/{total} 读取失败（AppRepository 可能被权限拦住），作用域一律标注“无法确认”。"
+                : $"清单解析：{found}/{total} 成功，其余标注“无法确认”。";
+
+        NewMenuHint = classicPrefix + manifestLine +
+                      " 屏蔽会做两层：① 把 CLSID 写进 Shell Extensions\\Blocked；② 把 PackagedCom 里该命令类的登记改名（加 .WinKitDisabled 后缀）。" +
+                      "只做①对打包应用经常无效，这正是 VS Code 之前删不掉的原因；状态列显示“已屏蔽·深度”才代表第二层生效。" +
+                      "注意：驱动器右键会继承“文件夹”作用域的项，这类项在「继承」列有标注。" +
+                      "内置项（打开、复制、粘贴、重命名、共享、发送到、属性、显示更多选项）由 Windows 硬编码，无法移除。";
     }
 
     private void BuildNewDomains()
@@ -384,6 +450,9 @@ public sealed class ContextMenuViewModel : ObservableObject, IModule
     {
         StopWatch();
         _watching = item;
+        _lastUninstalled = item;
+        OnPropertyChanged(nameof(CanRecheckResidual));
+        OnPropertyChanged(nameof(RecheckResidualText));
         _uninstallDeadline = DateTime.UtcNow.AddMinutes(10);
 
         _uninstallTimer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(3) };
@@ -399,12 +468,12 @@ public sealed class ContextMenuViewModel : ObservableObject, IModule
             else if (DateTime.UtcNow > _uninstallDeadline)
             {
                 StopWatch();
-                _status("等待超时：可能取消了卸载。可稍后点「复查」手动检查。");
+                _status("等待超时：可能取消了卸载。可随时点顶部「复查残留」或「重新扫描」手动检查。");
             }
         };
         _uninstallTimer.Start();
 
-        _status($"正在等待「{item.DisplayName}」卸载完成（最多等 10 分钟）…");
+        _status($"正在等待「{item.DisplayName}」卸载完成（最多等 10 分钟，也可随时点「复查残留」）…");
     }
 
     private void StopWatch()
@@ -420,6 +489,9 @@ public sealed class ContextMenuViewModel : ObservableObject, IModule
 
         if (issues.Count == 0)
         {
+            _lastUninstalled = null;
+            OnPropertyChanged(nameof(CanRecheckResidual));
+            OnPropertyChanged(nameof(RecheckResidualText));
             _status($"「{item.DisplayName}」已卸载，未发现残留");
             MessageBox.Show($"「{item.DisplayName}」已卸载，未发现明显残留。",
                 "卸载完成", MessageBoxButton.OK, MessageBoxImage.Information);
@@ -427,11 +499,11 @@ public sealed class ContextMenuViewModel : ObservableObject, IModule
             return;
         }
 
-        _status($"「{item.DisplayName}」已卸载，发现 {issues.Count} 处残留");
+        _status($"「{item.DisplayName}」复查完成，发现 {issues.Count} 处残留");
         MessageBox.Show(
-            $"「{item.DisplayName}」已卸载，发现以下残留：\n\n• " + string.Join("\n• ", issues) +
+            $"「{item.DisplayName}」发现以下残留（若卸载尚未结束，可等卸载完成后再点「复查残留」）：\n\n• " + string.Join("\n• ", issues) +
             "\n\nWinKit 只报告，不代你删文件。注册表项可在「注册表管理」里定位处理。",
-            "卸载完成（有残留）", MessageBoxButton.OK, MessageBoxImage.Warning);
+            "卸载残留复查", MessageBoxButton.OK, MessageBoxImage.Warning);
 
         Refresh();
     }
@@ -530,13 +602,43 @@ public sealed class ContextMenuViewModel : ObservableObject, IModule
         }
     }
 
-    private void CopyPath(MenuEntry? entry)
+    private void CopyPath(object? parameter)
     {
-        if (entry is null) return;
+        var text = parameter switch
+        {
+            MenuEntry entry => entry.RegistryPath,
+            NewMenuItem item => string.IsNullOrWhiteSpace(item.ClsidText)
+                ? item.Package
+                : $"{item.Package} ({item.ClsidText})",
+            _ => null
+        };
+
+        if (string.IsNullOrWhiteSpace(text)) return;
         try
         {
-            Clipboard.SetText(entry.RegistryPath);
-            _status("已复制注册表路径");
+            Clipboard.SetText(text);
+            _status($"已复制：{text}");
+        }
+        catch (Exception)
+        {
+            // 剪贴板被占用时忽略
+        }
+    }
+
+    private void CopyCommandPath(object? parameter)
+    {
+        var text = parameter switch
+        {
+            MenuEntry entry => !string.IsNullOrWhiteSpace(entry.CommandPath) ? entry.CommandPath : entry.RegistryPath,
+            NewMenuItem item => !string.IsNullOrWhiteSpace(item.Location) ? item.Location : item.Package,
+            _ => null
+        };
+
+        if (string.IsNullOrWhiteSpace(text)) return;
+        try
+        {
+            Clipboard.SetText(text);
+            _status($"已复制路径：{text}");
         }
         catch (Exception)
         {

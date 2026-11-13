@@ -62,7 +62,11 @@ public sealed class BackupViewModel : ObservableObject, IModule
                 if (snapshot is not null)
                 {
                     title = snapshot.Title;
-                    keyCount = $"{snapshot.KeyCount} 个键";
+                    keyCount = snapshot.Files.Count > 0 && snapshot.Keys.Count == 0
+                        ? $"{snapshot.Files.Count} 个文件"
+                        : snapshot.Files.Count > 0
+                            ? $"{snapshot.KeyCount} 项"
+                            : $"{snapshot.KeyCount} 个键";
                 }
             }
             catch (Exception)

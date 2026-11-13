@@ -31,6 +31,12 @@
             <DataTemplate DataType="{x:Type vm:RegistryAuditViewModel}">
                 <views:RegistryAuditView />
             </DataTemplate>
+            <DataTemplate DataType="{x:Type vm:AppManagerViewModel}">
+                <views:AppManagerView />
+            </DataTemplate>
+            <DataTemplate DataType="{x:Type vm:DriverManagerViewModel}">
+                <views:DriverManagerView />
+            </DataTemplate>
         </ResourceDictionary>
     </Application.Resources>
 </Application>

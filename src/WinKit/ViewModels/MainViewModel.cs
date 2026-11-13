@@ -60,6 +60,22 @@ public sealed class MainViewModel : ObservableObject
             },
             new()
             {
+                Key = "apps",
+                Title = "应用管理",
+                Subtitle = "卸载桌面与商店应用、清理注册表残留、通过 winget 检测与更新软件",
+                AccentBrush = new System.Windows.Media.SolidColorBrush(System.Windows.Media.Color.FromRgb(0x18, 0x64, 0xAB)),
+                Factory = () => new AppManagerViewModel(_journal, SetStatus)
+            },
+            new()
+            {
+                Key = "drivers",
+                Title = "驱动管理",
+                Subtitle = "管理本机第三方驱动包、自动备份与卸载、检测安装官方与本地驱动更新",
+                AccentBrush = new System.Windows.Media.SolidColorBrush(System.Windows.Media.Color.FromRgb(0x0B, 0x72, 0x85)),
+                Factory = () => new DriverManagerViewModel(SetStatus)
+            },
+            new()
+            {
                 Key = "registry",
                 Title = "注册表管理",
                 Subtitle = "按分类体检，只清理可证明无效的项",
@@ -122,7 +138,15 @@ public sealed class MainViewModel : ObservableObject
 
     public string ElevationText => Native.IsElevated() ? "已以管理员身份运行" : "未提权（部分功能不可用）";
 
-    public string VersionText => "v1.0.0 · .NET 10";
+    public string VersionText
+    {
+        get
+        {
+            var v = typeof(MainViewModel).Assembly.GetName().Version;
+            var verText = v is null ? "1.1.0" : $"{v.Major}.{v.Minor}.{Math.Max(0, v.Build)}";
+            return $"v{verText} · .NET 10";
+        }
+    }
 
     public RelayCommand UndoCommand { get; }
 

@@ -56,6 +56,9 @@ public sealed class RegistryAuditViewModel : ObservableObject, IModule
         Items = new ObservableCollection<RegistryItem>();
         RefreshCommand = new RelayCommand(() => Load(SelectedCategory));
         RemoveCommand = new RelayCommand(p => Remove(p as RegistryItem));
+        RemoveAllCommand = new RelayCommand(RemoveAll);
+        CopyPathCommand = new RelayCommand(p => CopyPath(p as RegistryItem));
+        CopyDetailCommand = new RelayCommand(p => CopyDetail(p as RegistryItem));
 
         _selectedCategory = Categories[0];
     }
@@ -67,6 +70,16 @@ public sealed class RegistryAuditViewModel : ObservableObject, IModule
     public RelayCommand RefreshCommand { get; }
 
     public RelayCommand RemoveCommand { get; }
+
+    public RelayCommand RemoveAllCommand { get; }
+
+    public RelayCommand CopyPathCommand { get; }
+
+    public RelayCommand CopyDetailCommand { get; }
+
+    public bool CanRemoveAll => Items.Any(i => i.CanRemove);
+
+    public string RemoveAllText => $"清理全部可疑项（{Items.Count(i => i.CanRemove)}）";
 
     public CategoryNode? SelectedCategory
     {
@@ -178,7 +191,71 @@ public sealed class RegistryAuditViewModel : ObservableObject, IModule
     {
         if (SelectedCategory is null) return;
         var invalid = _all.Count(i => i.IsInvalid);
+        SelectedCategory.Count = invalid;
         SummaryText = $"{_scannedText} · 可疑 {invalid} 项 · 当前显示 {Items.Count} 项";
+        OnPropertyChanged(nameof(CanRemoveAll));
+        OnPropertyChanged(nameof(RemoveAllText));
+    }
+
+    private void RemoveAll()
+    {
+        var targets = Items.Where(i => i.CanRemove).ToList();
+        if (targets.Count == 0) return;
+
+        var preview = string.Join("\n• ", targets.Take(8).Select(t => t.Name));
+        if (targets.Count > 8) preview += $"\n…等共 {targets.Count} 项";
+
+        var result = MessageBox.Show(
+            $"将一次性清理当前列表中的 {targets.Count} 个可疑项：\n\n• {preview}\n\n" +
+            "整批操作会合并保存为 1 份快照，点一次「撤销上一步」即可整批恢复。确定继续吗？",
+            "批量清理可疑项", MessageBoxButton.OKCancel, MessageBoxImage.Warning);
+
+        if (result != MessageBoxResult.OK) return;
+
+        try
+        {
+            var removed = _service.RemoveBatch(targets, SelectedCategory?.Title ?? "注册表项");
+            foreach (var item in targets)
+            {
+                _all.Remove(item);
+                Items.Remove(item);
+            }
+
+            UpdateSummary();
+            _status($"已批量清理 {removed} 项");
+        }
+        catch (Exception ex)
+        {
+            MessageBox.Show($"批量清理失败：{ex.Message}", "WinKit", MessageBoxButton.OK, MessageBoxImage.Warning);
+        }
+    }
+
+    private void CopyPath(RegistryItem? item)
+    {
+        if (item is null || string.IsNullOrWhiteSpace(item.CopyablePath)) return;
+        try
+        {
+            Clipboard.SetText(item.CopyablePath);
+            _status($"已复制路径：{item.CopyablePath}");
+        }
+        catch (Exception)
+        {
+            // 剪贴板被占用时忽略
+        }
+    }
+
+    private void CopyDetail(RegistryItem? item)
+    {
+        if (item is null || string.IsNullOrWhiteSpace(item.Detail)) return;
+        try
+        {
+            Clipboard.SetText(item.Detail);
+            _status("已复制详情");
+        }
+        catch (Exception)
+        {
+            // 剪贴板被占用时忽略
+        }
     }
 
     private void Remove(RegistryItem? item)

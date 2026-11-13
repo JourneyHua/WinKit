@@ -84,6 +84,9 @@
                 <StackPanel Grid.Column="1" Orientation="Horizontal" Margin="10,0,0,0">
                     <ToggleButton Content="只看可疑项" Style="{StaticResource Chip}" Margin="0,0,8,0"
                                   IsChecked="{Binding OnlyInvalid, Mode=TwoWay}" />
+                    <Button Content="{Binding RemoveAllText}" Style="{StaticResource BtnDanger}" Margin="0,0,8,0"
+                            Visibility="{Binding CanRemoveAll, Converter={StaticResource BoolToVis}}"
+                            Command="{Binding RemoveAllCommand}" />
                     <Button Content="重新扫描" Style="{StaticResource BtnBase}" Command="{Binding RefreshCommand}" />
                 </StackPanel>
             </Grid>
@@ -106,6 +109,16 @@
                                Margin="14,10,14,6" />
 
                     <DataGrid Grid.Row="1" ItemsSource="{Binding Items}" Style="{StaticResource Grid}">
+                        <DataGrid.ContextMenu>
+                            <ContextMenu>
+                                <MenuItem Header="复制注册表路径"
+                                          Command="{Binding PlacementTarget.DataContext.CopyPathCommand, RelativeSource={RelativeSource AncestorType=ContextMenu}}"
+                                          CommandParameter="{Binding PlacementTarget.SelectedItem, RelativeSource={RelativeSource AncestorType=ContextMenu}}" />
+                                <MenuItem Header="复制详情内容"
+                                          Command="{Binding PlacementTarget.DataContext.CopyDetailCommand, RelativeSource={RelativeSource AncestorType=ContextMenu}}"
+                                          CommandParameter="{Binding PlacementTarget.SelectedItem, RelativeSource={RelativeSource AncestorType=ContextMenu}}" />
+                            </ContextMenu>
+                        </DataGrid.ContextMenu>
                         <DataGrid.Columns>
                             <DataGridTemplateColumn Header="名称" Width="2*">
                                 <DataGridTemplateColumn.CellTemplate>
@@ -137,14 +150,19 @@
                                     </DataTemplate>
                                 </DataGridTemplateColumn.CellTemplate>
                             </DataGridTemplateColumn>
-                            <DataGridTemplateColumn Header="操作" Width="90">
+                            <DataGridTemplateColumn Header="操作" Width="148">
                                 <DataGridTemplateColumn.CellTemplate>
                                     <DataTemplate>
-                                        <Button Content="清理" Style="{StaticResource BtnSmall}"
-                                                Foreground="{StaticResource Brush.Danger}"
-                                                Visibility="{Binding CanRemove, Converter={StaticResource BoolToVis}}"
-                                                Command="{Binding DataContext.RemoveCommand, RelativeSource={RelativeSource AncestorType=DataGrid}}"
-                                                CommandParameter="{Binding}" />
+                                        <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
+                                            <Button Content="复制路径" Style="{StaticResource BtnSmall}" Margin="0,0,6,0"
+                                                    Command="{Binding DataContext.CopyPathCommand, RelativeSource={RelativeSource AncestorType=DataGrid}}"
+                                                    CommandParameter="{Binding}" />
+                                            <Button Content="清理" Style="{StaticResource BtnSmall}"
+                                                    Foreground="{StaticResource Brush.Danger}"
+                                                    Visibility="{Binding CanRemove, Converter={StaticResource BoolToVis}}"
+                                                    Command="{Binding DataContext.RemoveCommand, RelativeSource={RelativeSource AncestorType=DataGrid}}"
+                                                    CommandParameter="{Binding}" />
+                                        </StackPanel>
                                     </DataTemplate>
                                 </DataGridTemplateColumn.CellTemplate>
                             </DataGridTemplateColumn>

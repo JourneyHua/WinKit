@@ -310,19 +310,24 @@ public sealed class ContextMenuService
         Directory.CreateDirectory(SendToFolder);
         Directory.CreateDirectory(SendToBackupFolder);
 
-        var source = enabled
-            ? Path.Combine(SendToBackupFolder, entry.KeyName)
-            : Path.Combine(SendToFolder, entry.KeyName);
-        var target = enabled
-            ? Path.Combine(SendToFolder, entry.KeyName)
-            : Path.Combine(SendToBackupFolder, entry.KeyName);
+        var activeFile = Path.Combine(SendToFolder, entry.KeyName);
+        var backupFile = Path.Combine(SendToBackupFolder, entry.KeyName);
+        var source = enabled ? backupFile : activeFile;
+        var target = enabled ? activeFile : backupFile;
+        var title = $"{(enabled ? "启用" : "禁用")}发送到项：{entry.DisplayName}";
 
-        if (File.Exists(source))
+        _journal.Record(title, Array.Empty<(HiveKind, string)>(), () =>
         {
-            if (File.Exists(target)) File.Delete(target);
-            File.Move(source, target);
-        }
+            if (File.Exists(source))
+            {
+                if (File.Exists(target)) File.Delete(target);
+                File.Move(source, target);
+            }
+        }, new[] { activeFile, backupFile });
 
+        entry.RegistryPath = target;
+        entry.CommandPath = target;
+        entry.HiveText = enabled ? "用户文件夹" : "已移入备份";
         Native.NotifyAssociationsChanged();
     }
 
@@ -368,7 +373,18 @@ public sealed class ContextMenuService
         switch (entry.Kind)
         {
             case MenuEntryKind.SendToItem:
-                if (File.Exists(entry.RegistryPath)) File.Delete(entry.RegistryPath);
+                var activeFile = Path.Combine(SendToFolder, entry.KeyName);
+                var backupFile = Path.Combine(SendToBackupFolder, entry.KeyName);
+                _journal.Record(
+                    $"删除发送到项：{entry.DisplayName}",
+                    Array.Empty<(HiveKind, string)>(),
+                    () =>
+                    {
+                        if (File.Exists(entry.RegistryPath)) File.Delete(entry.RegistryPath);
+                        if (File.Exists(activeFile)) File.Delete(activeFile);
+                        if (File.Exists(backupFile)) File.Delete(backupFile);
+                    },
+                    new[] { entry.RegistryPath, activeFile, backupFile });
                 break;
             default:
                 var (hive, subKey) = ParseId(entry.Id);
