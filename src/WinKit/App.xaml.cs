@@ -171,6 +171,58 @@ public partial class App : Application
                     Capture(window, outputDir, "menu-new-drive", log);
                 }
 
+                if (vm.CurrentViewModel is FileLockViewModel lockVm)
+                {
+                    lockVm.PathText = typeof(App).Assembly.Location;
+                    lockVm.Refresh();
+                    Pump(2500);
+                    window.UpdateLayout();
+                    Pump();
+                    Capture(window, outputDir, "filelock-scanned", log);
+                    log.AppendLine($"  filelock: lockers={lockVm.Lockers.Count} result=\"{OneLine(lockVm.ResultText)}\"");
+                }
+
+                if (vm.CurrentViewModel is EventLogViewModel logVm)
+                {
+                    logVm.Refresh();
+                    Pump(1500);
+                    window.UpdateLayout();
+                    Pump();
+                    Capture(window, outputDir, "events-loaded", log);
+                    log.AppendLine($"  events: groups={logVm.Groups.Count} summary=\"{OneLine(logVm.SummaryText)}\" error=\"{OneLine(logVm.ErrorText)}\"");
+                }
+
+                if (vm.CurrentViewModel is WindowsUpdateViewModel updateVm)
+                {
+                    updateVm.Refresh();
+                    Pump(2500);
+                    window.UpdateLayout();
+                    Pump();
+                    Capture(window, outputDir, "wupdate-loaded", log);
+                    log.AppendLine($"  wupdate: installed={updateVm.Installed.Count} state=\"{OneLine(updateVm.StateText)}\" note=\"{OneLine(updateVm.NoteText)}\"");
+                }
+
+                if (vm.CurrentViewModel is NetworkViewModel networkVm)
+                {
+                    networkVm.Refresh();
+                    Pump(6000);
+                    window.UpdateLayout();
+                    Pump();
+                    Capture(window, outputDir, "network-loaded", log);
+                    log.AppendLine($"  network: adapters={networkVm.Adapters.Count} pings={networkVm.Pings.Count} tcp={networkVm.TcpResults.Count} dns={networkVm.DnsResults.Count} summary=\"{OneLine(networkVm.SummaryText)}\" wifi=\"{OneLine(networkVm.Wifi.State)}\"");
+                }
+
+                if (vm.CurrentViewModel is OverviewViewModel overviewVm)
+                {
+                    overviewVm.Refresh();
+                    Pump(1200);
+                    window.UpdateLayout();
+                    Pump();
+                    Capture(window, outputDir, "overview-loaded", log);
+                    var itemCount = overviewVm.Cards.Sum(c => c.Items.Count);
+                    log.AppendLine($"  overview: cards={overviewVm.Cards.Count} items={itemCount} summary=\"{OneLine(overviewVm.SummaryText)}\"");
+                }
+
                 if (vm.CurrentViewModel is AppManagerViewModel appVm)
                 {
                     appVm.ShowRuntimes = true;
@@ -216,13 +268,34 @@ public partial class App : Application
         File.WriteAllText(Path.Combine(outputDir, "smoke.log"), log.ToString(), new UTF8Encoding(true));
     }
 
-    private static void Pump()
+    private static void Pump(int waitMs = 0)
+    {
+        if (waitMs > 0)
+        {
+            // 等异步加载（事件日志 / 网络探测）落地，同时保持消息泵运行
+            var deadline = Environment.TickCount64 + waitMs;
+            while (Environment.TickCount64 < deadline)
+            {
+                PumpOnce();
+                Thread.Sleep(50);
+            }
+
+            return;
+        }
+
+        PumpOnce();
+    }
+
+    private static void PumpOnce()
     {
         var frame = new DispatcherFrame();
         Dispatcher.CurrentDispatcher.BeginInvoke(DispatcherPriority.Background,
             new Action(() => frame.Continue = false));
         Dispatcher.PushFrame(frame);
     }
+
+    private static string OneLine(string? text)
+        => string.IsNullOrWhiteSpace(text) ? "" : text.Replace("\r", " ").Replace("\n", " ").Trim();
 
     private static void Capture(Window window, string outputDir, string name, StringBuilder log)
     {

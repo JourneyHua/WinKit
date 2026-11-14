@@ -1,4 +1,5 @@
 using System.IO;
+using System.Text.Json;
 using WinKit.Core;
 
 namespace WinKit.Services;
@@ -145,8 +146,23 @@ public sealed class ThisPcService
                 if (!seenTitles.Add(display)) continue;
                 if (!seen.Add(clsid)) continue;
 
-                list.Add(BuildNode(clsid, display, true));
+                // HiddenByDefault=1 的节点虽然注册着，但资源管理器默认不显示
+                var hiddenByDefault = (Reg.GetInt(RegPath.Of(hive, $@"{root}\{clsid}"), "HiddenByDefault") ?? 0) == 1;
+                list.Add(BuildNode(clsid, display, !hiddenByDefault, hive));
             }
+        }
+
+        // 之前被 WinKit 隐藏（键已删除）的节点也要列出来，否则用户永远没法在界面里恢复
+        foreach (var backup in LoadNodeBackups())
+        {
+            if (!seen.Add(backup.Clsid)) continue;
+            if (ManagedFolderGuids.Contains(backup.Clsid)) continue;
+
+            var display = ResolveNodeName(backup.Clsid);
+            if (FolderTitles.Contains(display)) continue;
+            if (!seenTitles.Add(display)) continue;
+
+            list.Add(BuildNode(backup.Clsid, display, false, backup.Hive, hidden: true));
         }
 
         return list.OrderBy(i => i.IsSystem ? 1 : 0)
@@ -160,7 +176,7 @@ public sealed class ThisPcService
         return ContextMenuService.ResolveClsidName(clsid) ?? clsid;
     }
 
-    private ThisPcItem BuildNode(string clsid, string name, bool visible)
+    private ThisPcItem BuildNode(string clsid, string name, bool visible, HiveKind hive, bool hidden = false)
     {
         var module = ContextMenuService.ResolveClsidModule(clsid) ?? "";
         var isSystem = KnownNodeNames.ContainsKey(clsid)
@@ -176,38 +192,182 @@ public sealed class ThisPcService
             IsVisible = visible,
             IsSystem = isSystem,
             CanToggle = true,
-            Note = isSystem ? "" : "由第三方软件注册，隐藏会删除其注册表项（可撤销）"
+            Note = hidden
+                ? "已被 WinKit 隐藏，勾选可原样恢复（含原默认值与 HiddenByDefault）"
+                : isSystem ? "" : "由第三方软件注册，隐藏会删除其注册表项（可撤销）"
         };
     }
 
     public void SetNodeVisible(string clsid, bool visible)
     {
+        var hklmKey = $@"{NameSpaceHklm}\{clsid}";
+        var hkcuKey = $@"{NameSpaceHkcu}\{clsid}";
+
         if (visible)
         {
-            var target = $@"{NameSpaceHklm}\{clsid}";
+            var hklmPath2 = RegPath.Hklm(hklmKey);
+            var hkcuPath2 = RegPath.Hkcu(hkcuKey);
+            var keyStillExists = Reg.HasValue(hklmPath2, "HiddenByDefault") || Reg.HasValue(hkcuPath2, "HiddenByDefault");
+
+            if (keyStillExists)
+            {
+                // 隐藏时只是把 HiddenByDefault 置 1，键和原默认值都还在，清掉标志即可原样恢复
+                _journal.Record($"恢复此电脑节点：{clsid}", new[]
+                {
+                    (HiveKind.LocalMachine, hklmKey),
+                    (HiveKind.CurrentUser, hkcuKey)
+                }, () =>
+                {
+                    if (Reg.HasValue(hklmPath2, "HiddenByDefault")) Reg.SetInt(hklmPath2, "HiddenByDefault", 0);
+                    if (Reg.HasValue(hkcuPath2, "HiddenByDefault")) Reg.SetInt(hkcuPath2, "HiddenByDefault", 0);
+                });
+
+                Native.NotifyAssociationsChanged();
+                return;
+            }
+
+            var backup = ReadNodeBackup(clsid);
             _journal.Record($"恢复此电脑节点：{clsid}", new[]
             {
-                (HiveKind.LocalMachine, target),
-                (HiveKind.CurrentUser, $@"{NameSpaceHkcu}\{clsid}")
+                (HiveKind.LocalMachine, hklmKey),
+                (HiveKind.CurrentUser, hkcuKey)
             }, () =>
             {
-                Reg.SetString(RegPath.Hklm(target), "", clsid);
+                if (backup is not null)
+                {
+                    // 用隐藏前抓到的完整快照还原，保留原默认值（CLSID_xxx 名称引用）与 HiddenByDefault
+                    foreach (var key in backup.Keys) SnapshotEngine.Restore(key);
+                    DeleteNodeBackup(clsid);
+                    return;
+                }
+
+                // 没有备份时（例如用户手动删过键）退回最小重建
+                var hive = Reg.Exists(RegPath.Hklm(hklmKey)) ? HiveKind.LocalMachine : HiveKind.CurrentUser;
+                var target = hive == HiveKind.LocalMachine ? hklmKey : hkcuKey;
+                Reg.SetString(RegPath.Of(hive, target), "", clsid);
             });
         }
         else
         {
-            _journal.Record($"隐藏此电脑节点：{clsid}", new[]
+            // 有 HiddenByDefault 的系统节点优先改值，不删键，恢复时零损失
+            var hklmPath = RegPath.Hklm(hklmKey);
+            var hkcuPath = RegPath.Hkcu(hkcuKey);
+            var hasHiddenFlag = Reg.HasValue(hklmPath, "HiddenByDefault") || Reg.HasValue(hkcuPath, "HiddenByDefault");
+
+            if (hasHiddenFlag)
             {
-                (HiveKind.LocalMachine, $@"{NameSpaceHklm}\{clsid}"),
-                (HiveKind.CurrentUser, $@"{NameSpaceHkcu}\{clsid}")
-            }, () =>
+                _journal.Record($"隐藏此电脑节点：{clsid}", new[]
+                {
+                    (HiveKind.LocalMachine, hklmKey),
+                    (HiveKind.CurrentUser, hkcuKey)
+                }, () =>
+                {
+                    if (Reg.HasValue(hklmPath, "HiddenByDefault")) Reg.SetInt(hklmPath, "HiddenByDefault", 1);
+                    if (Reg.HasValue(hkcuPath, "HiddenByDefault")) Reg.SetInt(hkcuPath, "HiddenByDefault", 1);
+                });
+            }
+            else
             {
-                Reg.DeleteTree(RegPath.Hklm($@"{NameSpaceHklm}\{clsid}"));
-                Reg.DeleteTree(RegPath.Hkcu($@"{NameSpaceHkcu}\{clsid}"));
-            });
+                // 第三方节点没有 HiddenByDefault，只能删键；删前把整键内容存到 WinKit 自己的备份目录
+                var backup = new NodeBackup
+                {
+                    Clsid = clsid,
+                    Hive = Reg.Exists(hklmPath) ? HiveKind.LocalMachine : HiveKind.CurrentUser,
+                    Keys = new List<SnapshotKey>
+                    {
+                        SnapshotEngine.Capture(HiveKind.LocalMachine, hklmKey),
+                        SnapshotEngine.Capture(HiveKind.CurrentUser, hkcuKey)
+                    }
+                };
+
+                _journal.Record($"隐藏此电脑节点：{clsid}", new[]
+                {
+                    (HiveKind.LocalMachine, hklmKey),
+                    (HiveKind.CurrentUser, hkcuKey)
+                }, () =>
+                {
+                    WriteNodeBackup(backup);
+                    Reg.DeleteTree(hklmPath);
+                    Reg.DeleteTree(hkcuPath);
+                });
+            }
         }
 
         Native.NotifyAssociationsChanged();
+    }
+
+    private sealed class NodeBackup
+    {
+        public string Clsid { get; set; } = "";
+        public HiveKind Hive { get; set; }
+        public List<SnapshotKey> Keys { get; set; } = new();
+    }
+
+    private static string NodeBackupDirectory { get; } = Path.Combine(
+        Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+        "WinKit", "NodeBackups");
+
+    private static string NodeBackupFile(string clsid)
+        => Path.Combine(NodeBackupDirectory, clsid.Trim('{', '}') + ".json");
+
+    private static void WriteNodeBackup(NodeBackup backup)
+    {
+        try
+        {
+            Directory.CreateDirectory(NodeBackupDirectory);
+            File.WriteAllText(NodeBackupFile(backup.Clsid), JsonSerializer.Serialize(backup));
+        }
+        catch (Exception)
+        {
+            // 备份失败不阻断隐藏，但恢复时会退回最小重建
+        }
+    }
+
+    private static NodeBackup? ReadNodeBackup(string clsid)
+    {
+        try
+        {
+            var file = NodeBackupFile(clsid);
+            if (!File.Exists(file)) return null;
+            return JsonSerializer.Deserialize<NodeBackup>(File.ReadAllText(file));
+        }
+        catch (Exception)
+        {
+            return null;
+        }
+    }
+
+    private static void DeleteNodeBackup(string clsid)
+    {
+        try
+        {
+            var file = NodeBackupFile(clsid);
+            if (File.Exists(file)) File.Delete(file);
+        }
+        catch (Exception)
+        {
+            // 忽略
+        }
+    }
+
+    private static IEnumerable<NodeBackup> LoadNodeBackups()
+    {
+        if (!Directory.Exists(NodeBackupDirectory)) yield break;
+
+        foreach (var file in Directory.GetFiles(NodeBackupDirectory, "*.json"))
+        {
+            NodeBackup? backup = null;
+            try
+            {
+                backup = JsonSerializer.Deserialize<NodeBackup>(File.ReadAllText(file));
+            }
+            catch (Exception)
+            {
+                // 损坏的备份跳过
+            }
+
+            if (backup is not null && !string.IsNullOrWhiteSpace(backup.Clsid)) yield return backup;
+        }
     }
 
     public List<ThisPcItem> LoadDrives()

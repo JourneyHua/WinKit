@@ -37,6 +37,14 @@ public sealed class MainViewModel : ObservableObject
         {
             new()
             {
+                Key = "overview",
+                Title = "系统概览",
+                Subtitle = "一屏看清系统版本、硬件、磁盘占用、待重启与安全状态（只读）",
+                AccentBrush = new System.Windows.Media.SolidColorBrush(System.Windows.Media.Color.FromRgb(0x1F, 0x6F, 0xEB)),
+                Factory = () => new OverviewViewModel(SetStatus)
+            },
+            new()
+            {
                 Key = "menu",
                 Title = "右键菜单",
                 Subtitle = "管理 Win11 一级菜单与展开后的完整菜单",
@@ -98,6 +106,38 @@ public sealed class MainViewModel : ObservableObject
                 Subtitle = "Win11 体验与隐私开关、TCP/UDP 端口占用查询与网络修复、16 项深层管理面板直达",
                 AccentBrush = new System.Windows.Media.SolidColorBrush(System.Windows.Media.Color.FromRgb(0xAE, 0x3E, 0xC9)),
                 Factory = () => new SystemTweakViewModel(_journal, SetStatus, SetBusy)
+            },
+            new()
+            {
+                Key = "filelock",
+                Title = "文件占用解锁",
+                Subtitle = "查出是谁锁着这个文件，可直接结束占用进程（Restart Manager）",
+                AccentBrush = new System.Windows.Media.SolidColorBrush(System.Windows.Media.Color.FromRgb(0x9D, 0x5B, 0x0E)),
+                Factory = () => new FileLockViewModel(SetStatus)
+            },
+            new()
+            {
+                Key = "events",
+                Title = "事件日志诊断",
+                Subtitle = "近 7/30 天错误与严重事件按来源归并，蓝屏、崩溃、更新失败一眼定位",
+                AccentBrush = new System.Windows.Media.SolidColorBrush(System.Windows.Media.Color.FromRgb(0xB0, 0x2A, 0x37)),
+                Factory = () => new EventLogViewModel(SetStatus)
+            },
+            new()
+            {
+                Key = "wupdate",
+                Title = "Windows 更新",
+                Subtitle = "查看已装补丁、暂停/恢复更新、清理下载缓存、重启更新服务",
+                AccentBrush = new System.Windows.Media.SolidColorBrush(System.Windows.Media.Color.FromRgb(0x00, 0x6B, 0x5C)),
+                Factory = () => new WindowsUpdateViewModel(_journal, SetStatus, SetBusy)
+            },
+            new()
+            {
+                Key = "network",
+                Title = "网络诊断",
+                Subtitle = "网卡/DNS/网关、延迟与丢包、DNS 解析耗时、Wi-Fi 信号与系统代理",
+                AccentBrush = new System.Windows.Media.SolidColorBrush(System.Windows.Media.Color.FromRgb(0x2F, 0x5F, 0x9E)),
+                Factory = () => new NetworkViewModel(SetStatus)
             },
             new()
             {

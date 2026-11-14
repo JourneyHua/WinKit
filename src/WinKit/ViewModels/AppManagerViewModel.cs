@@ -397,6 +397,7 @@ public sealed class AppManagerViewModel : ObservableObject, IModule
         if (confirm != MessageBoxResult.OK) return;
 
         IsBusy = true;
+        var updated = false;
         try
         {
             var (ok, msg) = await _service.UpgradeAppAsync(app, s => _status(s));
@@ -406,7 +407,7 @@ public sealed class AppManagerViewModel : ObservableObject, IModule
             {
                 app.Version = app.LatestVersion;
                 app.LatestVersion = "";
-                Refresh();
+                updated = true;
             }
             else
             {
@@ -417,6 +418,9 @@ public sealed class AppManagerViewModel : ObservableObject, IModule
         {
             IsBusy = false;
         }
+
+        // Refresh() 内部有 if (IsBusy) return，必须等 busy 复位后再刷新，否则列表与统计停在更新前
+        if (updated) Refresh();
     }
 
     private async Task UpgradeAllAsync()

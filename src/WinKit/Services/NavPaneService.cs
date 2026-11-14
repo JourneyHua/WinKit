@@ -59,46 +59,66 @@ public sealed class NavPaneService
     {
         var items = new List<QuickAccessItem>();
 
+        object? shell = null;
+        object? folder = null;
+        object? collection = null;
+
         try
         {
             var type = Type.GetTypeFromProgID("Shell.Application");
             if (type is null) return (items, "系统未注册 Shell.Application");
 
-            dynamic shell = Activator.CreateInstance(type)!;
-            dynamic? folder = shell.Namespace(QuickAccessClsid);
+            shell = Activator.CreateInstance(type);
+            if (shell is null) return (items, "无法创建 Shell.Application");
+
+            folder = ((dynamic)shell).Namespace(QuickAccessClsid);
             if (folder is null) return (items, "无法打开快速访问命名空间");
 
-            dynamic collection = folder.Items();
-            var count = (int)collection.Count;
+            collection = ((dynamic)folder).Items();
+            var count = (int)((dynamic)collection).Count;
             var order = 0;
 
             for (var i = 0; i < count; i++)
             {
-                dynamic? item = collection.Item(i);
-                if (item is null) continue;
-
-                string name = "";
-                string path = "";
-                try { name = (string)item.Name; } catch (Exception) { }
-                try { path = (string)item.Path; } catch (Exception) { }
-
-                if (string.IsNullOrWhiteSpace(name) && string.IsNullOrWhiteSpace(path)) continue;
-
-                // 用文件系统判断是否文件夹，COM 的 IsFolder 在快速访问命名空间里不可靠
-                var isFolder = !string.IsNullOrWhiteSpace(path) && Directory.Exists(path);
-
-                items.Add(new QuickAccessItem
+                object? item = null;
+                try
                 {
-                    Name = string.IsNullOrWhiteSpace(name) ? path : name,
-                    Path = path,
-                    IsFolder = isFolder,
-                    Order = order++
-                });
+                    item = ((dynamic)collection).Item(i);
+                    if (item is null) continue;
+
+                    string name = "";
+                    string path = "";
+                    try { name = (string)((dynamic)item).Name; } catch (Exception) { }
+                    try { path = (string)((dynamic)item).Path; } catch (Exception) { }
+
+                    if (string.IsNullOrWhiteSpace(name) && string.IsNullOrWhiteSpace(path)) continue;
+
+                    // 用文件系统判断是否文件夹，COM 的 IsFolder 在快速访问命名空间里不可靠
+                    var isFolder = !string.IsNullOrWhiteSpace(path) && Directory.Exists(path);
+
+                    items.Add(new QuickAccessItem
+                    {
+                        Name = string.IsNullOrWhiteSpace(name) ? path : name,
+                        Path = path,
+                        IsFolder = isFolder,
+                        Order = order++
+                    });
+                }
+                finally
+                {
+                    ReleaseCom(item);
+                }
             }
         }
         catch (Exception ex)
         {
             return (items, ex.Message);
+        }
+        finally
+        {
+            ReleaseCom(collection);
+            ReleaseCom(folder);
+            ReleaseCom(shell);
         }
 
         // 已固定的文件夹排在前面，最近使用的文件排在后面
@@ -118,11 +138,14 @@ public sealed class NavPaneService
 
     /// <summary>
     /// 重新排列快速访问固定项：先全部取消，再按给定顺序重新固定（逐个等待，较慢但可靠）。
+    /// 返回未能恢复的路径，调用方必须提示用户，不能静默当作成功。
     /// </summary>
-    public void RebuildOrder(IReadOnlyList<string> orderedPaths, Action<string>? progress = null)
+    public IReadOnlyList<string> RebuildOrder(IReadOnlyList<string> orderedPaths, Action<string>? progress = null)
     {
         var (current, error) = LoadQuickAccess();
         if (error is not null) throw new InvalidOperationException(error);
+
+        var failures = new List<string>();
 
         foreach (var item in current.Where(i => i.IsFolder && !string.IsNullOrWhiteSpace(i.Path)))
         {
@@ -132,9 +155,9 @@ public sealed class NavPaneService
                 Unpin(item.Path);
                 Thread.Sleep(120);
             }
-            catch (Exception)
+            catch (Exception ex)
             {
-                // 单个取消失败继续
+                failures.Add($"{item.Name}（取消固定失败：{ex.Message}）");
             }
         }
 
@@ -146,11 +169,13 @@ public sealed class NavPaneService
                 Pin(path);
                 Thread.Sleep(180);
             }
-            catch (Exception)
+            catch (Exception ex)
             {
-                // 单个固定失败继续
+                failures.Add($"{path}（重新固定失败：{ex.Message}）");
             }
         }
+
+        return failures;
     }
 
     public List<NavToggleItem> LoadToggles()
@@ -214,7 +239,9 @@ public sealed class NavPaneService
         var info = new SHELLEXECUTEINFO
         {
             cbSize = Marshal.SizeOf<SHELLEXECUTEINFO>(),
-            fMask = 0x00000040,
+            // pintohome / unpinfromhome 只注册了 CommandStateHandler，没有 command 子键，
+            // 必须让 ShellExecuteEx 走 IContextMenu 调用（SEE_MASK_INVOKEIDLIST = 0x0C）。
+            fMask = 0x0000000C,
             lpVerb = verb,
             lpFile = path,
             nShow = 1
@@ -224,6 +251,19 @@ public sealed class NavPaneService
         {
             var code = Marshal.GetLastWin32Error();
             throw new InvalidOperationException($"执行“{verb}”失败（错误码 {code}）");
+        }
+    }
+
+    private static void ReleaseCom(object? comObject)
+    {
+        if (comObject is null) return;
+        try
+        {
+            if (Marshal.IsComObject(comObject)) Marshal.FinalReleaseComObject(comObject);
+        }
+        catch (Exception)
+        {
+            // 释放失败不影响功能
         }
     }
 

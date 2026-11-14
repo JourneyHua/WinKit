@@ -79,19 +79,21 @@ public sealed class NavPinnedService
             foreach (var clsid in Reg.SubKeyNames(RegPath.Of(hive, @"Software\Classes\CLSID")))
             {
                 if (!clsid.StartsWith('{')) continue;
+                if (result.ContainsKey(clsid)) continue;
 
                 var path = RegPath.Of(hive, $@"Software\Classes\CLSID\{clsid}");
                 using var key = Reg.Open(path, false);
                 if (key is null) continue;
 
+                // 只枚举一次值名：CLSID 树有上万个键，把 GetValueNames() 写在谓词里会翻倍 I/O
+                var names = key.GetValueNames();
                 var valueName = PinValueNames.FirstOrDefault(n =>
-                    key.GetValueNames().Any(v => v.Equals(n, StringComparison.OrdinalIgnoreCase)));
+                    names.Any(v => v.Equals(n, StringComparison.OrdinalIgnoreCase)));
                 if (valueName is null) continue;
 
                 var raw = key.GetValue(valueName);
                 var pinned = raw is int i && i != 0;
 
-                if (result.ContainsKey(clsid)) continue;
                 result[clsid] = BuildItem(hive, clsid, valueName, pinned);
             }
         }

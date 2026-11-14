@@ -45,14 +45,14 @@ public sealed class DriverManagerViewModel : ObservableObject, IModule
         WindowsUpdates = new ObservableCollection<WindowsDriverUpdateItem>();
 
         RefreshCommand = new RelayCommand(Refresh);
-        CheckWindowsUpdatesCommand = new RelayCommand(() => _ = CheckWindowsUpdatesAsync());
-        InstallWindowsUpdateCommand = new RelayCommand(p => _ = InstallWindowsUpdateAsync(p as WindowsDriverUpdateItem));
-        InstallAllWindowsUpdatesCommand = new RelayCommand(() => _ = InstallAllWindowsUpdatesAsync());
-        InstallLocalInfCommand = new RelayCommand(() => _ = InstallLocalInfAsync());
-        RestoreFromBackupCommand = new RelayCommand(() => _ = RestoreFromBackupAsync());
-        ScanHardwareCommand = new RelayCommand(() => _ = ScanHardwareAsync());
-        ExportDriverCommand = new RelayCommand(p => _ = ExportDriverAsync(p as DriverPackageItem));
-        UninstallDriverCommand = new RelayCommand(p => _ = UninstallDriverAsync(p as DriverPackageItem));
+        CheckWindowsUpdatesCommand = new RelayCommand(() => Run(CheckWindowsUpdatesAsync));
+        InstallWindowsUpdateCommand = new RelayCommand(p => Run(() => InstallWindowsUpdateAsync(p as WindowsDriverUpdateItem)));
+        InstallAllWindowsUpdatesCommand = new RelayCommand(() => Run(InstallAllWindowsUpdatesAsync));
+        InstallLocalInfCommand = new RelayCommand(() => Run(InstallLocalInfAsync));
+        RestoreFromBackupCommand = new RelayCommand(() => Run(RestoreFromBackupAsync));
+        ScanHardwareCommand = new RelayCommand(() => Run(ScanHardwareAsync));
+        ExportDriverCommand = new RelayCommand(p => Run(() => ExportDriverAsync(p as DriverPackageItem)));
+        UninstallDriverCommand = new RelayCommand(p => Run(() => UninstallDriverAsync(p as DriverPackageItem)));
         CopyDriverInfoCommand = new RelayCommand(p => CopyDriverInfo(p as DriverPackageItem));
         OpenBackupFolderCommand = new RelayCommand(OpenBackupFolder);
         OpenDeviceManagerCommand = new RelayCommand(OpenDeviceManager);
@@ -138,6 +138,27 @@ public sealed class DriverManagerViewModel : ObservableObject, IModule
 
     public bool HasWindowsUpdates => WindowsUpdates.Count > 0;
     public string InstallAllUpdatesText => $"一键安装官方更新（{WindowsUpdates.Count}）";
+
+    /// <summary>
+    /// 统一收口异步命令：命令用 `_ = XxxAsync()` 发起时，若方法内部只 try/finally 没有 catch，
+    /// 异常会被丢弃的 Task 吞掉，界面永久停在“进行中”且用户看不到任何错误。
+    /// </summary>
+    private async void Run(Func<Task> action)
+    {
+        try
+        {
+            await action();
+        }
+        catch (Exception ex)
+        {
+            _status($"操作失败：{ex.Message}");
+            MessageBox.Show($"操作失败：{ex.Message}", "WinKit", MessageBoxButton.OK, MessageBoxImage.Warning);
+        }
+        finally
+        {
+            IsBusy = false;
+        }
+    }
 
     private int _backupCount;
     public int BackupCount

@@ -190,7 +190,13 @@ public sealed class SystemCleanViewModel : ObservableObject, IModule
     private async Task CleanSelectedAsync()
     {
         var selected = Targets.Where(t => t.IsSelected && t.SizeBytes > 0).ToList();
-        if (selected.Count == 0 || IsBusy)
+        if (IsBusy)
+        {
+            _status("正在扫描或清理中，请等当前任务结束再点清理");
+            return;
+        }
+
+        if (selected.Count == 0)
         {
             MessageBox.Show("当前勾选项没有可清理的文件，请先扫描或勾选有体积的条目。", "WinKit",
                 MessageBoxButton.OK, MessageBoxImage.Information);

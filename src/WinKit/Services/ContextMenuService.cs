@@ -386,6 +386,21 @@ public sealed class ContextMenuService
                     },
                     new[] { entry.RegistryPath, activeFile, backupFile });
                 break;
+            case MenuEntryKind.ShellNew:
+                // ShellNew 的 Id 是 "{hive}:new:{ext}"，不能走 ParseId（会得到 "new:.txt" 这种不存在的键）
+                var (newHive, _) = ParseId(entry.Id);
+                var newActive = $@"Software\Classes\{entry.KeyName}\ShellNew";
+                var newDisabled = newActive + ".WinKitDisabled";
+                _journal.Record($"删除新建项：{entry.DisplayName}", new[]
+                {
+                    (newHive, newActive),
+                    (newHive, newDisabled)
+                }, () =>
+                {
+                    Reg.DeleteTree(RegPath.Of(newHive, newActive));
+                    Reg.DeleteTree(RegPath.Of(newHive, newDisabled));
+                });
+                break;
             default:
                 var (hive, subKey) = ParseId(entry.Id);
                 _journal.Record($"删除菜单项：{entry.DisplayName}", new[] { (hive, subKey) },

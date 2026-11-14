@@ -40,6 +40,9 @@
                                    Foreground="{StaticResource Brush.TextMuted}"
                                    TextTrimming="CharacterEllipsis" Margin="0,2,8,0"
                                    ToolTip="{Binding Detail}" />
+                        <TextBlock Text="{Binding Note}" FontSize="11" TextWrapping="Wrap" Margin="0,2,8,0"
+                                   Foreground="{StaticResource Brush.Accent}"
+                                   Visibility="{Binding Note, Converter={StaticResource EmptyToVis}, ConverterParameter=invert}" />
                     </StackPanel>
                     <StackPanel Grid.Column="2" Orientation="Horizontal" VerticalAlignment="Center" Margin="10,0,0,0">
                         <TextBlock Text="{Binding StatusText}" Style="{StaticResource RowSub}"

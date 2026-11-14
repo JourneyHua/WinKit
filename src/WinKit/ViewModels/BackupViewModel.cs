@@ -54,47 +54,59 @@ public sealed class BackupViewModel : ObservableObject, IModule
         ? $"本次运行有 {_journal.SessionCount} 次改动可回滚"
         : "本次运行尚无改动";
 
-    public void Refresh()
+    public void Refresh() => _ = RefreshAsync();
+
+    private async Task RefreshAsync()
     {
-        Backups.Clear();
+        var journal = _journal;
 
-        foreach (var file in _journal.ListBackups())
+        // 单个快照最多可含两万个键或整个文件的 Base64，逐个读盘+反序列化放在 UI 线程会明显卡顿
+        var rows = await Task.Run(() =>
         {
-            var title = file.Name;
-            var keyCountText = "";
-            var keyCount = 0;
-
-            try
+            var list = new List<BackupRow>();
+            foreach (var file in journal.ListBackups())
             {
-                var snapshot = JsonSerializer.Deserialize<OperationSnapshot>(File.ReadAllText(file.FullName));
-                if (snapshot is not null)
+                var title = file.Name;
+                var keyCountText = "";
+                var keyCount = 0;
+
+                try
                 {
-                    title = snapshot.Title;
-                    keyCount = snapshot.KeyCount;
-                    keyCountText = snapshot.Files.Count > 0 && snapshot.Keys.Count == 0
-                        ? $"{snapshot.Files.Count} 个文件"
-                        : snapshot.Files.Count > 0
-                            ? $"{snapshot.KeyCount} 项"
-                            : $"{snapshot.KeyCount} 个键";
+                    var snapshot = JsonSerializer.Deserialize<OperationSnapshot>(File.ReadAllText(file.FullName));
+                    if (snapshot is not null)
+                    {
+                        title = snapshot.Title;
+                        keyCount = snapshot.KeyCount;
+                        keyCountText = snapshot.Files.Count > 0 && snapshot.Keys.Count == 0
+                            ? $"{snapshot.Files.Count} 个文件"
+                            : snapshot.Files.Count > 0
+                                ? $"{snapshot.KeyCount} 项"
+                                : $"{snapshot.KeyCount} 个键";
+                    }
                 }
-            }
-            catch (Exception)
-            {
-                // 解析失败就用文件名
+                catch (Exception)
+                {
+                    // 解析失败就用文件名
+                }
+
+                list.Add(new BackupRow
+                {
+                    FilePath = file.FullName,
+                    Title = title,
+                    CreatedTime = file.CreationTime,
+                    TimeText = file.CreationTime.ToString("yyyy-MM-dd HH:mm:ss"),
+                    SizeBytes = file.Length,
+                    SizeText = ThisPcService.FormatSize(file.Length),
+                    KeyCount = keyCount,
+                    KeyCountText = keyCountText
+                });
             }
 
-            Backups.Add(new BackupRow
-            {
-                FilePath = file.FullName,
-                Title = title,
-                CreatedTime = file.CreationTime,
-                TimeText = file.CreationTime.ToString("yyyy-MM-dd HH:mm:ss"),
-                SizeBytes = file.Length,
-                SizeText = ThisPcService.FormatSize(file.Length),
-                KeyCount = keyCount,
-                KeyCountText = keyCountText
-            });
-        }
+            return list;
+        });
+
+        Backups.Clear();
+        foreach (var row in rows) Backups.Add(row);
 
         OnPropertyChanged(nameof(SessionText));
     }
@@ -214,8 +226,18 @@ public sealed class BackupViewModel : ObservableObject, IModule
 
         if (result != MessageBoxResult.OK) return;
 
-        var message = _journal.RollbackSession();
-        _status(message ?? "没有可回滚的改动");
+        try
+        {
+            var message = _journal.RollbackSession();
+            _status(message ?? "没有可回滚的改动");
+            if (message is not null && message.Contains("未能还原"))
+                MessageBox.Show(message, "回滚结果", MessageBoxButton.OK, MessageBoxImage.Warning);
+        }
+        catch (Exception ex)
+        {
+            MessageBox.Show($"回滚失败：{ex.Message}", "WinKit", MessageBoxButton.OK, MessageBoxImage.Warning);
+        }
+
         Refresh();
     }
 

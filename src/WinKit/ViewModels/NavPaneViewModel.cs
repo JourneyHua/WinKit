@@ -34,7 +34,7 @@ public sealed class NavPaneViewModel : ObservableObject, IModule
         OpenCommand = new RelayCommand(p => Open(p as QuickAccessItem));
         MoveUpCommand = new RelayCommand(p => Move(p as QuickAccessItem, -1));
         MoveDownCommand = new RelayCommand(p => Move(p as QuickAccessItem, 1));
-        ApplyOrderCommand = new RelayCommand(ApplyOrder);
+        ApplyOrderCommand = new RelayCommand(() => _ = ApplyOrderAsync());
         RestartExplorerCommand = new RelayCommand(RestartExplorer);
         PurgeStubbornCommand = new RelayCommand(p => PurgeStubborn(p as StubbornGroup));
         StopRebuilderCommand = new RelayCommand(p => StopRebuilder(p as StubbornGroup));
@@ -152,7 +152,10 @@ public sealed class NavPaneViewModel : ObservableObject, IModule
         }
         catch (Exception ex)
         {
+            // 回滚时先摘掉回调，否则赋值会再次触发本方法，双向失败会无限递归
+            item.ToggleRequested = null;
             item.IsVisible = !visible;
+            item.ToggleRequested = OnPinnedFolderToggled;
             MessageBox.Show($"操作失败：{ex.Message}", "WinKit", MessageBoxButton.OK, MessageBoxImage.Warning);
         }
     }
@@ -166,7 +169,9 @@ public sealed class NavPaneViewModel : ObservableObject, IModule
         }
         catch (Exception ex)
         {
+            item.ToggleRequested = null;
             item.IsOn = !value;
+            item.ToggleRequested = OnToggleChanged;
             MessageBox.Show($"操作失败：{ex.Message}", "WinKit", MessageBoxButton.OK, MessageBoxImage.Warning);
         }
     }
@@ -243,13 +248,14 @@ public sealed class NavPaneViewModel : ObservableObject, IModule
         for (var i = 0; i < Pinned.Count; i++) Pinned[i].Order = i;
     }
 
-    private void ApplyOrder()
+    private async Task ApplyOrderAsync()
     {
         var paths = Pinned.Where(i => i.IsFolder && Directory.Exists(i.Path))
             .Select(i => i.Path)
             .ToList();
 
         if (paths.Count == 0) return;
+        if (IsLoading) return;
 
         var result = MessageBox.Show(
             "重新排序的做法是：先取消全部固定，再按当前列表顺序重新固定。\n\n" +
@@ -260,16 +266,35 @@ public sealed class NavPaneViewModel : ObservableObject, IModule
 
         if (result != MessageBoxResult.OK) return;
 
+        IsLoading = true;
         try
         {
-            _service.RebuildOrder(paths, msg => _status(msg));
-            _status("固定顺序已按新列表重建");
-            Refresh();
+            // 逐项 ShellExecuteEx + 等待，必须在后台跑，否则窗口会“未响应”
+            var failures = await Task.Run(() => _service.RebuildOrder(paths, msg => _status(msg)));
+
+            if (failures.Count == 0)
+            {
+                _status("固定顺序已按新列表重建");
+            }
+            else
+            {
+                _status($"重建顺序有 {failures.Count} 项未完成");
+                MessageBox.Show(
+                    "以下项目没有恢复固定（它们可能已从快速访问里消失，请手动重新固定）：\n\n" +
+                    string.Join("\n", failures),
+                    "部分项目重建失败", MessageBoxButton.OK, MessageBoxImage.Warning);
+            }
         }
         catch (Exception ex)
         {
             MessageBox.Show($"调整顺序失败：{ex.Message}", "WinKit", MessageBoxButton.OK, MessageBoxImage.Warning);
         }
+        finally
+        {
+            IsLoading = false;
+        }
+
+        Refresh();
     }
 
     private void PurgeStubborn(StubbornGroup? group)

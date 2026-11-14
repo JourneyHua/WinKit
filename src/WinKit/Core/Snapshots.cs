@@ -50,6 +50,22 @@ public static class SnapshotEngine
     private const int MaxNodes = 20000;
 
     public static SnapshotKey Capture(HiveKind hive, string subKey, int budget = MaxNodes)
+        => Capture(hive, subKey, new Budget(budget));
+
+    /// <summary>
+    /// 递归预算必须是共享计数器：按值传 budget 时每个子键都会拿到一份新的预算，
+    /// 整棵树实际节点数会远超 MaxNodes（CLSID 这种上万子键的树会直接吃满内存）。
+    /// </summary>
+    private sealed class Budget
+    {
+        private int _remaining;
+
+        public Budget(int remaining) => _remaining = remaining;
+
+        public bool TryTake() => _remaining-- > 0;
+    }
+
+    private static SnapshotKey Capture(HiveKind hive, string subKey, Budget budget)
     {
         var node = new SnapshotKey
         {
@@ -73,13 +89,10 @@ public static class SnapshotEngine
             });
         }
 
-        if (budget <= 0) return node;
-
         foreach (var child in key.GetSubKeyNames())
         {
-            node.Children.Add(Capture(hive, subKey + "\\" + child, budget - 1));
-            budget--;
-            if (budget <= 0) break;
+            if (!budget.TryTake()) break;
+            node.Children.Add(Capture(hive, subKey + "\\" + child, budget));
         }
 
         return node;
@@ -291,14 +304,31 @@ public sealed class ChangeJournal
     public string? RollbackSession()
     {
         if (_session.Count == 0) return null;
+
+        var failures = new List<string>();
         for (var i = _session.Count - 1; i >= 0; i--)
         {
-            RestoreSnapshot(_session[i]);
-            TryDeleteFile(_session[i]);
+            // 单条快照写不回去不能中断整个回滚，否则会留下“半还原”且用户无从判断
+            try
+            {
+                RestoreSnapshot(_session[i]);
+                TryDeleteFile(_session[i]);
+            }
+            catch (Exception ex)
+            {
+                failures.Add($"{_session[i].Title}：{ex.Message}");
+            }
         }
 
         var count = _session.Count;
         _session.Clear();
+
+        if (failures.Count > 0)
+        {
+            Changed?.Invoke($"回滚完成，但有 {failures.Count} 次改动未能还原");
+            return $"已回滚 {count} 次改动，其中 {failures.Count} 次未能还原：\n" + string.Join("\n", failures);
+        }
+
         Changed?.Invoke($"已回滚本次会话的 {count} 次改动");
         return $"已回滚 {count} 次改动";
     }

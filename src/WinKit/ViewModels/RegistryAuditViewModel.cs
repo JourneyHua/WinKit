@@ -168,7 +168,7 @@ public sealed class RegistryAuditViewModel : ObservableObject, IModule
                 }
             }
 
-            if (currentResult is not null)
+            if (currentResult is not null && ReferenceEquals(SelectedCategory, activeCat))
             {
                 _all = currentResult.Items;
                 NoteText = currentResult.Note ?? "";
@@ -176,6 +176,11 @@ public sealed class RegistryAuditViewModel : ObservableObject, IModule
                     ? $"已扫描 {currentResult.Scanned} 项（超过上限，结果可能不完整）"
                     : $"已扫描 {currentResult.Scanned} 项";
                 ApplyFilter();
+            }
+            else if (!ReferenceEquals(SelectedCategory, activeCat))
+            {
+                // 体检期间用户切了分类：不能把旧分类的数据灌进新分类的视图
+                _pendingCategory = SelectedCategory;
             }
 
             _status($"全分类体检完成：7 个分类共发现 {totalInvalid} 个可疑项");
@@ -188,22 +193,45 @@ public sealed class RegistryAuditViewModel : ObservableObject, IModule
         {
             IsBusy = false;
         }
+
+        FlushPendingCategory();
     }
 
     private List<RegistryItem> _all = new();
     private string _scannedText = "";
+    private CategoryNode? _pendingCategory;
 
     public void Refresh() => Load(SelectedCategory);
 
     private void Load(CategoryNode? category)
     {
-        if (category is null || IsBusy) return;
+        if (category is null) return;
 
+        if (IsBusy)
+        {
+            // 扫描中切换分类：记下来，等当前扫描结束再补扫，不能静默丢弃
+            _pendingCategory = category;
+            return;
+        }
+
+        _ = LoadAsync(category);
+    }
+
+    private async Task LoadAsync(CategoryNode category)
+    {
         IsBusy = true;
         try
         {
             _status($"正在扫描：{category.Title}…");
-            var result = _service.Load(category.Kind);
+
+            // 失效残留/文件关联要遍历上万个 CLSID，必须离开 UI 线程
+            var result = await Task.Run(() => _service.Load(category.Kind));
+
+            if (!ReferenceEquals(SelectedCategory, category))
+            {
+                _pendingCategory = SelectedCategory;
+                return;
+            }
 
             _all = result.Items;
             category.Count = result.Items.Count(i => i.IsInvalid);
@@ -225,6 +253,15 @@ public sealed class RegistryAuditViewModel : ObservableObject, IModule
         {
             IsBusy = false;
         }
+
+        FlushPendingCategory();
+    }
+
+    private void FlushPendingCategory()
+    {
+        var pending = _pendingCategory;
+        _pendingCategory = null;
+        if (pending is not null && !IsBusy) Load(pending);
     }
 
     private void ApplyFilter()

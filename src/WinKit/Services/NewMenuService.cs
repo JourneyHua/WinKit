@@ -13,7 +13,17 @@ public sealed class NewMenuItem : ObservableObject
     public string Location { get; init; } = "";
     public IReadOnlyList<string> Clsids { get; init; } = Array.Empty<string>();
     public bool CanBlock { get; init; } = true;
-    public string Note { get; init; } = "";
+
+    private string _note = "";
+
+    public string Note
+    {
+        get => _note;
+        set
+        {
+            if (Set(ref _note, value)) OnPropertyChanged(nameof(StatusText));
+        }
+    }
 
     /// <summary>清单里声明的作用域；空 = 未确认。</summary>
     public IReadOnlyList<MenuDomainKind> Scopes { get; init; } = Array.Empty<MenuDomainKind>();
@@ -192,14 +202,19 @@ public sealed class NewMenuService
             }
 
             var display = ResolvePackageDisplayName(package);
-            if (string.IsNullOrWhiteSpace(display)) display = HumanizePackage(package);
+            var nameResolved = !string.IsNullOrWhiteSpace(display);
+            if (!nameResolved) display = HumanizePackage(package);
+
+            // 名称没解析出来时不能按短名合并：不同厂商的包很容易都叫 "Update"，
+            // 合并后屏蔽一个会连带把另一个的 CLSID 一起写进 Blocked。
+            var mergeKey = nameResolved ? display! : package;
 
             var location = ResolveInstallLocation(package);
 
-            if (!merged.TryGetValue(display!, out var entry))
+            if (!merged.TryGetValue(mergeKey, out var entry))
             {
                 entry = (new List<string>(), new List<string>(), location, manifest);
-                merged[display!] = entry;
+                merged[mergeKey] = entry;
             }
 
             if (!entry.Packages.Contains(package, StringComparer.OrdinalIgnoreCase))
@@ -225,7 +240,7 @@ public sealed class NewMenuService
                 }
             }
 
-            merged[display!] = entry;
+            merged[mergeKey] = entry;
         }
 
         var items = new List<NewMenuItem>();
@@ -245,6 +260,16 @@ public sealed class NewMenuService
                 .Distinct()
                 .ToList();
 
+            // 清单读不到时，clsids 是整包登记的全部 COM 类（含预览器/后台任务），
+            // 屏蔽会把非菜单的壳扩展一起废掉，所以这种情况下不允许屏蔽。
+            var canBlock = manifest.Found;
+
+            var note = blockedCount > 0 && blockedCount < clsids.Count ? "部分类已被屏蔽" : "";
+            if (!manifest.Found)
+                note = "读不到包清单，无法确认哪些类属于右键菜单，已禁用屏蔽";
+            else if (string.IsNullOrWhiteSpace(ResolvePackageDisplayName(pkgList[0])))
+                note = string.IsNullOrWhiteSpace(note) ? "显示名未解析，按包名单独列出" : note;
+
             items.Add(new NewMenuItem
             {
                 Package = string.Join(" / ", pkgList),
@@ -257,8 +282,8 @@ public sealed class NewMenuService
                 ScopeConfirmed = manifest.Found && manifest.ScopeTypes.Count > 0,
                 IsBlocked = blockedCount > 0,
                 DeepBlocked = blockedCount > 0 && clsids.Any(c => !ClassKeyActive(pkgList, c)),
-                CanBlock = true,
-                Note = blockedCount > 0 && blockedCount < clsids.Count ? "部分类已被屏蔽" : ""
+                CanBlock = canBlock,
+                Note = note
             });
         }
 
@@ -353,6 +378,9 @@ public sealed class NewMenuService
 
     public void SetBlocked(NewMenuItem item, bool blocked)
     {
+        if (!item.CanBlock)
+            throw new InvalidOperationException("该软件的包清单无法读取，无法确定哪些 COM 类属于右键菜单，已阻止屏蔽以避免误伤其它壳扩展。");
+
         var clsids = item.Clsids.ToList();
         if (clsids.Count == 0) return;
 
@@ -413,6 +441,13 @@ public sealed class NewMenuService
 
         item.IsBlocked = blocked;
         item.DeepBlocked = blocked && clsids.Any(c => !ClassKeyActive(packages, c));
+
+        if (blocked && !item.DeepBlocked)
+        {
+            // 只写了 Blocked 而类登记还在活动状态：对 IExplorerCommand 常常不生效，必须让用户知道
+            item.Note = "已写入屏蔽列表，但包内类登记未能停用（菜单项可能仍会显示）";
+        }
+
         Native.NotifyAssociationsChanged();
     }
 
@@ -426,7 +461,22 @@ public sealed class NewMenuService
         var target = disable ? classKey + DisabledSuffix : classKey;
 
         if (!Reg.Exists(RegPath.Of(hive, source))) return;
-        if (Reg.Exists(RegPath.Of(hive, target))) return;
+
+        if (Reg.Exists(RegPath.Of(hive, target)))
+        {
+            if (disable)
+            {
+                // 上次屏蔽留下的 .WinKitDisabled 还在，而软件更新又把活动键注册回来了：
+                // 先清掉旧副本，否则下面的改名会被跳过，菜单项照旧存在。
+                Reg.DeleteTree(RegPath.Of(hive, target));
+            }
+            else
+            {
+                // 恢复时活动键已被软件重新注册，直接丢掉过期的停用副本即可
+                Reg.DeleteTree(RegPath.Of(hive, source));
+                return;
+            }
+        }
 
         // 改名靠“捕获→写到新路径→删旧路径”，注册表没有原生重命名
         var snapshot = SnapshotEngine.Capture(hive, source);

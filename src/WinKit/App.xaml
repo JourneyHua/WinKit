@@ -46,6 +46,21 @@
             <DataTemplate DataType="{x:Type vm:SystemTweakViewModel}">
                 <views:SystemTweakView />
             </DataTemplate>
+            <DataTemplate DataType="{x:Type vm:OverviewViewModel}">
+                <views:OverviewView />
+            </DataTemplate>
+            <DataTemplate DataType="{x:Type vm:FileLockViewModel}">
+                <views:FileLockView />
+            </DataTemplate>
+            <DataTemplate DataType="{x:Type vm:EventLogViewModel}">
+                <views:EventLogView />
+            </DataTemplate>
+            <DataTemplate DataType="{x:Type vm:WindowsUpdateViewModel}">
+                <views:WindowsUpdateView />
+            </DataTemplate>
+            <DataTemplate DataType="{x:Type vm:NetworkViewModel}">
+                <views:NetworkView />
+            </DataTemplate>
         </ResourceDictionary>
     </Application.Resources>
 </Application>

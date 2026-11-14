@@ -176,9 +176,20 @@ public sealed class StubbornNodeService
         if (start < 0 || end <= start) return false;
         if (!int.TryParse(label[(start + 1)..end], out var pid)) return false;
 
+        var expectedName = label[..start].Trim();
+
         try
         {
             using var process = Process.GetProcessById(pid);
+
+            // PID 会被系统复用：结束前必须确认还是同一个进程，否则可能杀掉用户正在用的程序
+            if (!string.IsNullOrWhiteSpace(expectedName) &&
+                !string.Equals(process.ProcessName + ".exe", expectedName, StringComparison.OrdinalIgnoreCase) &&
+                !string.Equals(process.ProcessName, expectedName, StringComparison.OrdinalIgnoreCase))
+            {
+                return false;
+            }
+
             process.Kill();
             return true;
         }

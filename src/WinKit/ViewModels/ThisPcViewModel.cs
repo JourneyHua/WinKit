@@ -98,7 +98,7 @@ public sealed class ThisPcViewModel : ObservableObject, IModule
         }
         catch (Exception ex)
         {
-            item.IsVisible = !visible;
+            Rollback(item, visible);
             MessageBox.Show($"操作失败：{ex.Message}", "WinKit", MessageBoxButton.OK, MessageBoxImage.Warning);
         }
     }
@@ -113,7 +113,7 @@ public sealed class ThisPcViewModel : ObservableObject, IModule
         }
         catch (Exception ex)
         {
-            item.IsVisible = !visible;
+            Rollback(item, visible);
             MessageBox.Show($"操作失败：{ex.Message}", "WinKit", MessageBoxButton.OK, MessageBoxImage.Warning);
         }
     }
@@ -128,8 +128,20 @@ public sealed class ThisPcViewModel : ObservableObject, IModule
         }
         catch (Exception ex)
         {
-            item.IsVisible = !visible;
+            Rollback(item, visible);
             MessageBox.Show($"操作失败：{ex.Message}", "WinKit", MessageBoxButton.OK, MessageBoxImage.Warning);
         }
+    }
+
+    /// <summary>
+    /// 回滚勾选状态。必须先摘掉回调：IsVisible 的 setter 会再次触发 VisibilityRequested，
+    /// 若反向写入也失败就会无限互递归，StackOverflow 会直接杀掉进程。
+    /// </summary>
+    private static void Rollback(ThisPcItem item, bool attempted)
+    {
+        var handler = item.VisibilityRequested;
+        item.VisibilityRequested = null;
+        item.IsVisible = !attempted;
+        item.VisibilityRequested = handler;
     }
 }
