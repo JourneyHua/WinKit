@@ -33,4 +33,10 @@
     <SolidColorBrush x:Key="Brush.Hover" Color="{StaticResource Color.Hover}" />
     <SolidColorBrush x:Key="Brush.Selected" Color="{StaticResource Color.Selected}" />
 
+    <!-- 提示卡边框与徽章底：原先散落在 21 个视图里的硬编码色 -->
+    <SolidColorBrush x:Key="Brush.AccentSoftBorder" Color="#FFC9D5F8" />
+    <SolidColorBrush x:Key="Brush.WarnSoftBorder" Color="#FFE8C46B" />
+    <SolidColorBrush x:Key="Brush.DangerSoftBorder" Color="#FFF3B7B7" />
+    <SolidColorBrush x:Key="Brush.Badge" Color="#FFF1EFE8" />
+
 </ResourceDictionary>

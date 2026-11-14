@@ -3,18 +3,6 @@
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
              FontFamily="Microsoft YaHei UI, Segoe UI">
 
-    <UserControl.Resources>
-        <Style x:Key="CellText" TargetType="TextBlock">
-            <Setter Property="VerticalAlignment" Value="Center" />
-            <Setter Property="TextTrimming" Value="CharacterEllipsis" />
-            <Setter Property="Foreground" Value="{StaticResource Brush.Text}" />
-            <Setter Property="FontSize" Value="13" />
-        </Style>
-        <Style x:Key="CellMuted" TargetType="TextBlock" BasedOn="{StaticResource CellText}">
-            <Setter Property="Foreground" Value="{StaticResource Brush.TextMuted}" />
-            <Setter Property="FontSize" Value="12" />
-        </Style>
-    </UserControl.Resources>
 
     <Grid Margin="24,16,24,16">
         <Grid.ColumnDefinitions>
@@ -45,10 +33,10 @@
                                 </Grid.ColumnDefinitions>
                                 <TextBlock Grid.Column="0" Text="{Binding Title}" VerticalAlignment="Center"
                                            TextTrimming="CharacterEllipsis" Margin="0,0,6,0" />
-                                <Border Grid.Column="1" Background="#FFF1EFE8" CornerRadius="8" Padding="6,1"
+                                <Border Grid.Column="1" Background="{DynamicResource Brush.Badge}" CornerRadius="8" Padding="6,1"
                                         VerticalAlignment="Center">
                                     <TextBlock Text="{Binding Count}" FontSize="11"
-                                               Foreground="{StaticResource Brush.TextMuted}" />
+                                               Foreground="{DynamicResource Brush.TextMuted}" />
                                 </Border>
                             </Grid>
                         </DataTemplate>
@@ -76,7 +64,7 @@
                              ToolTip="按驱动包名 (oem*.inf)、原始 .inf、厂商、数字签名或类别搜索" />
                     <TextBlock Text="搜索驱动包 / 厂商 / 数字签名…" Margin="12,0,0,0"
                                VerticalAlignment="Center" IsHitTestVisible="False"
-                               FontSize="13" Foreground="{StaticResource Brush.TextMuted}"
+                               FontSize="13" Foreground="{DynamicResource Brush.TextMuted}"
                                Visibility="{Binding SearchText, Converter={StaticResource EmptyToVis}}" />
                 </Grid>
 
@@ -104,11 +92,11 @@
             </Grid>
 
             <Border Grid.Row="1" Style="{StaticResource Card}" Padding="14,10" Margin="0,0,0,10"
-                    Background="{StaticResource Brush.WarnSoft}" BorderBrush="#FFE8C46B"
+                    Background="{DynamicResource Brush.WarnSoft}" BorderBrush="{DynamicResource Brush.WarnSoftBorder}"
                     Visibility="{Binding HasWindowsUpdates, Converter={StaticResource BoolToVis}}">
                 <StackPanel>
                     <TextBlock Text="检测到微软 Windows Update 官方驱动更新" Style="{StaticResource H2}"
-                               Foreground="{StaticResource Brush.Warn}" Margin="0,0,0,6" />
+                               Foreground="{DynamicResource Brush.Warn}" Margin="0,0,0,6" />
                     <ItemsControl ItemsSource="{Binding WindowsUpdates}">
                         <ItemsControl.ItemTemplate>
                             <DataTemplate>
@@ -119,9 +107,9 @@
                                     </Grid.ColumnDefinitions>
                                     <StackPanel Grid.Column="0" VerticalAlignment="Center">
                                         <TextBlock Text="{Binding Title}" FontSize="13"
-                                                   Foreground="{StaticResource Brush.Text}" />
+                                                   Foreground="{DynamicResource Brush.Text}" />
                                         <TextBlock Text="{Binding DetailText}" FontSize="11"
-                                                   Foreground="{StaticResource Brush.TextMuted}" />
+                                                   Foreground="{DynamicResource Brush.TextMuted}" />
                                     </StackPanel>
                                     <Button Grid.Column="1" Content="下载并安装" Style="{StaticResource BtnSmall}"
                                             VerticalAlignment="Center" Margin="10,0,0,0"
@@ -180,7 +168,7 @@
                             </ContextMenu>
                         </DataGrid.ContextMenu>
                         <DataGrid.Columns>
-                            <DataGridTemplateColumn Header="驱动包 (.inf)" Width="1.4*" SortMemberPath="DisplayTitle">
+                            <DataGridTemplateColumn Header="驱动包 (.inf)" Width="1.4*" MinWidth="200" SortMemberPath="DisplayTitle">
                                 <DataGridTemplateColumn.CellTemplate>
                                     <DataTemplate>
                                         <TextBlock Text="{Binding DisplayTitle}" Style="{StaticResource CellText}"
@@ -188,14 +176,14 @@
                                     </DataTemplate>
                                 </DataGridTemplateColumn.CellTemplate>
                             </DataGridTemplateColumn>
-                            <DataGridTemplateColumn Header="设备类别" Width="1.1*" SortMemberPath="ClassTitle">
+                            <DataGridTemplateColumn Header="设备类别" Width="1.1*" MinWidth="110" SortMemberPath="ClassTitle">
                                 <DataGridTemplateColumn.CellTemplate>
                                     <DataTemplate>
                                         <TextBlock Text="{Binding ClassTitle}" Style="{StaticResource CellMuted}" />
                                     </DataTemplate>
                                 </DataGridTemplateColumn.CellTemplate>
                             </DataGridTemplateColumn>
-                            <DataGridTemplateColumn Header="厂商" Width="1.1*" SortMemberPath="Provider">
+                            <DataGridTemplateColumn Header="厂商" Width="1.1*" MinWidth="110" SortMemberPath="Provider">
                                 <DataGridTemplateColumn.CellTemplate>
                                     <DataTemplate>
                                         <TextBlock Text="{Binding Provider}" Style="{StaticResource CellMuted}"
@@ -203,7 +191,7 @@
                                     </DataTemplate>
                                 </DataGridTemplateColumn.CellTemplate>
                             </DataGridTemplateColumn>
-                            <DataGridTemplateColumn Header="版本与日期" Width="1.2*" SortMemberPath="VersionAndDate">
+                            <DataGridTemplateColumn Header="版本与日期" Width="1.2*" MinWidth="140" SortMemberPath="VersionAndDate">
                                 <DataGridTemplateColumn.CellTemplate>
                                     <DataTemplate>
                                         <TextBlock Text="{Binding VersionAndDate}" Style="{StaticResource CellMuted}"
@@ -211,7 +199,7 @@
                                     </DataTemplate>
                                 </DataGridTemplateColumn.CellTemplate>
                             </DataGridTemplateColumn>
-                            <DataGridTemplateColumn Header="数字签名" Width="1.1*" SortMemberPath="Signer">
+                            <DataGridTemplateColumn Header="数字签名" Width="1.1*" MinWidth="120" SortMemberPath="Signer">
                                 <DataGridTemplateColumn.CellTemplate>
                                     <DataTemplate>
                                         <TextBlock Text="{Binding Signer}" Style="{StaticResource CellMuted}"
@@ -235,7 +223,7 @@
                                                     Command="{Binding DataContext.ExportDriverCommand, RelativeSource={RelativeSource AncestorType=DataGrid}}"
                                                     CommandParameter="{Binding}" />
                                             <Button Content="卸载" Style="{StaticResource BtnSmall}"
-                                                    Foreground="{StaticResource Brush.Danger}"
+                                                    Foreground="{DynamicResource Brush.Danger}"
                                                     Command="{Binding DataContext.UninstallDriverCommand, RelativeSource={RelativeSource AncestorType=DataGrid}}"
                                                     CommandParameter="{Binding}" />
                                         </StackPanel>
@@ -251,5 +239,11 @@
                 </Grid>
             </Border>
         </Grid>
+        <!-- 页面级错误条：失败时统一展示，替代原先只靠底部状态栏 -->
+        <Border Style="{StaticResource ErrorBar}" VerticalAlignment="Top"
+                Panel.ZIndex="99" Margin="24,8,24,0"
+                Visibility="{Binding HasError, Converter={StaticResource BoolToVis}}">
+            <TextBlock Text="{Binding ErrorText}" Style="{StaticResource ErrorText}" />
+        </Border>
     </Grid>
 </UserControl>

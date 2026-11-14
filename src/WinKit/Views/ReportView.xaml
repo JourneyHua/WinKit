@@ -3,18 +3,6 @@
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
              FontFamily="Microsoft YaHei UI, Segoe UI">
 
-    <UserControl.Resources>
-        <Style x:Key="CellText" TargetType="TextBlock">
-            <Setter Property="VerticalAlignment" Value="Center" />
-            <Setter Property="TextTrimming" Value="CharacterEllipsis" />
-            <Setter Property="Foreground" Value="{StaticResource Brush.Text}" />
-            <Setter Property="FontSize" Value="13" />
-        </Style>
-        <Style x:Key="CellMuted" TargetType="TextBlock" BasedOn="{StaticResource CellText}">
-            <Setter Property="Foreground" Value="{StaticResource Brush.TextMuted}" />
-            <Setter Property="FontSize" Value="12" />
-        </Style>
-    </UserControl.Resources>
 
     <Grid Margin="24,16,24,16">
         <Grid.RowDefinitions>
@@ -31,10 +19,10 @@
             </Grid.ColumnDefinitions>
 
             <Border Grid.Column="0" Style="{StaticResource Card}" Padding="18,10" Margin="0,0,14,0"
-                    Background="{StaticResource Brush.AccentSoft}" BorderBrush="#FFC9D5F8">
+                    Background="{DynamicResource Brush.AccentSoft}" BorderBrush="{DynamicResource Brush.AccentSoftBorder}">
                 <StackPanel Orientation="Horizontal">
                     <TextBlock Text="{Binding ScoreText}" FontSize="34" FontWeight="SemiBold"
-                               Foreground="{StaticResource Brush.Accent}" VerticalAlignment="Center" />
+                               Foreground="{DynamicResource Brush.Accent}" VerticalAlignment="Center" />
                     <StackPanel VerticalAlignment="Center" Margin="10,0,0,0">
                         <TextBlock Text="/ 100" Style="{StaticResource Muted}" />
                         <TextBlock Text="{Binding GradeText}" Style="{StaticResource Muted}" />
@@ -46,7 +34,7 @@
                 <TextBlock Text="{Binding SummaryText}" Style="{StaticResource H2}" />
                 <TextBlock Text="{Binding GeneratedText}" Style="{StaticResource Muted}" Margin="0,2,0,0" />
                 <TextBlock Text="{Binding ProgressText}" Style="{StaticResource Muted}"
-                           Foreground="{StaticResource Brush.Accent}" Margin="0,2,0,0" />
+                           Foreground="{DynamicResource Brush.Accent}" Margin="0,2,0,0" />
             </StackPanel>
 
             <StackPanel Grid.Column="2" Orientation="Horizontal" VerticalAlignment="Center">
@@ -109,7 +97,7 @@
                                 <ItemsControl ItemsSource="{Binding Items}">
                                     <ItemsControl.ItemTemplate>
                                         <DataTemplate>
-                                            <Border BorderBrush="{StaticResource Brush.Border}" BorderThickness="0,0,0,1"
+                                            <Border BorderBrush="{DynamicResource Brush.Border}" BorderThickness="0,0,0,1"
                                                     Padding="0,6">
                                                 <Grid>
                                                     <Grid.ColumnDefinitions>
@@ -136,5 +124,11 @@
                 </ItemsControl.ItemTemplate>
             </ItemsControl>
         </ScrollViewer>
+        <!-- 页面级错误条：失败时统一展示，替代原先只靠底部状态栏 -->
+        <Border Style="{StaticResource ErrorBar}" VerticalAlignment="Top"
+                Panel.ZIndex="99" Margin="24,8,24,0"
+                Visibility="{Binding HasError, Converter={StaticResource BoolToVis}}">
+            <TextBlock Text="{Binding ErrorText}" Style="{StaticResource ErrorText}" />
+        </Border>
     </Grid>
 </UserControl>

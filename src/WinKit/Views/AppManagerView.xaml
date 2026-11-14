@@ -3,18 +3,6 @@
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
              FontFamily="Microsoft YaHei UI, Segoe UI">
 
-    <UserControl.Resources>
-        <Style x:Key="CellText" TargetType="TextBlock">
-            <Setter Property="VerticalAlignment" Value="Center" />
-            <Setter Property="TextTrimming" Value="CharacterEllipsis" />
-            <Setter Property="Foreground" Value="{StaticResource Brush.Text}" />
-            <Setter Property="FontSize" Value="13" />
-        </Style>
-        <Style x:Key="CellMuted" TargetType="TextBlock" BasedOn="{StaticResource CellText}">
-            <Setter Property="Foreground" Value="{StaticResource Brush.TextMuted}" />
-            <Setter Property="FontSize" Value="12" />
-        </Style>
-    </UserControl.Resources>
 
     <Grid Margin="24,16,24,16">
         <Grid.RowDefinitions>
@@ -72,13 +60,13 @@
                              ToolTip="按软件名称、发布者、包名或安装路径搜索" />
                     <TextBlock Text="搜索软件名称 / 发布者 / 安装路径…" Margin="12,0,0,0"
                                VerticalAlignment="Center" IsHitTestVisible="False"
-                               FontSize="13" Foreground="{StaticResource Brush.TextMuted}"
+                               FontSize="13" Foreground="{DynamicResource Brush.TextMuted}"
                                Visibility="{Binding SearchText, Converter={StaticResource EmptyToVis}}" />
                 </Grid>
 
                 <StackPanel Grid.Column="2" Orientation="Horizontal" VerticalAlignment="Center">
                     <Button Content="{Binding RecheckResidualText}" Style="{StaticResource BtnSmall}" Margin="0,0,8,0"
-                            Foreground="{StaticResource Brush.Warn}"
+                            Foreground="{DynamicResource Brush.Warn}"
                             Visibility="{Binding CanRecheckResidual, Converter={StaticResource BoolToVis}}"
                             Command="{Binding RecheckResidualCommand}" />
                     <Button Content="{Binding UpgradeAllText}" Style="{StaticResource BtnPrimary}" Margin="0,0,8,0"
@@ -92,9 +80,9 @@
             </Grid>
 
             <Border Grid.Row="1" Style="{StaticResource Card}" Padding="14,10" Margin="0,0,0,10"
-                    Background="{StaticResource Brush.WarnSoft}" BorderBrush="#FFE8C46B">
+                    Background="{DynamicResource Brush.WarnSoft}" BorderBrush="{DynamicResource Brush.WarnSoftBorder}">
                 <TextBlock Text="{Binding HintText}" Style="{StaticResource Muted}"
-                           Foreground="{StaticResource Brush.Warn}" />
+                           Foreground="{DynamicResource Brush.Warn}" />
             </Border>
 
             <Border Grid.Row="2" Style="{StaticResource Card}" Padding="0">
@@ -125,7 +113,7 @@
                             </ContextMenu>
                         </DataGrid.ContextMenu>
                         <DataGrid.Columns>
-                            <DataGridTemplateColumn Header="名称" Width="1.9*" SortMemberPath="Name">
+                            <DataGridTemplateColumn Header="名称" Width="1.9*" MinWidth="180" SortMemberPath="Name">
                                 <DataGridTemplateColumn.CellTemplate>
                                     <DataTemplate>
                                         <TextBlock Text="{Binding Name}" Style="{StaticResource CellText}"
@@ -169,7 +157,7 @@
                                     </DataTemplate>
                                 </DataGridTemplateColumn.CellTemplate>
                             </DataGridTemplateColumn>
-                            <DataGridTemplateColumn Header="安装位置" Width="1.3*" SortMemberPath="InstallLocation">
+                            <DataGridTemplateColumn Header="安装位置" Width="1.3*" MinWidth="160" SortMemberPath="InstallLocation">
                                 <DataGridTemplateColumn.CellTemplate>
                                     <DataTemplate>
                                         <TextBlock Text="{Binding InstallLocation}" Style="{StaticResource CellMuted}"
@@ -194,7 +182,7 @@
                                                     Command="{Binding DataContext.CopyPathCommand, RelativeSource={RelativeSource AncestorType=DataGrid}}"
                                                     CommandParameter="{Binding}" />
                                             <Button Content="卸载" Style="{StaticResource BtnSmall}"
-                                                    Foreground="{StaticResource Brush.Danger}"
+                                                    Foreground="{DynamicResource Brush.Danger}"
                                                     Command="{Binding DataContext.UninstallAppCommand, RelativeSource={RelativeSource AncestorType=DataGrid}}"
                                                     CommandParameter="{Binding}" />
                                         </StackPanel>
@@ -237,7 +225,7 @@
                              ToolTip="按运行库名称、分类、架构或用途搜索" />
                     <TextBlock Text="搜索 VC++ / .NET / DirectX / WebView2…" Margin="12,0,0,0"
                                VerticalAlignment="Center" IsHitTestVisible="False"
-                               FontSize="13" Foreground="{StaticResource Brush.TextMuted}"
+                               FontSize="13" Foreground="{DynamicResource Brush.TextMuted}"
                                Visibility="{Binding RuntimeSearchText, Converter={StaticResource EmptyToVis}}" />
                 </Grid>
 
@@ -251,8 +239,8 @@
             </Grid>
 
             <Border Grid.Row="1" Style="{StaticResource Card}" Padding="14,10" Margin="0,0,0,10"
-                    Background="{StaticResource Brush.AccentSoft}" BorderBrush="#FFC9D5F8">
-                <TextBlock Style="{StaticResource Muted}" Foreground="{StaticResource Brush.Accent}"
+                    Background="{DynamicResource Brush.AccentSoft}" BorderBrush="{DynamicResource Brush.AccentSoftBorder}">
+                <TextBlock Style="{StaticResource Muted}" Foreground="{DynamicResource Brush.Accent}"
                            Text="覆盖 VC++ 2005–2022 (x86/x64)、.NET Desktop Runtime 6/8/9/10、.NET Framework 3.5/4.8+、DirectX 9.0c、XNA 4.0、OpenAL、Edge WebView2 与 Windows App Runtime。所有缺失组件均通过系统内置 winget / DISM 官方源安装，不打包第三方下载器。" />
             </Border>
 
@@ -275,7 +263,7 @@
                                     </DataTemplate>
                                 </DataGridTemplateColumn.CellTemplate>
                             </DataGridTemplateColumn>
-                            <DataGridTemplateColumn Header="运行库名称" Width="1.6*" SortMemberPath="Name">
+                            <DataGridTemplateColumn Header="运行库名称" Width="1.6*" MinWidth="180" SortMemberPath="Name">
                                 <DataGridTemplateColumn.CellTemplate>
                                     <DataTemplate>
                                         <TextBlock Text="{Binding Name}" Style="{StaticResource CellText}" />
@@ -302,10 +290,10 @@
                                         <TextBlock Text="{Binding StatusText}" FontSize="12" VerticalAlignment="Center">
                                             <TextBlock.Style>
                                                 <Style TargetType="TextBlock">
-                                                    <Setter Property="Foreground" Value="{StaticResource Brush.Success}" />
+                                                    <Setter Property="Foreground" Value="{DynamicResource Brush.Success}" />
                                                     <Style.Triggers>
                                                         <DataTrigger Binding="{Binding IsInstalled}" Value="False">
-                                                            <Setter Property="Foreground" Value="{StaticResource Brush.Danger}" />
+                                                            <Setter Property="Foreground" Value="{DynamicResource Brush.Danger}" />
                                                             <Setter Property="FontWeight" Value="SemiBold" />
                                                         </DataTrigger>
                                                     </Style.Triggers>
@@ -315,7 +303,7 @@
                                     </DataTemplate>
                                 </DataGridTemplateColumn.CellTemplate>
                             </DataGridTemplateColumn>
-                            <DataGridTemplateColumn Header="常见用途说明" Width="2*" SortMemberPath="Description">
+                            <DataGridTemplateColumn Header="常见用途说明" Width="2*" MinWidth="200" SortMemberPath="Description">
                                 <DataGridTemplateColumn.CellTemplate>
                                     <DataTemplate>
                                         <TextBlock Text="{Binding Description}" Style="{StaticResource CellMuted}"
@@ -368,7 +356,7 @@
                              ToolTip="按工具名称、分类、Winget ID 或用途搜索" />
                     <TextBlock Text="搜索 PowerToys / Everything / WizTree / 7-Zip / CPU-Z…" Margin="12,0,0,0"
                                VerticalAlignment="Center" IsHitTestVisible="False"
-                               FontSize="13" Foreground="{StaticResource Brush.TextMuted}"
+                               FontSize="13" Foreground="{DynamicResource Brush.TextMuted}"
                                Visibility="{Binding ToolSearchText, Converter={StaticResource EmptyToVis}}" />
                 </Grid>
 
@@ -382,8 +370,8 @@
             </Grid>
 
             <Border Grid.Row="1" Style="{StaticResource Card}" Padding="14,10" Margin="0,0,0,10"
-                    Background="{StaticResource Brush.AccentSoft}" BorderBrush="#FFC9D5F8">
-                <TextBlock Style="{StaticResource Muted}" Foreground="{StaticResource Brush.Accent}"
+                    Background="{DynamicResource Brush.AccentSoft}" BorderBrush="{DynamicResource Brush.AccentSoftBorder}">
+                <TextBlock Style="{StaticResource Muted}" Foreground="{DynamicResource Brush.Accent}"
                            Text="精选五大类 22 款无广告、高口碑的系统管理与装机必备工具（微软官方增强、文件搜索与磁盘分析、卸载与启动盘维护、硬件检测监控、开发终端增强）。已安装工具支持直接启动或打开目录，未安装工具支持勾选后通过系统 winget 官方源一键批量安装。" />
             </Border>
 
@@ -414,7 +402,7 @@
                                     </DataTemplate>
                                 </DataGridTemplateColumn.CellTemplate>
                             </DataGridTemplateColumn>
-                            <DataGridTemplateColumn Header="工具名称" Width="1.4*" SortMemberPath="Name">
+                            <DataGridTemplateColumn Header="工具名称" Width="1.4*" MinWidth="160" SortMemberPath="Name">
                                 <DataGridTemplateColumn.CellTemplate>
                                     <DataTemplate>
                                         <TextBlock Text="{Binding Name}" Style="{StaticResource CellText}"
@@ -435,10 +423,10 @@
                                         <TextBlock Text="{Binding StatusText}" FontSize="12" VerticalAlignment="Center">
                                             <TextBlock.Style>
                                                 <Style TargetType="TextBlock">
-                                                    <Setter Property="Foreground" Value="{StaticResource Brush.Success}" />
+                                                    <Setter Property="Foreground" Value="{DynamicResource Brush.Success}" />
                                                     <Style.Triggers>
                                                         <DataTrigger Binding="{Binding IsInstalled}" Value="False">
-                                                            <Setter Property="Foreground" Value="{StaticResource Brush.TextMuted}" />
+                                                            <Setter Property="Foreground" Value="{DynamicResource Brush.TextMuted}" />
                                                         </DataTrigger>
                                                     </Style.Triggers>
                                                 </Style>
@@ -447,7 +435,7 @@
                                     </DataTemplate>
                                 </DataGridTemplateColumn.CellTemplate>
                             </DataGridTemplateColumn>
-                            <DataGridTemplateColumn Header="功能简介" Width="2.1*" SortMemberPath="Description">
+                            <DataGridTemplateColumn Header="功能简介" Width="2.1*" MinWidth="200" SortMemberPath="Description">
                                 <DataGridTemplateColumn.CellTemplate>
                                     <DataTemplate>
                                         <TextBlock Text="{Binding Description}" Style="{StaticResource CellMuted}"
@@ -480,5 +468,11 @@
                 </Grid>
             </Border>
         </Grid>
+        <!-- 页面级错误条：失败时统一展示，替代原先只靠底部状态栏 -->
+        <Border Style="{StaticResource ErrorBar}" VerticalAlignment="Top"
+                Panel.ZIndex="99" Margin="24,8,24,0"
+                Visibility="{Binding HasError, Converter={StaticResource BoolToVis}}">
+            <TextBlock Text="{Binding ErrorText}" Style="{StaticResource ErrorText}" />
+        </Border>
     </Grid>
 </UserControl>

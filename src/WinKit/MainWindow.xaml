@@ -2,9 +2,9 @@
         xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         Title="WinKit 系统管家"
-        Height="780" Width="1200" MinHeight="640" MinWidth="1000"
+        Height="820" Width="1280" MinHeight="680" MinWidth="1024"
         WindowStartupLocation="CenterScreen"
-        Background="{StaticResource Brush.Window}"
+        Background="{DynamicResource Brush.Window}"
         FontFamily="Microsoft YaHei UI, Segoe UI" FontSize="13"
         UseLayoutRounding="True">
 
@@ -14,8 +14,9 @@
             <ColumnDefinition Width="*" />
         </Grid.ColumnDefinitions>
 
-        <Border Grid.Column="0" Background="{StaticResource Brush.Card}"
-                BorderBrush="{StaticResource Brush.Border}" BorderThickness="0,0,1,0">
+        <!-- ============ 左侧：分组导航 ============ -->
+        <Border Grid.Column="0" Background="{DynamicResource Brush.Card}"
+                BorderBrush="{DynamicResource Brush.Border}" BorderThickness="0,0,1,0">
             <Grid>
                 <Grid.RowDefinitions>
                     <RowDefinition Height="Auto" />
@@ -23,41 +24,120 @@
                     <RowDefinition Height="Auto" />
                 </Grid.RowDefinitions>
 
-                <StackPanel Grid.Row="0" Margin="20,22,20,14">
+                <StackPanel Grid.Row="0" Margin="20,20,20,12">
                     <TextBlock Text="WinKit" FontSize="18" FontWeight="SemiBold"
-                               Foreground="{StaticResource Brush.Text}" />
+                               Foreground="{DynamicResource Brush.Text}" />
                     <TextBlock Text="系统管家" FontSize="12" Margin="0,2,0,0"
-                               Foreground="{StaticResource Brush.TextMuted}" />
+                               Foreground="{DynamicResource Brush.TextMuted}" />
                 </StackPanel>
 
-                <ListBox Grid.Row="1" ItemsSource="{Binding NavItems}"
-                         SelectedItem="{Binding SelectedNav, Mode=TwoWay}"
-                         ItemContainerStyle="{StaticResource NavItem}"
-                         Background="Transparent" BorderThickness="0"
-                         ScrollViewer.HorizontalScrollBarVisibility="Disabled">
-                    <ListBox.ItemTemplate>
-                        <DataTemplate>
-                            <StackPanel Orientation="Horizontal">
-                                <Border Width="8" Height="8" CornerRadius="2"
-                                        Background="{Binding AccentBrush}"
-                                        VerticalAlignment="Center" Margin="0,0,10,0" />
-                                <TextBlock Text="{Binding Title}" VerticalAlignment="Center" />
-                            </StackPanel>
-                        </DataTemplate>
-                    </ListBox.ItemTemplate>
-                </ListBox>
+                <!-- 分组列表：默认只展开当前模块所在的组 -->
+                <ScrollViewer Grid.Row="1" VerticalScrollBarVisibility="Auto"
+                              HorizontalScrollBarVisibility="Disabled">
+                    <ItemsControl ItemsSource="{Binding NavGroups}" Margin="0,0,0,4">
+                        <ItemsControl.ItemTemplate>
+                            <DataTemplate>
+                                <StackPanel>
+                                    <!-- 分组标题（可折叠） -->
+                                    <Button Command="{Binding DataContext.ToggleGroupCommand, RelativeSource={RelativeSource AncestorType=Window}}"
+                                            CommandParameter="{Binding}"
+                                            HorizontalContentAlignment="Stretch"
+                                            Background="Transparent" BorderThickness="0"
+                                            Padding="0" Cursor="Hand">
+                                        <Border Padding="18,8,14,8">
+                                            <Grid>
+                                                <Grid.ColumnDefinitions>
+                                                    <ColumnDefinition Width="Auto" />
+                                                    <ColumnDefinition Width="*" />
+                                                    <ColumnDefinition Width="Auto" />
+                                                </Grid.ColumnDefinitions>
 
-                <StackPanel Grid.Row="2" Margin="20,10,20,16">
+                                                <TextBlock Grid.Column="0" Text="{Binding Name}"
+                                                           FontSize="11" FontWeight="SemiBold"
+                                                           Foreground="{DynamicResource Brush.TextMuted}"
+                                                           VerticalAlignment="Center" />
+
+                                                <TextBlock Grid.Column="2" FontSize="10"
+                                                           FontFamily="Segoe Fluent Icons, Segoe MDL2 Assets"
+                                                           Foreground="{DynamicResource Brush.TextMuted}"
+                                                           VerticalAlignment="Center">
+                                                    <TextBlock.Style>
+                                                        <Style TargetType="TextBlock">
+                                                            <Setter Property="Text" Value="&#xE70D;" />
+                                                            <Style.Triggers>
+                                                                <DataTrigger Binding="{Binding IsExpanded}" Value="False">
+                                                                    <Setter Property="Text" Value="&#xE76C;" />
+                                                                </DataTrigger>
+                                                            </Style.Triggers>
+                                                        </Style>
+                                                    </TextBlock.Style>
+                                                </TextBlock>
+                                            </Grid>
+                                        </Border>
+                                    </Button>
+
+                                    <!-- 分组内容 -->
+                                    <ItemsControl ItemsSource="{Binding Items}"
+                                                  Visibility="{Binding IsExpanded, Converter={StaticResource BoolToVis}}">
+                                        <ItemsControl.ItemTemplate>
+                                            <DataTemplate>
+                                                <Border x:Name="RowBd" Background="Transparent" CornerRadius="6"
+                                                        Margin="8,1" Padding="12,7" Cursor="Hand"
+                                                        MouseLeftButtonUp="NavRow_Click">
+                                                    <Grid>
+                                                        <Grid.ColumnDefinitions>
+                                                            <ColumnDefinition Width="Auto" />
+                                                            <ColumnDefinition Width="*" />
+                                                        </Grid.ColumnDefinitions>
+
+                                                        <TextBlock Grid.Column="0" Text="{Binding Glyph}"
+                                                                   FontFamily="Segoe Fluent Icons, Segoe MDL2 Assets"
+                                                                   FontSize="15" Width="22"
+                                                                   VerticalAlignment="Center"
+                                                                   Foreground="{Binding AccentBrush}" />
+
+                                                        <TextBlock Grid.Column="1" Text="{Binding Title}"
+                                                                   VerticalAlignment="Center" FontSize="13"
+                                                                   Foreground="{DynamicResource Brush.Text}"
+                                                                   TextTrimming="CharacterEllipsis" />
+                                                    </Grid>
+                                                </Border>
+                                            </DataTemplate>
+                                        </ItemsControl.ItemTemplate>
+                                    </ItemsControl>
+                                </StackPanel>
+                            </DataTemplate>
+                        </ItemsControl.ItemTemplate>
+                    </ItemsControl>
+                </ScrollViewer>
+
+                <StackPanel Grid.Row="2" Margin="20,10,20,14">
                     <TextBlock Text="{Binding ElevationText}" Style="{StaticResource Muted}" />
                     <Button Content="以管理员身份重启" Style="{StaticResource BtnSmall}" Margin="0,6,0,2"
                             HorizontalAlignment="Left"
                             Visibility="{Binding ShowElevateButton, Converter={StaticResource BoolToVis}}"
                             Command="{Binding ElevateCommand}" />
-                    <TextBlock Text="{Binding VersionText}" Style="{StaticResource Muted}" Margin="0,4,0,0" />
+
+                    <Grid Margin="0,6,0,0">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="Auto" />
+                        </Grid.ColumnDefinitions>
+                        <TextBlock Grid.Column="0" Text="{Binding VersionText}" Style="{StaticResource Muted}"
+                                   VerticalAlignment="Center" />
+                        <!-- 设置入口：主题 + 表格密度（只有 2 项，不占导航位） -->
+                        <Button Grid.Column="1" x:Name="SettingsButton"
+                                Style="{StaticResource BtnSmall}" Padding="8,3"
+                                Click="SettingsButton_Click" ToolTip="外观设置（主题 / 表格密度）">
+                            <TextBlock Text="&#xE713;" FontFamily="Segoe Fluent Icons, Segoe MDL2 Assets"
+                                       FontSize="14" Foreground="{DynamicResource Brush.TextMuted}" />
+                        </Button>
+                    </Grid>
                 </StackPanel>
             </Grid>
         </Border>
 
+        <!-- ============ 右侧：内容区 ============ -->
         <Grid Grid.Column="1">
             <Grid.RowDefinitions>
                 <RowDefinition Height="Auto" />
@@ -65,8 +145,8 @@
                 <RowDefinition Height="Auto" />
             </Grid.RowDefinitions>
 
-            <Border Grid.Row="0" Padding="24,18,24,14"
-                    BorderBrush="{StaticResource Brush.Border}" BorderThickness="0,0,0,1">
+            <Border Grid.Row="0" Padding="24,16,24,12"
+                    BorderBrush="{DynamicResource Brush.Border}" BorderThickness="0,0,0,1">
                 <Grid>
                     <Grid.ColumnDefinitions>
                         <ColumnDefinition Width="*" />
@@ -74,7 +154,7 @@
                     </Grid.ColumnDefinitions>
                     <StackPanel Grid.Column="0">
                         <TextBlock Text="{Binding CurrentTitle}" Style="{StaticResource H1}" />
-                        <TextBlock Text="{Binding CurrentSubtitle}" Style="{StaticResource Muted}" Margin="0,4,0,0" />
+                        <TextBlock Text="{Binding CurrentSubtitle}" Style="{StaticResource Muted}" Margin="0,3,0,0" />
                     </StackPanel>
                     <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Center">
                         <Button Content="撤销上一步" Style="{StaticResource BtnBase}"
@@ -91,24 +171,59 @@
                     <RowDefinition Height="*" />
                 </Grid.RowDefinitions>
                 <ProgressBar Grid.Row="0" Height="3" IsIndeterminate="True" BorderThickness="0"
-                             Background="Transparent" Foreground="{StaticResource Brush.Accent}"
+                             Background="Transparent" Foreground="{DynamicResource Brush.Accent}"
                              Visibility="{Binding IsGlobalBusy, Converter={StaticResource BoolToVis}}" />
                 <ContentControl Grid.Row="1" Content="{Binding CurrentViewModel}" Margin="0" />
             </Grid>
 
-            <Border Grid.Row="2" Padding="20,8" Background="{StaticResource Brush.Card}"
-                    BorderBrush="{StaticResource Brush.Border}" BorderThickness="0,1,0,0">
+            <Border Grid.Row="2" Padding="24,8" Background="{DynamicResource Brush.Card}"
+                    BorderBrush="{DynamicResource Brush.Border}" BorderThickness="0,1,0,0">
                 <Grid>
                     <Grid.ColumnDefinitions>
                         <ColumnDefinition Width="*" />
                         <ColumnDefinition Width="Auto" />
                     </Grid.ColumnDefinitions>
                     <TextBlock Grid.Column="0" Text="{Binding StatusText}" Style="{StaticResource Muted}"
-                               VerticalAlignment="Center" />
+                               VerticalAlignment="Center" TextTrimming="CharacterEllipsis" />
                     <TextBlock Grid.Column="1" Text="{Binding BackupHint}" Style="{StaticResource Muted}"
-                               VerticalAlignment="Center" />
+                               VerticalAlignment="Center" Margin="12,0,0,0" MaxWidth="420"
+                               TextTrimming="CharacterEllipsis" />
                 </Grid>
             </Border>
         </Grid>
+
+        <!-- ============ 设置浮层 ============ -->
+        <Popup x:Name="SettingsPopup" PlacementTarget="{Binding ElementName=SettingsButton}"
+               Placement="Right" StaysOpen="False" AllowsTransparency="True" PopupAnimation="Fade">
+            <Border Background="{DynamicResource Brush.Card}"
+                    BorderBrush="{DynamicResource Brush.Border}" BorderThickness="1"
+                    CornerRadius="8" Padding="16,14" Margin="8,0,0,0"
+                    Width="230">
+                <Border.Effect>
+                    <DropShadowEffect BlurRadius="14" ShadowDepth="1" Opacity="0.18" />
+                </Border.Effect>
+                <StackPanel>
+                    <TextBlock Text="外观" Style="{StaticResource H2}" Margin="0,0,0,8" />
+
+                    <TextBlock Text="主题" Style="{StaticResource Muted}" Margin="0,0,0,4" />
+                    <StackPanel Orientation="Horizontal" Margin="0,0,0,10">
+                        <ToggleButton x:Name="ThemeSystem" Content="跟随系统" Style="{StaticResource Chip}"
+                                      Margin="0,0,4,0" Click="Theme_Click" Tag="System" />
+                        <ToggleButton x:Name="ThemeLight" Content="浅色" Style="{StaticResource Chip}"
+                                      Margin="0,0,4,0" Click="Theme_Click" Tag="Light" />
+                        <ToggleButton x:Name="ThemeDark" Content="深色" Style="{StaticResource Chip}"
+                                      Click="Theme_Click" Tag="Dark" />
+                    </StackPanel>
+
+                    <TextBlock Text="表格密度" Style="{StaticResource Muted}" Margin="0,0,0,4" />
+                    <StackPanel Orientation="Horizontal">
+                        <ToggleButton x:Name="DensityCompact" Content="紧凑" Style="{StaticResource Chip}"
+                                      Margin="0,0,4,0" Click="Density_Click" Tag="Compact" />
+                        <ToggleButton x:Name="DensityComfortable" Content="舒适" Style="{StaticResource Chip}"
+                                      Click="Density_Click" Tag="Comfortable" />
+                    </StackPanel>
+                </StackPanel>
+            </Border>
+        </Popup>
     </Grid>
 </Window>

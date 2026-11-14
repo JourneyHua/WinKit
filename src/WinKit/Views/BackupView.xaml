@@ -3,18 +3,6 @@
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
              FontFamily="Microsoft YaHei UI, Segoe UI">
 
-    <UserControl.Resources>
-        <Style x:Key="CellText" TargetType="TextBlock">
-            <Setter Property="VerticalAlignment" Value="Center" />
-            <Setter Property="TextTrimming" Value="CharacterEllipsis" />
-            <Setter Property="Foreground" Value="{StaticResource Brush.Text}" />
-            <Setter Property="FontSize" Value="13" />
-        </Style>
-        <Style x:Key="CellMuted" TargetType="TextBlock" BasedOn="{StaticResource CellText}">
-            <Setter Property="Foreground" Value="{StaticResource Brush.TextMuted}" />
-            <Setter Property="FontSize" Value="12" />
-        </Style>
-    </UserControl.Resources>
 
     <Grid Margin="24,16,24,16">
         <Grid.RowDefinitions>
@@ -92,7 +80,7 @@
                                                 Command="{Binding DataContext.ViewDetailCommand, RelativeSource={RelativeSource AncestorType=DataGrid}}"
                                                 CommandParameter="{Binding}" />
                                         <Button Content="删除" Style="{StaticResource BtnSmall}"
-                                                Foreground="{StaticResource Brush.Danger}"
+                                                Foreground="{DynamicResource Brush.Danger}"
                                                 Command="{Binding DataContext.DeleteBackupCommand, RelativeSource={RelativeSource AncestorType=DataGrid}}"
                                                 CommandParameter="{Binding}" />
                                     </StackPanel>

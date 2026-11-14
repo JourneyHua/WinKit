@@ -3,18 +3,6 @@
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
              FontFamily="Microsoft YaHei UI, Segoe UI">
 
-    <UserControl.Resources>
-        <Style x:Key="CellText" TargetType="TextBlock">
-            <Setter Property="VerticalAlignment" Value="Center" />
-            <Setter Property="TextTrimming" Value="CharacterEllipsis" />
-            <Setter Property="Foreground" Value="{StaticResource Brush.Text}" />
-            <Setter Property="FontSize" Value="13" />
-        </Style>
-        <Style x:Key="CellMuted" TargetType="TextBlock" BasedOn="{StaticResource CellText}">
-            <Setter Property="Foreground" Value="{StaticResource Brush.TextMuted}" />
-            <Setter Property="FontSize" Value="12" />
-        </Style>
-    </UserControl.Resources>
 
     <Grid Margin="24,16,24,16">
         <Grid.RowDefinitions>
@@ -24,8 +12,8 @@
         </Grid.RowDefinitions>
 
         <Border Grid.Row="0" Style="{StaticResource Card}" Padding="14,10" Margin="0,0,0,12"
-                Background="{StaticResource Brush.AccentSoft}" BorderBrush="#FFC9D5F8">
-            <TextBlock Style="{StaticResource Muted}" Foreground="{StaticResource Brush.Accent}"
+                Background="{DynamicResource Brush.AccentSoft}" BorderBrush="{DynamicResource Brush.AccentSoftBorder}">
+            <TextBlock Style="{StaticResource Muted}" Foreground="{DynamicResource Brush.Accent}"
                        Text="删除或移动文件时提示“文件正在被使用”？这里用系统自带的 Restart Manager 查出到底是谁占着它，并可直接结束占用进程。只读查询，不会修改文件。" />
         </Border>
 
@@ -72,7 +60,7 @@
             <Border Grid.Row="1" Style="{StaticResource Card}" Padding="0">
                 <DataGrid ItemsSource="{Binding Lockers}" Style="{StaticResource Grid}">
                     <DataGrid.Columns>
-                        <DataGridTemplateColumn Header="进程" Width="1.4*" SortMemberPath="ProcessName">
+                        <DataGridTemplateColumn Header="进程" Width="1.4*" MinWidth="140" SortMemberPath="ProcessName">
                             <DataGridTemplateColumn.CellTemplate>
                                 <DataTemplate>
                                     <TextBlock Text="{Binding ProcessName}" Style="{StaticResource CellText}"
@@ -101,7 +89,7 @@
                                 </DataTemplate>
                             </DataGridTemplateColumn.CellTemplate>
                         </DataGridTemplateColumn>
-                        <DataGridTemplateColumn Header="程序路径" Width="2*" SortMemberPath="ExecutablePath">
+                        <DataGridTemplateColumn Header="程序路径" Width="2*" MinWidth="220" SortMemberPath="ExecutablePath">
                             <DataGridTemplateColumn.CellTemplate>
                                 <DataTemplate>
                                     <TextBlock Text="{Binding ExecutablePath}" Style="{StaticResource CellMuted}"
@@ -130,5 +118,11 @@
                 </DataGrid>
             </Border>
         </Grid>
+        <!-- 页面级错误条：失败时统一展示，替代原先只靠底部状态栏 -->
+        <Border Style="{StaticResource ErrorBar}" VerticalAlignment="Top"
+                Panel.ZIndex="99" Margin="24,8,24,0"
+                Visibility="{Binding HasError, Converter={StaticResource BoolToVis}}">
+            <TextBlock Text="{Binding ErrorText}" Style="{StaticResource ErrorText}" />
+        </Border>
     </Grid>
 </UserControl>

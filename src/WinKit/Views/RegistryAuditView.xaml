@@ -3,18 +3,6 @@
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
              FontFamily="Microsoft YaHei UI, Segoe UI">
 
-    <UserControl.Resources>
-        <Style x:Key="CellText" TargetType="TextBlock">
-            <Setter Property="VerticalAlignment" Value="Center" />
-            <Setter Property="TextTrimming" Value="CharacterEllipsis" />
-            <Setter Property="Foreground" Value="{StaticResource Brush.Text}" />
-            <Setter Property="FontSize" Value="13" />
-        </Style>
-        <Style x:Key="CellMuted" TargetType="TextBlock" BasedOn="{StaticResource CellText}">
-            <Setter Property="Foreground" Value="{StaticResource Brush.TextMuted}" />
-            <Setter Property="FontSize" Value="12" />
-        </Style>
-    </UserControl.Resources>
 
     <Grid Margin="24,16,24,16">
         <Grid.ColumnDefinitions>
@@ -55,13 +43,13 @@
                                 <StackPanel Grid.Column="0">
                                     <TextBlock Text="{Binding Title}" VerticalAlignment="Center" />
                                     <TextBlock Text="{Binding Description}" FontSize="11"
-                                               Foreground="{StaticResource Brush.TextMuted}"
+                                               Foreground="{DynamicResource Brush.TextMuted}"
                                                TextWrapping="Wrap" Margin="0,1,6,0" />
                                 </StackPanel>
-                                <Border Grid.Column="1" Background="#FFF1EFE8" CornerRadius="8" Padding="6,1"
+                                <Border Grid.Column="1" Background="{DynamicResource Brush.Badge}" CornerRadius="8" Padding="6,1"
                                         VerticalAlignment="Top">
                                     <TextBlock Text="{Binding CountText}" FontSize="11"
-                                               Foreground="{StaticResource Brush.TextMuted}" />
+                                               Foreground="{DynamicResource Brush.TextMuted}" />
                                 </Border>
                             </Grid>
                         </DataTemplate>
@@ -87,7 +75,7 @@
                              Text="{Binding SearchText, UpdateSourceTrigger=PropertyChanged}" />
                     <TextBlock Text="搜索名称 / 路径…" Margin="12,0,0,0" VerticalAlignment="Center"
                                IsHitTestVisible="False" FontSize="13"
-                               Foreground="{StaticResource Brush.TextMuted}"
+                               Foreground="{DynamicResource Brush.TextMuted}"
                                Visibility="{Binding SearchText, Converter={StaticResource EmptyToVis}}" />
                 </Grid>
                 <StackPanel Grid.Column="1" Orientation="Horizontal" Margin="10,0,0,0">
@@ -103,10 +91,10 @@
             </Grid>
 
             <Border Grid.Row="1" Style="{StaticResource Card}" Padding="14,10" Margin="0,0,0,10"
-                    Background="{StaticResource Brush.WarnSoft}" BorderBrush="#FFE8C46B"
+                    Background="{DynamicResource Brush.WarnSoft}" BorderBrush="{DynamicResource Brush.WarnSoftBorder}"
                     Visibility="{Binding HasNote, Converter={StaticResource BoolToVis}}">
                 <TextBlock Text="{Binding NoteText}" Style="{StaticResource Muted}"
-                           Foreground="{StaticResource Brush.Warn}" />
+                           Foreground="{DynamicResource Brush.Warn}" />
             </Border>
 
             <Border Grid.Row="2" Style="{StaticResource Card}" Padding="0">
@@ -134,7 +122,7 @@
                             </ContextMenu>
                         </DataGrid.ContextMenu>
                         <DataGrid.Columns>
-                            <DataGridTemplateColumn Header="名称" Width="2*" SortMemberPath="Name">
+                            <DataGridTemplateColumn Header="名称" Width="2*" MinWidth="200" SortMemberPath="Name">
                                 <DataGridTemplateColumn.CellTemplate>
                                     <DataTemplate>
                                         <TextBlock Text="{Binding Name}" Style="{StaticResource CellText}"
@@ -176,7 +164,7 @@
                                                     Command="{Binding DataContext.CopyPathCommand, RelativeSource={RelativeSource AncestorType=DataGrid}}"
                                                     CommandParameter="{Binding}" />
                                             <Button Content="清理" Style="{StaticResource BtnSmall}"
-                                                    Foreground="{StaticResource Brush.Danger}"
+                                                    Foreground="{DynamicResource Brush.Danger}"
                                                     Visibility="{Binding CanRemove, Converter={StaticResource BoolToVis}}"
                                                     Command="{Binding DataContext.RemoveCommand, RelativeSource={RelativeSource AncestorType=DataGrid}}"
                                                     CommandParameter="{Binding}" />
@@ -193,5 +181,11 @@
                 </Grid>
             </Border>
         </Grid>
+        <!-- 页面级错误条：失败时统一展示，替代原先只靠底部状态栏 -->
+        <Border Style="{StaticResource ErrorBar}" VerticalAlignment="Top"
+                Panel.ZIndex="99" Margin="24,8,24,0"
+                Visibility="{Binding HasError, Converter={StaticResource BoolToVis}}">
+            <TextBlock Text="{Binding ErrorText}" Style="{StaticResource ErrorText}" />
+        </Border>
     </Grid>
 </UserControl>

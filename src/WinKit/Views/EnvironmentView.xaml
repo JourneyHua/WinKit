@@ -3,18 +3,6 @@
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
              FontFamily="Microsoft YaHei UI, Segoe UI">
 
-    <UserControl.Resources>
-        <Style x:Key="CellText" TargetType="TextBlock">
-            <Setter Property="VerticalAlignment" Value="Center" />
-            <Setter Property="TextTrimming" Value="CharacterEllipsis" />
-            <Setter Property="Foreground" Value="{StaticResource Brush.Text}" />
-            <Setter Property="FontSize" Value="13" />
-        </Style>
-        <Style x:Key="CellMuted" TargetType="TextBlock" BasedOn="{StaticResource CellText}">
-            <Setter Property="Foreground" Value="{StaticResource Brush.TextMuted}" />
-            <Setter Property="FontSize" Value="12" />
-        </Style>
-    </UserControl.Resources>
 
     <Grid Margin="24,16,24,16">
         <Grid.RowDefinitions>
@@ -54,7 +42,7 @@
                 <DataGrid ItemsSource="{Binding Vars}" Style="{StaticResource Grid}"
                           SelectedItem="{Binding SelectedVar, Mode=TwoWay}">
                     <DataGrid.Columns>
-                        <DataGridTemplateColumn Header="变量名" Width="1.1*" SortMemberPath="Name">
+                        <DataGridTemplateColumn Header="变量名" Width="1.1*" MinWidth="140" SortMemberPath="Name">
                             <DataGridTemplateColumn.CellTemplate>
                                 <DataTemplate>
                                     <TextBlock Text="{Binding Name}" Style="{StaticResource CellText}"
@@ -69,7 +57,7 @@
                                 </DataTemplate>
                             </DataGridTemplateColumn.CellTemplate>
                         </DataGridTemplateColumn>
-                        <DataGridTemplateColumn Header="值" Width="2*" SortMemberPath="Value">
+                        <DataGridTemplateColumn Header="值" Width="2*" MinWidth="160" SortMemberPath="Value">
                             <DataGridTemplateColumn.CellTemplate>
                                 <DataTemplate>
                                     <TextBlock Text="{Binding DisplayValue}" Style="{StaticResource CellMuted}"
@@ -139,7 +127,7 @@
                         <ItemsControl ItemsSource="{Binding PathEntries}">
                             <ItemsControl.ItemTemplate>
                                 <DataTemplate>
-                                    <Border BorderBrush="{StaticResource Brush.Border}" BorderThickness="0,0,0,1"
+                                    <Border BorderBrush="{DynamicResource Brush.Border}" BorderThickness="0,0,0,1"
                                             Padding="0,6">
                                         <Grid>
                                             <Grid.ColumnDefinitions>
@@ -181,5 +169,11 @@
                 </Grid>
             </Border>
         </Grid>
+        <!-- 页面级错误条：失败时统一展示，替代原先只靠底部状态栏 -->
+        <Border Style="{StaticResource ErrorBar}" VerticalAlignment="Top"
+                Panel.ZIndex="99" Margin="24,8,24,0"
+                Visibility="{Binding HasError, Converter={StaticResource BoolToVis}}">
+            <TextBlock Text="{Binding ErrorText}" Style="{StaticResource ErrorText}" />
+        </Border>
     </Grid>
 </UserControl>

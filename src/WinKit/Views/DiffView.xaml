@@ -3,18 +3,6 @@
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
              FontFamily="Microsoft YaHei UI, Segoe UI">
 
-    <UserControl.Resources>
-        <Style x:Key="CellText" TargetType="TextBlock">
-            <Setter Property="VerticalAlignment" Value="Center" />
-            <Setter Property="TextTrimming" Value="CharacterEllipsis" />
-            <Setter Property="Foreground" Value="{StaticResource Brush.Text}" />
-            <Setter Property="FontSize" Value="13" />
-        </Style>
-        <Style x:Key="CellMuted" TargetType="TextBlock" BasedOn="{StaticResource CellText}">
-            <Setter Property="Foreground" Value="{StaticResource Brush.TextMuted}" />
-            <Setter Property="FontSize" Value="12" />
-        </Style>
-    </UserControl.Resources>
 
     <Grid Margin="24,16,24,16">
         <Grid.RowDefinitions>
@@ -69,21 +57,21 @@
             <TextBlock Grid.Column="0" Text="{Binding SummaryText}" Style="{StaticResource Muted}"
                        VerticalAlignment="Center" />
             <TextBlock Grid.Column="1" Text="{Binding ErrorText}" Style="{StaticResource Muted}"
-                       Foreground="{StaticResource Brush.Danger}" VerticalAlignment="Center"
+                       Foreground="{DynamicResource Brush.Danger}" VerticalAlignment="Center"
                        Visibility="{Binding HasError, Converter={StaticResource BoolToVis}}" />
         </Grid>
 
         <Border Grid.Row="3" Style="{StaticResource Card}" Padding="0">
             <DataGrid ItemsSource="{Binding Filtered}" Style="{StaticResource Grid}">
                 <DataGrid.Columns>
-                    <DataGridTemplateColumn Header="差异" Width="95" SortMemberPath="KindText">
+                    <DataGridTemplateColumn Header="差异" Width="90" SortMemberPath="KindText">
                         <DataGridTemplateColumn.CellTemplate>
                             <DataTemplate>
                                 <TextBlock Text="{Binding KindText}" Style="{StaticResource CellText}" />
                             </DataTemplate>
                         </DataGridTemplateColumn.CellTemplate>
                     </DataGridTemplateColumn>
-                    <DataGridTemplateColumn Header="相对路径" Width="2.4*" SortMemberPath="RelativePath">
+                    <DataGridTemplateColumn Header="相对路径" Width="3*" MinWidth="260" SortMemberPath="RelativePath">
                         <DataGridTemplateColumn.CellTemplate>
                             <DataTemplate>
                                 <TextBlock Text="{Binding RelativePath}" Style="{StaticResource CellText}"
@@ -91,35 +79,23 @@
                             </DataTemplate>
                         </DataGridTemplateColumn.CellTemplate>
                     </DataGridTemplateColumn>
-                    <DataGridTemplateColumn Header="左侧大小" Width="95" SortMemberPath="LeftSize">
-                        <DataGridTemplateColumn.CellTemplate>
-                            <DataTemplate>
-                                <TextBlock Text="{Binding LeftSizeText}" Style="{StaticResource CellMuted}" />
-                            </DataTemplate>
-                        </DataGridTemplateColumn.CellTemplate>
-                    </DataGridTemplateColumn>
-                    <DataGridTemplateColumn Header="右侧大小" Width="95" SortMemberPath="RightSize">
-                        <DataGridTemplateColumn.CellTemplate>
-                            <DataTemplate>
-                                <TextBlock Text="{Binding RightSizeText}" Style="{StaticResource CellMuted}" />
-                            </DataTemplate>
-                        </DataGridTemplateColumn.CellTemplate>
-                    </DataGridTemplateColumn>
-                    <DataGridTemplateColumn Header="左侧时间" Width="125" SortMemberPath="LeftTime">
-                        <DataGridTemplateColumn.CellTemplate>
-                            <DataTemplate>
-                                <TextBlock Text="{Binding LeftTimeText}" Style="{StaticResource CellMuted}" />
-                            </DataTemplate>
-                        </DataGridTemplateColumn.CellTemplate>
-                    </DataGridTemplateColumn>
-                    <DataGridTemplateColumn Header="右侧时间" Width="125" SortMemberPath="RightTime">
-                        <DataGridTemplateColumn.CellTemplate>
-                            <DataTemplate>
-                                <TextBlock Text="{Binding RightTimeText}" Style="{StaticResource CellMuted}" />
-                            </DataTemplate>
-                        </DataGridTemplateColumn.CellTemplate>
-                    </DataGridTemplateColumn>
-                    <DataGridTemplateColumn Header="操作" Width="230" CanUserSort="False">
+                                            <DataGridTemplateColumn Header="左侧（大小 · 时间）" Width="200" MinWidth="150" SortMemberPath="LeftDetail">
+                            <DataGridTemplateColumn.CellTemplate>
+                                <DataTemplate>
+                                    <TextBlock Text="{Binding LeftDetail}" Style="{StaticResource CellMuted}"
+                                               ToolTip="{Binding LeftDetail}" />
+                                </DataTemplate>
+                            </DataGridTemplateColumn.CellTemplate>
+                        </DataGridTemplateColumn>
+                        <DataGridTemplateColumn Header="右侧（大小 · 时间）" Width="200" MinWidth="150" SortMemberPath="RightDetail">
+                            <DataGridTemplateColumn.CellTemplate>
+                                <DataTemplate>
+                                    <TextBlock Text="{Binding RightDetail}" Style="{StaticResource CellMuted}"
+                                               ToolTip="{Binding RightDetail}" />
+                                </DataTemplate>
+                            </DataGridTemplateColumn.CellTemplate>
+                        </DataGridTemplateColumn>
+                        <DataGridTemplateColumn Header="操作" Width="{StaticResource OpCol.Wide}" CanUserSort="False">
                         <DataGridTemplateColumn.CellTemplate>
                             <DataTemplate>
                                 <StackPanel Orientation="Horizontal">

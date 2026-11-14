@@ -26,6 +26,26 @@ public sealed class DiskHealthItem
         ? "—"
         : $"{ReadErrors ?? 0} / {WriteErrors ?? 0}";
 
+    /// <summary>
+    /// 合并列：磨损 / 温度 / 通电 / 读写错误原先占 4 列共 360px，
+    /// 把磁盘型号列挤到 97px（1200 窗口）甚至 20px（1000 窗口）。
+    /// </summary>
+    public string HealthDetail
+    {
+        get
+        {
+            var parts = new List<string>();
+
+            if (Wear is >= 0 and <= 100) parts.Add($"磨损 {Wear}%");
+            if (Temperature is > 0) parts.Add($"{Temperature} °C");
+            if (PowerOnHours is > 0) parts.Add($"{PowerOnHours} 小时");
+            if (ReadErrors is not null || WriteErrors is not null)
+                parts.Add($"错误 {ReadErrors ?? 0}/{WriteErrors ?? 0}");
+
+            return parts.Count == 0 ? "—" : string.Join(" · ", parts);
+        }
+    }
+
     /// <summary>综合风险：SMART 预测失败或磨损过高才算 warn/bad，读不到数据不算异常。</summary>
     public string Level
     {

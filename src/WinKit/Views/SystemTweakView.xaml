@@ -3,18 +3,6 @@
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
              FontFamily="Microsoft YaHei UI, Segoe UI">
 
-    <UserControl.Resources>
-        <Style x:Key="CellText" TargetType="TextBlock">
-            <Setter Property="VerticalAlignment" Value="Center" />
-            <Setter Property="TextTrimming" Value="CharacterEllipsis" />
-            <Setter Property="Foreground" Value="{StaticResource Brush.Text}" />
-            <Setter Property="FontSize" Value="13" />
-        </Style>
-        <Style x:Key="CellMuted" TargetType="TextBlock" BasedOn="{StaticResource CellText}">
-            <Setter Property="Foreground" Value="{StaticResource Brush.TextMuted}" />
-            <Setter Property="FontSize" Value="12" />
-        </Style>
-    </UserControl.Resources>
 
     <Grid Margin="24,16,24,16">
         <Grid.RowDefinitions>
@@ -57,8 +45,8 @@
             </Grid.RowDefinitions>
 
             <Border Grid.Row="0" Style="{StaticResource Card}" Padding="14,10" Margin="0,0,0,10"
-                    Background="{StaticResource Brush.AccentSoft}" BorderBrush="#FFC9D5F8">
-                <TextBlock Style="{StaticResource Muted}" Foreground="{StaticResource Brush.Accent}"
+                    Background="{DynamicResource Brush.AccentSoft}" BorderBrush="{DynamicResource Brush.AccentSoftBorder}">
+                <TextBlock Style="{StaticResource Muted}" Foreground="{DynamicResource Brush.Accent}"
                            Text="汇总 15 项最常用的 Windows 11 资源管理器、任务栏/桌面与隐私去广告开关。每次切换前自动保存注册表快照，随时可一键撤销还原。" />
             </Border>
 
@@ -140,7 +128,7 @@
                              Text="{Binding PortSearchText, UpdateSourceTrigger=PropertyChanged}" />
                     <TextBlock Text="按端口号 (如 8080 / 3000 / 443)、进程名或 PID 搜索…" Margin="12,0,0,0"
                                VerticalAlignment="Center" IsHitTestVisible="False"
-                               FontSize="13" Foreground="{StaticResource Brush.TextMuted}"
+                               FontSize="13" Foreground="{DynamicResource Brush.TextMuted}"
                                Visibility="{Binding PortSearchText, Converter={StaticResource EmptyToVis}}" />
                 </Grid>
 
@@ -234,7 +222,7 @@
                                                     Command="{Binding DataContext.CopyPortInfoCommand, RelativeSource={RelativeSource AncestorType=DataGrid}}"
                                                     CommandParameter="{Binding}" />
                                             <Button Content="结束进程" Style="{StaticResource BtnSmall}"
-                                                    Foreground="{StaticResource Brush.Danger}"
+                                                    Foreground="{DynamicResource Brush.Danger}"
                                                     IsEnabled="{Binding CanKill}"
                                                     Command="{Binding DataContext.KillPortProcessCommand, RelativeSource={RelativeSource AncestorType=DataGrid}}"
                                                     CommandParameter="{Binding}" />
@@ -268,15 +256,15 @@
                                 <StackPanel Grid.Column="0" VerticalAlignment="Center" Margin="0,0,12,0">
                                     <StackPanel Orientation="Horizontal">
                                         <TextBlock Text="{Binding Title}" FontSize="14" FontWeight="SemiBold"
-                                                   Foreground="{StaticResource Brush.Text}" />
-                                        <Border Background="#FFF1EFE8" CornerRadius="6" Padding="6,1" Margin="8,0,0,0"
+                                                   Foreground="{DynamicResource Brush.Text}" />
+                                        <Border Background="{DynamicResource Brush.Badge}" CornerRadius="6" Padding="6,1" Margin="8,0,0,0"
                                                 VerticalAlignment="Center">
                                             <TextBlock Text="{Binding CommandLabel}" FontSize="11"
-                                                       Foreground="{StaticResource Brush.TextMuted}" />
+                                                       Foreground="{DynamicResource Brush.TextMuted}" />
                                         </Border>
                                     </StackPanel>
                                     <TextBlock Text="{Binding Description}" FontSize="12"
-                                               Foreground="{StaticResource Brush.TextMuted}"
+                                               Foreground="{DynamicResource Brush.TextMuted}"
                                                TextWrapping="Wrap" Margin="0,4,0,0" />
                                 </StackPanel>
                                 <Button Grid.Column="1" Content="立即打开" Style="{StaticResource BtnBase}"
@@ -289,5 +277,11 @@
                 </ItemsControl.ItemTemplate>
             </ItemsControl>
         </ScrollViewer>
+        <!-- 页面级错误条：失败时统一展示，替代原先只靠底部状态栏 -->
+        <Border Style="{StaticResource ErrorBar}" VerticalAlignment="Top"
+                Panel.ZIndex="99" Margin="24,8,24,0"
+                Visibility="{Binding HasError, Converter={StaticResource BoolToVis}}">
+            <TextBlock Text="{Binding ErrorText}" Style="{StaticResource ErrorText}" />
+        </Border>
     </Grid>
 </UserControl>

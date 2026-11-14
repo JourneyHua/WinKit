@@ -358,4 +358,19 @@ public sealed class SystemCleanViewModel : ObservableObject, IModule
             MessageBox.Show($"移入回收站失败：{ex.Message}", "WinKit", MessageBoxButton.OK, MessageBoxImage.Warning);
         }
     }
-}
+
+    private string _errorText = "";
+
+    /// <summary>页面级错误：失败时统一由 ErrorBar 展示，不再只靠底部状态栏一行灰字。</summary>
+    public string ErrorText
+    {
+        get => _errorText;
+        private set
+        {
+            if (Set(ref _errorText, value)) OnPropertyChanged(nameof(HasError));
+        }
+    }
+
+    public bool HasError => !string.IsNullOrWhiteSpace(_errorText);
+
+    public void SetError(string? message) => ErrorText = message ?? "";}

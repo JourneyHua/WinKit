@@ -3,18 +3,6 @@
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
              FontFamily="Microsoft YaHei UI, Segoe UI">
 
-    <UserControl.Resources>
-        <Style x:Key="CellText" TargetType="TextBlock">
-            <Setter Property="VerticalAlignment" Value="Center" />
-            <Setter Property="TextTrimming" Value="CharacterEllipsis" />
-            <Setter Property="Foreground" Value="{StaticResource Brush.Text}" />
-            <Setter Property="FontSize" Value="13" />
-        </Style>
-        <Style x:Key="CellMuted" TargetType="TextBlock" BasedOn="{StaticResource CellText}">
-            <Setter Property="Foreground" Value="{StaticResource Brush.TextMuted}" />
-            <Setter Property="FontSize" Value="12" />
-        </Style>
-    </UserControl.Resources>
 
     <Grid Margin="24,16,24,16">
         <Grid.RowDefinitions>
@@ -35,7 +23,7 @@
                         <TextBlock Text="更新状态" Style="{StaticResource H2}" />
                         <TextBlock Text="{Binding StateText}" Style="{StaticResource Muted}" Margin="0,4,0,0" />
                         <TextBlock Text="{Binding NoteText}" Style="{StaticResource Muted}" Margin="0,4,0,0"
-                                   Foreground="{StaticResource Brush.Danger}"
+                                   Foreground="{DynamicResource Brush.Danger}"
                                    Visibility="{Binding HasNote, Converter={StaticResource BoolToVis}}" />
                     </StackPanel>
 
@@ -67,8 +55,8 @@
         </Border>
 
         <Border Grid.Row="1" Style="{StaticResource Card}" Padding="14,10" Margin="0,0,0,10"
-                Background="{StaticResource Brush.AccentSoft}" BorderBrush="#FFC9D5F8">
-            <TextBlock Style="{StaticResource Muted}" Foreground="{StaticResource Brush.Accent}"
+                Background="{DynamicResource Brush.AccentSoft}" BorderBrush="{DynamicResource Brush.AccentSoftBorder}">
+            <TextBlock Style="{StaticResource Muted}" Foreground="{DynamicResource Brush.Accent}"
                        Text="下面列出系统记录的已安装补丁（来自本地更新代理，不联网）。暂停开关写的是 USO 策略键，全部可撤销；企业策略环境下可能被接管。" />
         </Border>
 
@@ -113,6 +101,12 @@
                     </DataGridTemplateColumn>
                 </DataGrid.Columns>
             </DataGrid>
+        </Border>
+        <!-- 页面级错误条：失败时统一展示，替代原先只靠底部状态栏 -->
+        <Border Style="{StaticResource ErrorBar}" VerticalAlignment="Top"
+                Panel.ZIndex="99" Margin="24,8,24,0"
+                Visibility="{Binding HasError, Converter={StaticResource BoolToVis}}">
+            <TextBlock Text="{Binding ErrorText}" Style="{StaticResource ErrorText}" />
         </Border>
     </Grid>
 </UserControl>

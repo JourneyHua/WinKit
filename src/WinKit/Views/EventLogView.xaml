@@ -3,18 +3,6 @@
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
              FontFamily="Microsoft YaHei UI, Segoe UI">
 
-    <UserControl.Resources>
-        <Style x:Key="CellText" TargetType="TextBlock">
-            <Setter Property="VerticalAlignment" Value="Center" />
-            <Setter Property="TextTrimming" Value="CharacterEllipsis" />
-            <Setter Property="Foreground" Value="{StaticResource Brush.Text}" />
-            <Setter Property="FontSize" Value="13" />
-        </Style>
-        <Style x:Key="CellMuted" TargetType="TextBlock" BasedOn="{StaticResource CellText}">
-            <Setter Property="Foreground" Value="{StaticResource Brush.TextMuted}" />
-            <Setter Property="FontSize" Value="12" />
-        </Style>
-    </UserControl.Resources>
 
     <Grid Margin="24,16,24,16">
         <Grid.RowDefinitions>
@@ -51,7 +39,7 @@
             <StackPanel>
                 <TextBlock Text="{Binding SummaryText}" Style="{StaticResource Muted}" />
                 <TextBlock Text="{Binding ErrorText}" Style="{StaticResource Muted}"
-                           Foreground="{StaticResource Brush.Danger}"
+                           Foreground="{DynamicResource Brush.Danger}"
                            Visibility="{Binding HasError, Converter={StaticResource BoolToVis}}" />
             </StackPanel>
         </Grid>
@@ -74,7 +62,7 @@
                             </DataTemplate>
                         </DataGridTemplateColumn.CellTemplate>
                     </DataGridTemplateColumn>
-                    <DataGridTemplateColumn Header="来源" Width="1.5*" SortMemberPath="Provider">
+                    <DataGridTemplateColumn Header="来源" Width="1.5*" MinWidth="180" SortMemberPath="Provider">
                         <DataGridTemplateColumn.CellTemplate>
                             <DataTemplate>
                                 <TextBlock Text="{Binding Provider}" Style="{StaticResource CellText}" />
@@ -102,7 +90,7 @@
                             </DataTemplate>
                         </DataGridTemplateColumn.CellTemplate>
                     </DataGridTemplateColumn>
-                    <DataGridTemplateColumn Header="示例数据" Width="2.4*" SortMemberPath="Sample">
+                    <DataGridTemplateColumn Header="示例数据" Width="2.4*" MinWidth="220" SortMemberPath="Sample">
                         <DataGridTemplateColumn.CellTemplate>
                             <DataTemplate>
                                 <TextBlock Text="{Binding Sample}" Style="{StaticResource CellMuted}"

@@ -3,18 +3,6 @@
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
              FontFamily="Microsoft YaHei UI, Segoe UI">
 
-    <UserControl.Resources>
-        <Style x:Key="CellText" TargetType="TextBlock">
-            <Setter Property="VerticalAlignment" Value="Center" />
-            <Setter Property="TextTrimming" Value="CharacterEllipsis" />
-            <Setter Property="Foreground" Value="{StaticResource Brush.Text}" />
-            <Setter Property="FontSize" Value="13" />
-        </Style>
-        <Style x:Key="CellMuted" TargetType="TextBlock" BasedOn="{StaticResource CellText}">
-            <Setter Property="Foreground" Value="{StaticResource Brush.TextMuted}" />
-            <Setter Property="FontSize" Value="12" />
-        </Style>
-    </UserControl.Resources>
 
     <Grid Margin="24,16,24,16">
         <Grid.RowDefinitions>
@@ -33,7 +21,7 @@
             <TextBlock Grid.Column="0" Text="{Binding SummaryText}" Style="{StaticResource Muted}"
                        VerticalAlignment="Center" />
             <TextBlock Grid.Column="1" Text="{Binding ErrorText}" Style="{StaticResource Muted}"
-                       Foreground="{StaticResource Brush.Danger}" VerticalAlignment="Center"
+                       Foreground="{DynamicResource Brush.Danger}" VerticalAlignment="Center"
                        Visibility="{Binding HasError, Converter={StaticResource BoolToVis}}" />
         </Grid>
 
@@ -51,7 +39,7 @@
                 <TextBlock Grid.Row="0" Text="物理磁盘" Style="{StaticResource H2}" Margin="14,12,14,6" />
                 <DataGrid Grid.Row="1" ItemsSource="{Binding Disks}" Style="{StaticResource Grid}">
                     <DataGrid.Columns>
-                        <DataGridTemplateColumn Header="磁盘" Width="1.6*" SortMemberPath="Name">
+                        <DataGridTemplateColumn Header="磁盘" Width="*" MinWidth="220" SortMemberPath="Name">
                             <DataGridTemplateColumn.CellTemplate>
                                 <DataTemplate>
                                     <TextBlock Text="{Binding Name}" Style="{StaticResource CellText}"
@@ -73,42 +61,22 @@
                                 </DataTemplate>
                             </DataGridTemplateColumn.CellTemplate>
                         </DataGridTemplateColumn>
-                        <DataGridTemplateColumn Header="SMART" Width="120" SortMemberPath="SmartText">
+                        <DataGridTemplateColumn Header="SMART" Width="110" SortMemberPath="SmartText">
                             <DataGridTemplateColumn.CellTemplate>
                                 <DataTemplate>
                                     <TextBlock Text="{Binding SmartText}" Style="{StaticResource CellMuted}" />
                                 </DataTemplate>
                             </DataGridTemplateColumn.CellTemplate>
                         </DataGridTemplateColumn>
-                        <DataGridTemplateColumn Header="磨损" Width="75" SortMemberPath="Wear">
+                        <DataGridTemplateColumn Header="健康详情" Width="240" MinWidth="180" SortMemberPath="HealthDetail">
                             <DataGridTemplateColumn.CellTemplate>
                                 <DataTemplate>
-                                    <TextBlock Text="{Binding WearText}" Style="{StaticResource CellMuted}" />
+                                    <TextBlock Text="{Binding HealthDetail}" Style="{StaticResource CellMuted}"
+                                               ToolTip="{Binding HealthDetail}" />
                                 </DataTemplate>
                             </DataGridTemplateColumn.CellTemplate>
                         </DataGridTemplateColumn>
-                        <DataGridTemplateColumn Header="温度" Width="80" SortMemberPath="Temperature">
-                            <DataGridTemplateColumn.CellTemplate>
-                                <DataTemplate>
-                                    <TextBlock Text="{Binding TemperatureText}" Style="{StaticResource CellMuted}" />
-                                </DataTemplate>
-                            </DataGridTemplateColumn.CellTemplate>
-                        </DataGridTemplateColumn>
-                        <DataGridTemplateColumn Header="通电时长" Width="105" SortMemberPath="PowerOnHours">
-                            <DataGridTemplateColumn.CellTemplate>
-                                <DataTemplate>
-                                    <TextBlock Text="{Binding HoursText}" Style="{StaticResource CellMuted}" />
-                                </DataTemplate>
-                            </DataGridTemplateColumn.CellTemplate>
-                        </DataGridTemplateColumn>
-                        <DataGridTemplateColumn Header="读/写错误" Width="100" SortMemberPath="ErrorText">
-                            <DataGridTemplateColumn.CellTemplate>
-                                <DataTemplate>
-                                    <TextBlock Text="{Binding ErrorText}" Style="{StaticResource CellMuted}" />
-                                </DataTemplate>
-                            </DataGridTemplateColumn.CellTemplate>
-                        </DataGridTemplateColumn>
-                        <DataGridTemplateColumn Header="结论" Width="75" SortMemberPath="LevelText">
+                        <DataGridTemplateColumn Header="结论" Width="70" SortMemberPath="LevelText">
                             <DataGridTemplateColumn.CellTemplate>
                                 <DataTemplate>
                                     <TextBlock Text="{Binding LevelText}" Style="{StaticResource CellText}" />

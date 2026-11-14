@@ -26,6 +26,9 @@ public sealed class OverviewViewModel : ObservableObject, IModule
 
     public ObservableCollection<OverviewCard> Cards { get; }
 
+    /// <summary>顶部关键指标：从各卡片里挑出"一眼要知道有没有问题"的那几项。</summary>
+    public ObservableCollection<OverviewItem> KeyMetrics { get; } = new();
+
     public RelayCommand RefreshCommand { get; }
     public RelayCommand CopyCommand { get; }
     public RelayCommand OpenSystemInfoCommand { get; }
@@ -57,6 +60,24 @@ public sealed class OverviewViewModel : ObservableObject, IModule
 
             Cards.Clear();
             foreach (var card in cards) Cards.Add(card);
+
+            // 关键指标：内存占用、系统盘占用、待重启、异常项数
+            KeyMetrics.Clear();
+            foreach (var key in new[] { "内存", "已运行" })
+            {
+                var item = cards.SelectMany(c => c.Items).FirstOrDefault(i => i.Label == key);
+                if (item is not null) KeyMetrics.Add(item);
+            }
+
+            var systemVolume = cards
+                .FirstOrDefault(c => c.Title == "存储")?
+                .Items.FirstOrDefault(i => i.Label.StartsWith("C:", StringComparison.OrdinalIgnoreCase));
+            if (systemVolume is not null) KeyMetrics.Add(systemVolume);
+
+            var pendingReboot = cards
+                .FirstOrDefault(c => c.Title == "健康与安全")?
+                .Items.FirstOrDefault(i => i.Label == "待重启");
+            if (pendingReboot is not null) KeyMetrics.Add(pendingReboot);
 
             var warnings = cards.SelectMany(c => c.Items).Count(i => i.Level is "warn" or "bad");
             SummaryText = warnings == 0

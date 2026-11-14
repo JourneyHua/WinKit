@@ -73,6 +73,11 @@ public partial class App : Application
 
         DispatcherUnhandledException += OnDispatcherUnhandledException;
         AppDomain.CurrentDomain.UnhandledException += (_, args) => ShowFatal(args.ExceptionObject as Exception);
+
+        // 启动时应用主题与表格密度（必须在 MainWindow 解析资源之前）
+        var settings = Services.UiSettingsService.Load();
+        Services.ThemeService.Apply(settings.Theme);
+        WinKit.MainWindow.ApplyDensity(settings.Density);
     }
 
     private void OnDispatcherUnhandledException(object sender, DispatcherUnhandledExceptionEventArgs e)
@@ -187,6 +192,7 @@ public partial class App : Application
 
             var vm = (MainViewModel)window.DataContext;
             vm.Initialize();
+            log.AppendLine($"  nav: groups={vm.NavGroups.Count} items={vm.NavItems.Count} expanded={vm.NavGroups.Count(g => g.IsExpanded)}");
 
             foreach (var nav in vm.NavItems)
             {
@@ -387,6 +393,9 @@ public partial class App : Application
 
             try { window.Close(); } catch (Exception) { }
             log.AppendLine("SMOKE OK");
+
+            // 主题自检：切换主题后 Brush.Card 的颜色必须真的变化（防止 DynamicResource 失效）
+            log.AppendLine(ThemeCheck());
         }
         catch (Exception ex)
         {
@@ -438,6 +447,35 @@ public partial class App : Application
 
     private static string OneLine(string? text)
         => string.IsNullOrWhiteSpace(text) ? "" : text.Replace("\r", " ").Replace("\n", " ").Trim();
+
+    /// <summary>
+    /// 主题自检：分别切到浅色/深色，读取 Brush.Card 的实际颜色。
+    /// 这条能抓住"改了 Colors 字典但视图仍用 StaticResource"这类静默失效。
+    /// </summary>
+    private static string ThemeCheck()
+    {
+        try
+        {
+            string Read()
+            {
+                var brush = Current?.Resources["Brush.Card"] as System.Windows.Media.SolidColorBrush;
+                return brush?.Color.ToString() ?? "null";
+            }
+
+            Services.ThemeService.Apply(Services.AppTheme.Light);
+            var light = Read();
+
+            Services.ThemeService.Apply(Services.AppTheme.Dark);
+            var dark = Read();
+
+            var ok = light != dark && light != "null" && dark != "null";
+            return $"  theme: light={light} dark={dark} result={(ok ? "OK" : "FAILED")}";
+        }
+        catch (Exception ex)
+        {
+            return $"  theme: FAILED {ex.GetType().Name} {OneLine(ex.Message)}";
+        }
+    }
 
     private static void Capture(Window window, string outputDir, string name, StringBuilder log)
     {

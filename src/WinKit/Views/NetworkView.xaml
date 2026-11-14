@@ -4,18 +4,9 @@
              FontFamily="Microsoft YaHei UI, Segoe UI">
 
     <UserControl.Resources>
-        <Style x:Key="CellText" TargetType="TextBlock">
-            <Setter Property="VerticalAlignment" Value="Center" />
-            <Setter Property="TextTrimming" Value="CharacterEllipsis" />
-            <Setter Property="Foreground" Value="{StaticResource Brush.Text}" />
-            <Setter Property="FontSize" Value="13" />
-        </Style>
-        <Style x:Key="CellMuted" TargetType="TextBlock" BasedOn="{StaticResource CellText}">
-            <Setter Property="Foreground" Value="{StaticResource Brush.TextMuted}" />
-            <Setter Property="FontSize" Value="12" />
-        </Style>
+
         <Style x:Key="KeyText" TargetType="TextBlock">
-            <Setter Property="Foreground" Value="{StaticResource Brush.TextMuted}" />
+            <Setter Property="Foreground" Value="{DynamicResource Brush.TextMuted}" />
             <Setter Property="FontSize" Value="12" />
             <Setter Property="Width" Value="86" />
             <Setter Property="VerticalAlignment" Value="Center" />
@@ -133,7 +124,7 @@
                     <TextBlock Grid.Row="0" Text="网卡与 DNS" Style="{StaticResource H2}" Margin="14,12,14,6" />
                     <DataGrid Grid.Row="1" ItemsSource="{Binding Adapters}" Style="{StaticResource Grid}">
                         <DataGrid.Columns>
-                            <DataGridTemplateColumn Header="网卡" Width="1.4*" SortMemberPath="Name">
+                            <DataGridTemplateColumn Header="网卡" Width="1.4*" MinWidth="140" SortMemberPath="Name">
                                 <DataGridTemplateColumn.CellTemplate>
                                     <DataTemplate>
                                         <TextBlock Text="{Binding Name}" Style="{StaticResource CellText}" />
@@ -168,7 +159,7 @@
                                     </DataTemplate>
                                 </DataGridTemplateColumn.CellTemplate>
                             </DataGridTemplateColumn>
-                            <DataGridTemplateColumn Header="DNS" Width="1.4*" SortMemberPath="DnsText">
+                            <DataGridTemplateColumn Header="DNS" Width="1.4*" MinWidth="140" SortMemberPath="DnsText">
                                 <DataGridTemplateColumn.CellTemplate>
                                     <DataTemplate>
                                         <TextBlock Text="{Binding DnsText}" Style="{StaticResource CellMuted}"
@@ -274,7 +265,7 @@
                                         </DataTemplate>
                                     </DataGridTemplateColumn.CellTemplate>
                                 </DataGridTemplateColumn>
-                                <DataGridTemplateColumn Header="解析结果" Width="1.6*" SortMemberPath="Addresses">
+                                <DataGridTemplateColumn Header="解析结果" Width="1.6*" MinWidth="160" SortMemberPath="Addresses">
                                     <DataGridTemplateColumn.CellTemplate>
                                         <DataTemplate>
                                             <TextBlock Text="{Binding Addresses}" Style="{StaticResource CellMuted}"
@@ -288,5 +279,11 @@
                 </Border>
             </Grid>
         </Grid>
+        <!-- 页面级错误条：失败时统一展示，替代原先只靠底部状态栏 -->
+        <Border Style="{StaticResource ErrorBar}" VerticalAlignment="Top"
+                Panel.ZIndex="99" Margin="24,8,24,0"
+                Visibility="{Binding HasError, Converter={StaticResource BoolToVis}}">
+            <TextBlock Text="{Binding ErrorText}" Style="{StaticResource ErrorText}" />
+        </Border>
     </Grid>
 </UserControl>

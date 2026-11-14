@@ -3,18 +3,6 @@
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
              FontFamily="Microsoft YaHei UI, Segoe UI">
 
-    <UserControl.Resources>
-        <Style x:Key="CellText" TargetType="TextBlock">
-            <Setter Property="VerticalAlignment" Value="Center" />
-            <Setter Property="TextTrimming" Value="CharacterEllipsis" />
-            <Setter Property="Foreground" Value="{StaticResource Brush.Text}" />
-            <Setter Property="FontSize" Value="13" />
-        </Style>
-        <Style x:Key="CellMuted" TargetType="TextBlock" BasedOn="{StaticResource CellText}">
-            <Setter Property="Foreground" Value="{StaticResource Brush.TextMuted}" />
-            <Setter Property="FontSize" Value="12" />
-        </Style>
-    </UserControl.Resources>
 
     <Grid Margin="24,16,24,16">
         <Grid.RowDefinitions>
@@ -65,11 +53,11 @@
                     </ItemsControl.ItemsPanel>
                     <ItemsControl.ItemTemplate>
                         <DataTemplate>
-                            <Border Background="{StaticResource Brush.AccentSoft}" CornerRadius="10"
+                            <Border Background="{DynamicResource Brush.AccentSoft}" CornerRadius="10"
                                     Padding="10,3" Margin="0,0,6,6">
                                 <StackPanel Orientation="Horizontal">
                                     <TextBlock Text="{Binding}" FontSize="12"
-                                               Foreground="{StaticResource Brush.Accent}"
+                                               Foreground="{DynamicResource Brush.Accent}"
                                                VerticalAlignment="Center" MaxWidth="420"
                                                TextTrimming="CharacterEllipsis" />
                                     <Button Content="×" Style="{StaticResource BtnSmall}" Padding="6,0"
@@ -92,7 +80,7 @@
             <TextBlock Grid.Column="0" Text="{Binding SummaryText}" Style="{StaticResource Muted}"
                        VerticalAlignment="Center" />
             <TextBlock Grid.Column="1" Text="{Binding ErrorText}" Style="{StaticResource Muted}"
-                       Foreground="{StaticResource Brush.Danger}" VerticalAlignment="Center"
+                       Foreground="{DynamicResource Brush.Danger}" VerticalAlignment="Center"
                        Visibility="{Binding HasError, Converter={StaticResource BoolToVis}}" />
         </Grid>
 
@@ -129,7 +117,7 @@
                                 <ItemsControl ItemsSource="{Binding Files}">
                                     <ItemsControl.ItemTemplate>
                                         <DataTemplate>
-                                            <Border BorderBrush="{StaticResource Brush.Border}" BorderThickness="0,0,0,1"
+                                            <Border BorderBrush="{DynamicResource Brush.Border}" BorderThickness="0,0,0,1"
                                                     Padding="0,6">
                                                 <Grid>
                                                     <Grid.ColumnDefinitions>

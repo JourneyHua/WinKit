@@ -39,6 +39,20 @@ public sealed class DiffEntry
     public string RightSizeText => IsFolder ? "目录" : RightSize > 0 ? ThisPcService.FormatSize(RightSize) : "—";
     public string LeftTimeText => LeftTime == default ? "" : LeftTime.ToString("yyyy-MM-dd HH:mm");
     public string RightTimeText => RightTime == default ? "" : RightTime.ToString("yyyy-MM-dd HH:mm");
+
+    /// <summary>
+    /// 合并列：原先「左侧大小 + 右侧大小 + 左侧时间 + 右侧时间」占 4 列共 440px，
+    /// 把「相对路径」挤到 142px（而操作列 230px 比路径还宽）。
+    /// </summary>
+    public string LeftDetail => Combine(LeftSizeText, LeftTimeText);
+    public string RightDetail => Combine(RightSizeText, RightTimeText);
+
+    private static string Combine(string size, string time)
+    {
+        if (string.IsNullOrWhiteSpace(time)) return size;
+        if (size is "—" or "") return time;
+        return $"{size} · {time}";
+    }
 }
 
 /// <summary>目录/文件的统一描述：FileInfo.Length 对目录会抛异常，必须自己区分。</summary>
