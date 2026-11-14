@@ -33,6 +33,11 @@
     <Compile Include="..\..\src\WinKit\Services\SystemCleanService.cs" Link="Services\SystemCleanService.cs" />
     <Compile Include="..\..\src\WinKit\Services\SystemTweakService.cs" Link="Services\SystemTweakService.cs" />
     <Compile Include="..\..\src\WinKit\Services\DriverManagerService.cs" Link="Services\DriverManagerService.cs" />
+    <Compile Include="..\..\src\WinKit\Services\SystemOverviewService.cs" Link="Services\SystemOverviewService.cs" />
+    <Compile Include="..\..\src\WinKit\Services\FileLockService.cs" Link="Services\FileLockService.cs" />
+    <Compile Include="..\..\src\WinKit\Services\EventLogService.cs" Link="Services\EventLogService.cs" />
+    <Compile Include="..\..\src\WinKit\Services\WindowsUpdateService.cs" Link="Services\WindowsUpdateService.cs" />
+    <Compile Include="..\..\src\WinKit\Services\NetworkDiagnosticService.cs" Link="Services\NetworkDiagnosticService.cs" />
   </ItemGroup>
 
 </Project>

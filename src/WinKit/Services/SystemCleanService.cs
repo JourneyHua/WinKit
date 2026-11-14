@@ -278,13 +278,19 @@ public sealed class SystemCleanService
                 {
                     var before = item.SizeBytes;
                     var beforeCount = item.FileCount;
-                    try
+                    var hr = SHEmptyRecycleBin(IntPtr.Zero, null, SHERB_NOCONFIRMATION | SHERB_NOPROGRESSUI | SHERB_NOSOUND);
+
+                    // 返回 HRESULT 且不会抛异常：失败（被占用/策略限制）时不能把体积算进"已释放"
+                    if (hr == 0)
                     {
-                        SHEmptyRecycleBin(IntPtr.Zero, null, SHERB_NOCONFIRMATION | SHERB_NOPROGRESSUI | SHERB_NOSOUND);
                         freedBytes += before;
                         deletedFiles += beforeCount;
                     }
-                    catch (Exception) { }
+                    else
+                    {
+                        progress?.Invoke($"回收站未能清空（HRESULT 0x{hr:X8}），已跳过统计");
+                    }
+
                     continue;
                 }
 

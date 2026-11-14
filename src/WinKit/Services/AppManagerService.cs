@@ -570,11 +570,33 @@ public sealed class AppManagerService
         return string.IsNullOrWhiteSpace(line) ? "请检查网络或安装包状态" : line;
     }
 
+    /// <summary>
+    /// 原生控制台工具（pnputil / sc / netsh / chcp 输出）在中文 Windows 上按 OEM 代码页输出，
+    /// 用 UTF-8 解码会把中文提示变成替换字符，导致“正在使用”这类判定永远不命中。
+    /// </summary>
+    public static Encoding GetOemEncoding()
+    {
+        try
+        {
+            Encoding.RegisterProvider(CodePagesEncodingProvider.Instance);
+            return Encoding.GetEncoding(System.Globalization.CultureInfo.CurrentCulture.TextInfo.OEMCodePage);
+        }
+        catch (Exception)
+        {
+            return Encoding.Default;
+        }
+    }
+
     public static async Task<(int ExitCode, string StdOut, string? StdErr)> RunProcessAsync(
         string fileName,
         string arguments,
-        TimeSpan timeout)
+        TimeSpan timeout,
+        Encoding? encoding = null)
     {
+        // 中文 Windows 上 pnputil/sc/net 这类原生工具按 OEM 代码页输出，
+        // 固定 UTF-8 会把“正在使用”“一个或多个设备”解成替换字符，导致后续判定永远不命中。
+        var enc = encoding ?? Encoding.UTF8;
+
         try
         {
             using var process = new Process
@@ -587,8 +609,8 @@ public sealed class AppManagerService
                     RedirectStandardOutput = true,
                     RedirectStandardError = true,
                     CreateNoWindow = true,
-                    StandardOutputEncoding = Encoding.UTF8,
-                    StandardErrorEncoding = Encoding.UTF8
+                    StandardOutputEncoding = enc,
+                    StandardErrorEncoding = enc
                 }
             };
 

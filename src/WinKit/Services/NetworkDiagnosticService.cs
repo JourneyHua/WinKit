@@ -284,7 +284,10 @@ public sealed class NetworkDiagnosticService
                 RedirectStandardError = true,
                 UseShellExecute = false,
                 CreateNoWindow = true,
-                StandardOutputEncoding = System.Text.Encoding.UTF8
+                // netsh 在中文 Windows 上按 OEM 代码页（CP936）输出，用 UTF-8 解会把
+                // “状态/信号/无线电类型”全变成替换字符，后面的键名匹配永远失败
+                StandardOutputEncoding = AppManagerService.GetOemEncoding(),
+                StandardErrorEncoding = AppManagerService.GetOemEncoding()
             };
             psi.ArgumentList.Add("wlan");
             psi.ArgumentList.Add("show");
@@ -366,36 +369,21 @@ public sealed class NetworkDiagnosticService
         };
     }
 
-    public (bool Ok, string Message) Run(string fileName, params string[] args)
+    /// <summary>
+    /// 执行网络修复命令。复用 AppManagerService.RunProcessAsync：
+    /// 它并发读两个流并在超时后杀进程，避免 UI 线程被 netsh/ipconfig 长时间占住。
+    /// </summary>
+    public async Task<(bool Ok, string Message)> RunAsync(string fileName, params string[] args)
     {
-        try
-        {
-            var psi = new ProcessStartInfo
-            {
-                FileName = fileName,
-                RedirectStandardOutput = true,
-                RedirectStandardError = true,
-                UseShellExecute = false,
-                CreateNoWindow = true,
-                StandardOutputEncoding = System.Text.Encoding.UTF8,
-                StandardErrorEncoding = System.Text.Encoding.UTF8
-            };
+        var arguments = string.Join(" ", args.Select(a => a.Contains(' ') ? $"\"{a}\"" : a));
 
-            foreach (var arg in args) psi.ArgumentList.Add(arg);
+        var (code, output, err) = await AppManagerService
+            .RunProcessAsync(fileName, arguments, TimeSpan.FromSeconds(30), AppManagerService.GetOemEncoding());
 
-            using var process = Process.Start(psi);
-            if (process is null) return (false, $"无法启动 {fileName}");
+        var text = string.Join("\n", new[] { output, err }.Where(t => !string.IsNullOrWhiteSpace(t))).Trim();
 
-            var output = process.StandardOutput.ReadToEnd() + process.StandardError.ReadToEnd();
-            process.WaitForExit(30000);
-
-            return process.ExitCode == 0
-                ? (true, string.IsNullOrWhiteSpace(output) ? "完成" : output.Trim())
-                : (false, output.Trim());
-        }
-        catch (Exception ex)
-        {
-            return (false, ex.Message);
-        }
+        return code == 0
+            ? (true, string.IsNullOrWhiteSpace(text) ? "完成" : text)
+            : (false, string.IsNullOrWhiteSpace(text) ? $"{fileName} 返回失败（错误码 {code}）" : text);
     }
 }

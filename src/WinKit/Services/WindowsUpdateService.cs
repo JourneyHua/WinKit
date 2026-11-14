@@ -68,15 +68,8 @@ public sealed class WindowsUpdateService
             // 无权限时按 0 处理
         }
 
-        var running = false;
-        try
-        {
-            running = Process.GetProcessesByName("wuauserv").Length > 0;
-        }
-        catch (Exception)
-        {
-            // 忽略
-        }
+        // wuauserv 由 svchost 托管，进程表里不存在同名进程，按进程名判断恒为 false
+        var running = QueryServiceStatus("wuauserv") == "RUNNING";
 
         var serviceText = "未知";
         try
@@ -217,23 +210,30 @@ public sealed class WindowsUpdateService
     private static (List<WindowsUpdateInfo> Installed, string? Error) LoadInstalledFromCom(int take)
     {
         var list = new List<WindowsUpdateInfo>();
+        object? session = null;
+        object? searcher = null;
+        object? result = null;
+        object? updates = null;
 
         try
         {
             var type = Type.GetTypeFromProgID("Microsoft.Update.Session");
             if (type is null) return (list, "系统未提供 Microsoft.Update.Session 接口");
 
-            dynamic session = Activator.CreateInstance(type)!;
-            dynamic searcher = session.CreateUpdateSearcher();
+            session = Activator.CreateInstance(type);
+            if (session is null) return (list, "无法创建 Microsoft.Update.Session");
+
+            searcher = ((dynamic)session).CreateUpdateSearcher();
 
             // 只查本地已装历史，IsInstalled=1 是完全离线的查询
-            dynamic result = searcher.Search("IsInstalled=1 and IsHidden=0");
-            dynamic updates = result.Updates;
+            result = ((dynamic)searcher!).Search("IsInstalled=1 and IsHidden=0");
+            updates = ((dynamic)result).Updates;
 
-            var count = (int)updates.Count;
+            var updateCollection = (dynamic)updates!;
+            var count = (int)updateCollection.Count;
             for (var i = 0; i < count && i < take * 4; i++)
             {
-                dynamic update = updates.Item(i);
+                dynamic update = updateCollection.Item(i);
                 string title;
                 try { title = (string)update.Title; } catch (Exception) { continue; }
                 if (string.IsNullOrWhiteSpace(title)) continue;
@@ -297,23 +297,49 @@ public sealed class WindowsUpdateService
         {
             return (list, ex.Message);
         }
+        finally
+        {
+            // 每个 RCW 都要显式释放，否则每次刷新都会给 wuauserv 侧留一整套会话
+            ReleaseCom(updates);
+            ReleaseCom(result);
+            ReleaseCom(searcher);
+            ReleaseCom(session);
+        }
 
         return (list.OrderByDescending(i => i.InstalledOn ?? DateTime.MinValue).ToList(), null);
+    }
+
+    private static void ReleaseCom(object? comObject)
+    {
+        if (comObject is null) return;
+        try
+        {
+            if (System.Runtime.InteropServices.Marshal.IsComObject(comObject))
+                System.Runtime.InteropServices.Marshal.FinalReleaseComObject(comObject);
+        }
+        catch (Exception)
+        {
+            // 释放失败不影响已取到的数据
+        }
     }
 
     /// <summary>暂停更新（系统允许上限 35 天，这里按 7 / 14 / 35 天三档）。</summary>
     public void Pause(int days)
     {
-        var now = DateTime.Now;
-        var until = now.AddDays(days);
+        // USO 的这两个值都是 UTC；用 DateTime.Now 再拼字面量 'Z' 会把时区偏移吞掉，
+        // 在 UTC+8 上等于把“现在”声明成 8 小时之前，暂停窗口整体偏移。
+        var nowUtc = DateTime.UtcNow;
+        var untilUtc = nowUtc.AddDays(days);
 
         _journal.Record($"暂停 Windows 更新 {days} 天", new[]
         {
             (HiveKind.LocalMachine, UsoKey)
         }, () =>
         {
-            Reg.SetString(RegPath.Hklm(UsoKey), "PauseUpdatesStartTime", now.ToString("yyyy-MM-ddTHH:mm:ssZ"));
-            Reg.SetString(RegPath.Hklm(UsoKey), "PauseUpdatesExpiryTime", until.ToString("yyyy-MM-ddTHH:mm:ssZ"));
+            Reg.SetString(RegPath.Hklm(UsoKey), "PauseUpdatesStartTime",
+                nowUtc.ToString("yyyy-MM-ddTHH:mm:ssZ", System.Globalization.CultureInfo.InvariantCulture));
+            Reg.SetString(RegPath.Hklm(UsoKey), "PauseUpdatesExpiryTime",
+                untilUtc.ToString("yyyy-MM-ddTHH:mm:ssZ", System.Globalization.CultureInfo.InvariantCulture));
         });
     }
 
@@ -369,6 +395,36 @@ public sealed class WindowsUpdateService
         }
 
         return (freed, count, null);
+    }
+
+    /// <summary>解析 sc query 的 STATE 行，返回 RUNNING / STOPPED / START_PENDING 等；查不到返回空串。</summary>
+    private static string QueryServiceStatus(string name)
+    {
+        try
+        {
+            var (_, output, _) = AppManagerService
+                .RunProcessAsync("sc.exe", $"query \"{name}\"", TimeSpan.FromSeconds(10))
+                .GetAwaiter()
+                .GetResult();
+
+            foreach (var line in output.Split('\n'))
+            {
+                var trimmed = line.Trim();
+                if (!trimmed.StartsWith("STATE", StringComparison.OrdinalIgnoreCase)) continue;
+
+                var idx = trimmed.IndexOf(':');
+                if (idx < 0) continue;
+
+                var parts = trimmed[(idx + 1)..].Trim().Split(' ', StringSplitOptions.RemoveEmptyEntries);
+                if (parts.Length >= 2) return parts[1].ToUpperInvariant();
+            }
+        }
+        catch (Exception)
+        {
+            // 查询失败按未知处理
+        }
+
+        return "";
     }
 
     public (bool Ok, string Message) RunService(string name, string verb)

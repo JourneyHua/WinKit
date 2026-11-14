@@ -185,7 +185,11 @@ public sealed class FileLockService
                 infos = new RM_PROCESS_INFO[count];
             }
 
-            if (result != ErrorSuccess || infos is null) return (lockers, null);
+            if (result != ErrorSuccess || infos is null)
+            {
+                // 重试耗尽仍拿不到：说明进程列表一直在变，不能当成“没有占用”
+                return (lockers, $"查询占用进程失败（错误码 {result}），结果不完整，请重试");
+            }
 
             for (var i = 0; i < count && i < infos.Length; i++)
             {

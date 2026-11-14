@@ -199,13 +199,17 @@ internal static class Program
     }
 
     /// <summary>
-    /// 写入自测：只在 HKCU 下创建临时项，验证「改动 → 快照 → 撤销」是否精确还原。
+    /// 自测：写入类用例只在 HKCU 建临时项，验证「改动 → 快照 → 撤销」是否精确还原；
+    /// 只读类用例（解析器、分类器、概览、网卡过滤）在任何会话都能跑。
+    /// 低完整性级别（沙箱/受限令牌）下 HKCU 写入会被拒绝，此时写入类用例标记 SKIP 而不是崩溃。
     /// </summary>
     private static int SelfTest()
     {
         var failures = 0;
+        var skipped = 0;
         var journal = new ChangeJournal();
-        var testRoot = @"Software\Classes\*\shell\WinKitSelfTest";
+        // 不要用 Software\Classes\* 这类受保护路径：非提权时连 HKCU 也会被拒
+        var testRoot = @"Software\WinKitSelfTest\Menu";
         var testPath = RegPath.Hkcu(testRoot);
 
         void Check(string name, bool condition, string detail = "")
@@ -221,57 +225,148 @@ internal static class Program
             }
         }
 
-        Console.WriteLine("=== WinKit 写入自测（仅 HKCU） ===");
-        Reg.DeleteTree(testPath);
+        void Skip(string name, string reason)
+        {
+            skipped++;
+            Console.WriteLine($"  SKIP  {name}（{reason}）");
+        }
 
-        // 1. 禁用 → 撤销
-        Reg.SetString(testPath, "MUIVerb", "自测菜单项");
-        Reg.SetString(RegPath.Hkcu(testRoot + @"\command"), "", "notepad.exe");
+        Console.WriteLine("=== WinKit 自测 ===");
+        Console.WriteLine($"  提权：{(Native.IsElevated() ? "是" : "否")}");
 
-        journal.Record("自测-禁用", new[] { (HiveKind.CurrentUser, testRoot) },
-            () => Reg.SetString(testPath, "LegacyDisable", ""));
-        Check("写入 LegacyDisable", Reg.HasValue(testPath, "LegacyDisable"));
+        var canWrite = ProbeRegistryWrite(testRoot);
+        if (!canWrite)
+            Console.WriteLine("  注意：当前会话不能写 HKCU（低完整性级别/受限令牌），写入类用例将跳过。");
 
-        journal.UndoLast();
-        Check("撤销后 LegacyDisable 消失", !Reg.HasValue(testPath, "LegacyDisable"));
-        Check("撤销后原有 MUIVerb 保留", Reg.GetString(testPath, "MUIVerb") == "自测菜单项");
-        Check("撤销后子键 command 保留", Reg.Exists(RegPath.Hkcu(testRoot + @"\command")));
+        // ---------- 写入类：快照与撤销 ----------
+        if (canWrite)
+        {
+            Reg.DeleteTree(testPath);
 
-        // 2. 删除整键 → 撤销恢复
-        journal.Record("自测-删除", new[] { (HiveKind.CurrentUser, testRoot) },
-            () => Reg.DeleteTree(testPath));
-        Check("删除后键不存在", !Reg.Exists(testPath));
+            // 1. 禁用 → 撤销
+            Reg.SetString(testPath, "MUIVerb", "自测菜单项");
+            Reg.SetString(RegPath.Hkcu(testRoot + @"\command"), "", "notepad.exe");
 
-        journal.UndoLast();
-        Check("撤销后键恢复", Reg.Exists(testPath));
-        Check("撤销后子键恢复", Reg.Exists(RegPath.Hkcu(testRoot + @"\command")));
-        Check("撤销后值恢复", Reg.GetString(testPath, "MUIVerb") == "自测菜单项");
+            journal.Record("自测-禁用", new[] { (HiveKind.CurrentUser, testRoot) },
+                () => Reg.SetString(testPath, "LegacyDisable", ""));
+            Check("写入 LegacyDisable", Reg.HasValue(testPath, "LegacyDisable"));
 
-        // 3. 屏蔽列表写入 → 撤销（同时验证撤销后磁盘快照文件已被清理）
-        var blockedKey = @"Software\Microsoft\Windows\CurrentVersion\Shell Extensions\BlockedSelfTest";
-        var fakeClsid = "{00000000-WINKIT-SELFTEST-0000-0000000000}";
-        var snap = journal.Record("自测-屏蔽", new[] { (HiveKind.CurrentUser, blockedKey) },
-            () => Reg.SetString(RegPath.Hkcu(blockedKey), fakeClsid, ""));
-        Check("写入屏蔽项", Reg.HasValue(RegPath.Hkcu(blockedKey), fakeClsid));
-        Check("快照文件已落盘", !string.IsNullOrWhiteSpace(snap.SavedFilePath) && File.Exists(snap.SavedFilePath));
+            journal.UndoLast();
+            Check("撤销后 LegacyDisable 消失", !Reg.HasValue(testPath, "LegacyDisable"));
+            Check("撤销后原有 MUIVerb 保留", Reg.GetString(testPath, "MUIVerb") == "自测菜单项");
+            Check("撤销后子键 command 保留", Reg.Exists(RegPath.Hkcu(testRoot + @"\command")));
 
-        journal.UndoLast();
-        Check("撤销后屏蔽项消失", !Reg.HasValue(RegPath.Hkcu(blockedKey), fakeClsid));
-        Check("撤销后快照文件自动删除", string.IsNullOrWhiteSpace(snap.SavedFilePath) || !File.Exists(snap.SavedFilePath));
+            // 2. 删除整键 → 撤销恢复
+            journal.Record("自测-删除", new[] { (HiveKind.CurrentUser, testRoot) },
+                () => Reg.DeleteTree(testPath));
+            Check("删除后键不存在", !Reg.Exists(testPath));
 
-        // 4. 文件级快照（发送到） → 撤销恢复
-        var tempFile = Path.Combine(Path.GetTempPath(), $"winkit_selftest_{Guid.NewGuid():N}.lnk");
-        File.WriteAllText(tempFile, "self-test-shortcut", Encoding.UTF8);
-        journal.Record("自测-文件删除", Array.Empty<(HiveKind, string)>(),
-            () => File.Delete(tempFile),
-            new[] { tempFile });
-        Check("文件删除后不存在", !File.Exists(tempFile));
+            journal.UndoLast();
+            Check("撤销后键恢复", Reg.Exists(testPath));
+            Check("撤销后子键恢复", Reg.Exists(RegPath.Hkcu(testRoot + @"\command")));
+            Check("撤销后值恢复", Reg.GetString(testPath, "MUIVerb") == "自测菜单项");
 
-        journal.UndoLast();
-        Check("文件撤销后恢复且内容一致", File.Exists(tempFile) && File.ReadAllText(tempFile, Encoding.UTF8) == "self-test-shortcut");
-        if (File.Exists(tempFile)) File.Delete(tempFile);
+            // 3. 屏蔽列表写入 → 撤销（同时验证撤销后磁盘快照文件已被清理）
+            var blockedKey = @"Software\Microsoft\Windows\CurrentVersion\Shell Extensions\BlockedSelfTest";
+            var fakeClsid = "{00000000-WINKIT-SELFTEST-0000-0000000000}";
+            var snap = journal.Record("自测-屏蔽", new[] { (HiveKind.CurrentUser, blockedKey) },
+                () => Reg.SetString(RegPath.Hkcu(blockedKey), fakeClsid, ""));
+            Check("写入屏蔽项", Reg.HasValue(RegPath.Hkcu(blockedKey), fakeClsid));
+            Check("快照文件已落盘", !string.IsNullOrWhiteSpace(snap.SavedFilePath) && File.Exists(snap.SavedFilePath));
 
-        // 5. 应用管理与驱动管理解析器自测
+            journal.UndoLast();
+            Check("撤销后屏蔽项消失", !Reg.HasValue(RegPath.Hkcu(blockedKey), fakeClsid));
+            Check("撤销后快照文件自动删除", string.IsNullOrWhiteSpace(snap.SavedFilePath) || !File.Exists(snap.SavedFilePath));
+            Reg.DeleteTree(RegPath.Hkcu(blockedKey));
+
+            // 4. 文件级快照（发送到） → 撤销恢复
+            var tempFile = Path.Combine(Path.GetTempPath(), $"winkit_selftest_{Guid.NewGuid():N}.lnk");
+            File.WriteAllText(tempFile, "self-test-shortcut", Encoding.UTF8);
+            journal.Record("自测-文件删除", Array.Empty<(HiveKind, string)>(),
+                () => File.Delete(tempFile),
+                new[] { tempFile });
+            Check("文件删除后不存在", !File.Exists(tempFile));
+
+            journal.UndoLast();
+            Check("文件撤销后恢复且内容一致", File.Exists(tempFile) && File.ReadAllText(tempFile, Encoding.UTF8) == "self-test-shortcut");
+            if (File.Exists(tempFile)) File.Delete(tempFile);
+
+            // 5. 快照递归预算必须是共享计数器（v1.4.0 修复：按值传预算会让整棵树节点数失控）
+            var budgetRoot = @"Software\WinKitSelfTest\Budget";
+            Reg.DeleteTree(RegPath.Hkcu(budgetRoot));
+            for (var i = 0; i < 40; i++)
+                Reg.SetString(RegPath.Hkcu($@"{budgetRoot}\k{i}"), "v", i.ToString());
+
+            var smallBudget = SnapshotEngine.Capture(HiveKind.CurrentUser, budgetRoot, 5);
+            var capturedNodes = SnapshotEngine.CountKeys(new[] { smallBudget });
+            Check("快照预算生效（5 个节点以内）", capturedNodes <= 6, $"实际捕获 {capturedNodes} 个节点");
+            Reg.DeleteTree(RegPath.Hkcu(budgetRoot));
+
+            // 6. 快照还原必须保留原默认值与 HiddenByDefault（v1.4.0 此电脑节点修复依赖它）
+            var shapeRoot = @"Software\WinKitSelfTest\Shape";
+            Reg.DeleteTree(RegPath.Hkcu(shapeRoot));
+            Reg.SetString(RegPath.Hkcu(shapeRoot), "", "CLSID_ThisPCDownloadsRegFolder");
+            Reg.SetInt(RegPath.Hkcu(shapeRoot), "HiddenByDefault", 1);
+            Reg.SetString(RegPath.Hkcu(shapeRoot + @"\child"), "x", "y");
+
+            var shapeSnapshot = SnapshotEngine.Capture(HiveKind.CurrentUser, shapeRoot);
+            Reg.DeleteTree(RegPath.Hkcu(shapeRoot));
+            SnapshotEngine.Restore(shapeSnapshot);
+
+            Check("还原后默认值保留（不是裸 GUID）",
+                Reg.GetString(RegPath.Hkcu(shapeRoot)) == "CLSID_ThisPCDownloadsRegFolder");
+            Check("还原后 HiddenByDefault 保留", Reg.GetInt(RegPath.Hkcu(shapeRoot), "HiddenByDefault") == 1);
+            Check("还原后子键保留", Reg.GetString(RegPath.Hkcu(shapeRoot + @"\child"), "x") == "y");
+
+            // 7. 截断快照必须拒绝整树还原，不能把没记下来的子树删掉
+            var truncRoot = @"Software\WinKitSelfTest\Truncated";
+            Reg.DeleteTree(RegPath.Hkcu(truncRoot));
+            for (var i = 0; i < 30; i++)
+                Reg.SetString(RegPath.Hkcu($@"{truncRoot}\c{i}"), "v", i.ToString());
+
+            var truncSnapshot = SnapshotEngine.Capture(HiveKind.CurrentUser, truncRoot, 3);
+            var wasTruncated = truncSnapshot.Truncated;
+
+            var refused = false;
+            try
+            {
+                SnapshotEngine.Restore(truncSnapshot);
+            }
+            catch (InvalidOperationException)
+            {
+                refused = true;
+            }
+
+            Check("超预算快照被标记为不完整", wasTruncated);
+            Check("不完整快照拒绝整树还原", refused);
+            Check("拒绝后原键与子键都还在",
+                Reg.Exists(RegPath.Hkcu(truncRoot)) && Reg.Exists(RegPath.Hkcu($@"{truncRoot}\c29")));
+            Reg.DeleteTree(RegPath.Hkcu(truncRoot));
+
+            // 8. QWORD 超出 int 范围时 GetInt 必须返回 null，不能静默截断
+            var qwordRoot = @"Software\WinKitSelfTest\QWord";
+            Reg.DeleteTree(RegPath.Hkcu(qwordRoot));
+            Reg.SetString(RegPath.Hkcu(qwordRoot), "placeholder", "x");
+            using (var key = Reg.Create(RegPath.Hkcu(qwordRoot)))
+            {
+                key!.SetValue("big", 0x1_0000_0001L, Microsoft.Win32.RegistryValueKind.QWord);
+            }
+
+            Check("GetInt 对大 QWORD 返回 null", Reg.GetInt(RegPath.Hkcu(qwordRoot), "big") is null);
+            Check("GetLong 保留 64 位精度", Reg.GetLong(RegPath.Hkcu(qwordRoot), "big") == 0x1_0000_0001L);
+            Reg.DeleteTree(RegPath.Hkcu(qwordRoot));
+
+            Reg.DeleteTree(testPath);
+            Check("清理完成（测试键不存在）", !Reg.Exists(testPath));
+        }
+        else
+        {
+            Skip("快照写入/撤销用例", "当前会话不能写 HKCU");
+            Skip("快照预算用例", "当前会话不能写 HKCU");
+            Skip("快照还原保真用例", "当前会话不能写 HKCU");
+        }
+
+        // ---------- 只读类：解析器与分类器 ----------
         var sampleWinget = """
             名称                      ID                          版本         可用         源
             -------------------------------------------------------------------------------------
@@ -304,14 +399,10 @@ internal static class Program
             && parsedDrivers[0].OriginalName == "nv_dispi.inf"
             && parsedDrivers[0].IsCritical);
 
-        // 6. 常用运行库体检引擎自测
-        var runtimeService = new RuntimeCheckService();
-        var runtimes = runtimeService.CheckAll();
+        var runtimes = new RuntimeCheckService().CheckAll();
         Check("常用运行库检测清单完整（21 项）", runtimes.Count >= 21);
-        Check("常用运行库分类覆盖四大类",
-            runtimes.Select(r => r.Category).Distinct().Count() == 4);
+        Check("常用运行库分类覆盖四大类", runtimes.Select(r => r.Category).Distinct().Count() == 4);
 
-        // 7. 常用系统工具库、清理与端口解析自测
         var toolCatalog = new SystemToolCatalogService().LoadCatalog();
         Check("常用系统工具库清单完整（22 款，5 大分类）",
             toolCatalog.Count == 22 && toolCatalog.Select(t => t.Category).Distinct().Count() == 5);
@@ -329,13 +420,82 @@ internal static class Program
         Check("netstat 端口占用表解析成功",
             parsedPorts.Count == 2 && parsedPorts[0].LocalPort == 135 && parsedPorts[1].LocalPort == 5353);
 
-        // 清理
-        Reg.DeleteTree(testPath);
-        Reg.DeleteTree(RegPath.Hkcu(blockedKey));
-        Check("清理完成（测试键不存在）", !Reg.Exists(testPath));
+        Check("分类器识别蓝屏", EventLogService.Categorize("Microsoft-Windows-WER-SystemErrorReporting", "1001") == "蓝屏 / 意外关机");
+        Check("分类器识别应用崩溃", EventLogService.Categorize("Application Error", "1000") == "应用崩溃");
+        Check("分类器识别 .NET 崩溃", EventLogService.Categorize(".NET Runtime", "1026") == "应用崩溃");
+        Check("分类器识别更新失败", EventLogService.Categorize("Microsoft-Windows-WindowsUpdateClient", "20") == "更新失败");
+        Check("分类器识别磁盘", EventLogService.Categorize("volsnap", "36") == "磁盘 / 存储");
+        Check("分类器识别证书", EventLogService.Categorize("Microsoft-Windows-CAPI2", "4176") == "证书 / 加密");
+        Check("分类器兜底为其它", EventLogService.Categorize("SomeUnknownProvider", "1") == "其它");
+
+        var adapters = new NetworkDiagnosticService().LoadAdapters();
+        Check("网卡列表不含过滤驱动伪接口",
+            adapters.All(a => !a.Name.Contains("-QoS Packet Scheduler", StringComparison.OrdinalIgnoreCase)
+                              && !a.Name.Contains("-WFP ", StringComparison.OrdinalIgnoreCase)),
+            $"首个可疑项：{adapters.FirstOrDefault(a => a.Name.Contains("PACKET", StringComparison.OrdinalIgnoreCase))?.Name}");
+
+        var lockService = new FileLockService();
+        var (_, emptyError) = lockService.FindLockers("");
+        var (_, missingError) = lockService.FindLockers(Path.Combine(Path.GetTempPath(), "winkit_no_such_file_" + Guid.NewGuid().ToString("N")));
+        Check("文件占用：空路径被拒绝", emptyError is not null);
+        Check("文件占用：不存在的路径被拒绝", missingError is not null);
+
+        var overviewCards = new SystemOverviewService().Load();
+        Check("系统概览返回四张卡片", overviewCards.Count == 4);
+        Check("系统概览每项都有标签与值",
+            overviewCards.SelectMany(c => c.Items).All(i => !string.IsNullOrWhiteSpace(i.Label) && !string.IsNullOrWhiteSpace(i.Value)));
+        Check("系统概览不把 Windows 11 显示成 Windows 10",
+            overviewCards[0].Items.Any(i => !i.Value.Contains("Windows 10")));
+
+        var updateState = new WindowsUpdateService(journal).LoadState();
+        Check("Windows 更新状态可读", updateState.ServiceStateText.Length > 0);
+        Check("Windows 更新缓存路径已给出", !string.IsNullOrWhiteSpace(updateState.UpdateCachePath));
+
+        // 损坏/手改的备份文件不能靠“非 HKCU 即 HKLM”落到系统区
+        var badHiveRefused = false;
+        try
+        {
+            SnapshotEngine.Restore(new SnapshotKey { Hive = "HKCR", SubKey = @"Software\Whatever" });
+        }
+        catch (InvalidOperationException)
+        {
+            badHiveRefused = true;
+        }
+
+        Check("非法 Hive 的快照被拒绝还原", badHiveRefused);
+        Check("删除不存在的键视为成功", Reg.DeleteTree(RegPath.Hkcu(@"Software\WinKitSelfTest\NoSuchKey")));
 
         Console.WriteLine();
-        Console.WriteLine(failures == 0 ? "全部通过" : $"{failures} 项失败");
+        Console.WriteLine(failures == 0
+            ? $"全部通过（跳过 {skipped} 项）"
+            : $"{failures} 项失败，跳过 {skipped} 项");
         return failures == 0 ? 0 : 1;
+    }
+
+    /// <summary>探测当前会话能否写 HKCU（低完整性级别下会被拒绝）。失败时输出原因。</summary>
+    private static bool ProbeRegistryWrite(string subKey)
+    {
+        try
+        {
+            using var key = Microsoft.Win32.Registry.CurrentUser.CreateSubKey(subKey, true);
+            if (key is null)
+            {
+                Console.WriteLine("  HKCU 写入探测：CreateSubKey 返回 null");
+                return false;
+            }
+
+            key.SetValue("probe", 1, Microsoft.Win32.RegistryValueKind.DWord);
+            key.DeleteValue("probe", false);
+            return true;
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"  HKCU 写入探测失败：{ex.GetType().Name} {ex.Message}");
+            return false;
+        }
+        finally
+        {
+            try { Microsoft.Win32.Registry.CurrentUser.DeleteSubKeyTree(subKey, false); } catch (Exception) { }
+        }
     }
 }

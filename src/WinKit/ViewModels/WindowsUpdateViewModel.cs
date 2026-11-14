@@ -28,7 +28,7 @@ public sealed class WindowsUpdateViewModel : ObservableObject, IModule
         Pause35Command = new RelayCommand(() => Pause(35));
         ResumeCommand = new RelayCommand(Resume);
         CleanCacheCommand = new RelayCommand(() => _ = CleanCacheAsync());
-        RestartServiceCommand = new RelayCommand(RestartService);
+        RestartServiceCommand = new RelayCommand(() => _ = RestartServiceAsync());
         OpenSettingsCommand = new RelayCommand(OpenSettings);
         OpenCacheFolderCommand = new RelayCommand(OpenCacheFolder);
     }
@@ -194,20 +194,41 @@ public sealed class WindowsUpdateViewModel : ObservableObject, IModule
         Refresh();
     }
 
-    private void RestartService()
+    private async Task RestartServiceAsync()
     {
+        if (IsBusy) return;
+
+        IsBusy = true;
+        _status("正在重启 Windows 更新服务…");
+
         try
         {
-            var (ok1, msg1) = _service.RunService("wuauserv", "stop");
-            var (ok2, msg2) = _service.RunService("wuauserv", "start");
-            _status(ok2 ? "已重启 Windows 更新服务" : $"重启服务失败：{msg2}");
-            if (!ok1 && !ok2) MessageBox.Show($"{msg1}\n{msg2}", "WinKit", MessageBoxButton.OK, MessageBoxImage.Warning);
-            Refresh();
+            // sc stop 会等 service 真正停下，可能在 UI 线程阻塞几十秒，必须放后台
+            var (stopOk, stopMsg) = await Task.Run(() => _service.RunService("wuauserv", "stop"));
+            var (startOk, startMsg) = await Task.Run(() => _service.RunService("wuauserv", "start"));
+
+            if (startOk)
+            {
+                _status("已重启 Windows 更新服务");
+            }
+            else
+            {
+                _status($"重启服务失败：{startMsg}");
+                MessageBox.Show(
+                    $"重启 Windows 更新服务失败：\n\n{startMsg}\n\n停止阶段：{(stopOk ? "成功" : stopMsg)}",
+                    "WinKit", MessageBoxButton.OK, MessageBoxImage.Warning);
+            }
         }
         catch (Exception ex)
         {
             MessageBox.Show($"重启服务失败：{ex.Message}", "WinKit", MessageBoxButton.OK, MessageBoxImage.Warning);
         }
+        finally
+        {
+            IsBusy = false;
+        }
+
+        Refresh();
     }
 
     private void OpenSettings()

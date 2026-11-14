@@ -21,7 +21,7 @@ public sealed class EventLogViewModel : ObservableObject, IModule
         Groups = new ObservableCollection<EventLogGroup>();
         Filtered = new ObservableCollection<EventLogGroup>();
 
-        RefreshCommand = new RelayCommand(() => _ = LoadAsync());
+        RefreshCommand = new RelayCommand(() => _ = LoadAsync(_days));
         SetDaysCommand = new RelayCommand(p => SetDays(p));
         CopyCommand = new RelayCommand(p => Copy(p as EventLogGroup));
         OpenEventViewerCommand = new RelayCommand(OpenEventViewer);
@@ -67,7 +67,7 @@ public sealed class EventLogViewModel : ObservableObject, IModule
 
     public bool HasError => !string.IsNullOrWhiteSpace(_errorText);
 
-    public void Refresh() => _ = LoadAsync();
+    public void Refresh() => _ = LoadAsync(_days);
 
     private void SetDays(object? parameter)
     {
@@ -77,18 +77,33 @@ public sealed class EventLogViewModel : ObservableObject, IModule
         _days = days;
         OnPropertyChanged(nameof(Is7Days));
         OnPropertyChanged(nameof(Is30Days));
-        _ = LoadAsync();
+
+        if (IsBusy)
+        {
+            // 正在加载时切换：记下来，等这次结束后补一次，否则界面会用旧数据配新标签
+            _pendingDays = days;
+            return;
+        }
+
+        _ = LoadAsync(days);
     }
 
-    private async Task LoadAsync()
+    private int? _pendingDays;
+
+    private async Task LoadAsync(int days)
     {
-        if (IsBusy) return;
+        if (IsBusy)
+        {
+            _pendingDays = days;
+            return;
+        }
+
         IsBusy = true;
 
         try
         {
-            _status($"正在读取近 {_days} 天的系统事件…");
-            var (groups, error) = await Task.Run(() => _service.Load(_days));
+            _status($"正在读取近 {days} 天的系统事件…");
+            var (groups, error) = await Task.Run(() => _service.Load(days));
 
             Groups.Clear();
             foreach (var group in groups) Groups.Add(group);
@@ -100,9 +115,11 @@ public sealed class EventLogViewModel : ObservableObject, IModule
 
             var blueScreen = groups.Count(g => g.Category == "蓝屏 / 意外关机");
             var crashes = groups.Count(g => g.Category == "应用崩溃");
+            _loadedDays = days;
+
             SummaryText = groups.Count == 0
-                ? $"近 {_days} 天没有错误或严重级别事件"
-                : $"近 {_days} 天共 {groups.Sum(g => g.Count)} 条错误事件，归并为 {groups.Count} 种（蓝屏相关 {blueScreen} 种，应用崩溃 {crashes} 种）";
+                ? $"近 {days} 天没有错误或严重级别事件"
+                : $"近 {days} 天共 {groups.Sum(g => g.Count)} 条错误事件，归并为 {groups.Count} 种（蓝屏相关 {blueScreen} 种，应用崩溃 {crashes} 种）";
 
             _status($"事件日志：{groups.Count} 种错误");
         }
@@ -115,7 +132,19 @@ public sealed class EventLogViewModel : ObservableObject, IModule
         {
             IsBusy = false;
         }
+
+        if (_pendingDays is { } pending && pending != _loadedDays)
+        {
+            _pendingDays = null;
+            _ = LoadAsync(pending);
+        }
+        else
+        {
+            _pendingDays = null;
+        }
     }
+
+    private int _loadedDays;
 
     private void Copy(EventLogGroup? group)
     {

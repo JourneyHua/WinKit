@@ -73,7 +73,8 @@ public sealed class EventLogService
             });
     }
 
-    private static string Categorize(string provider, string eventId)
+    /// <summary>把事件来源归到用户能看懂的中文分类（公开供自测覆盖）。</summary>
+    public static string Categorize(string provider, string eventId)
     {
         var p = provider.ToLowerInvariant();
 
@@ -112,35 +113,19 @@ public sealed class EventLogService
         var windowMs = (long)TimeSpan.FromDays(Math.Max(1, days)).TotalMilliseconds;
         var query = $"*[System[(Level=1 or Level=2) and TimeCreated[timediff(@SystemTime) <= {windowMs}]]]";
 
-        var psi = new ProcessStartInfo
-        {
-            FileName = "wevtutil.exe",
-            RedirectStandardOutput = true,
-            RedirectStandardError = true,
-            UseShellExecute = false,
-            CreateNoWindow = true,
-            StandardOutputEncoding = Encoding.UTF8,
-            StandardErrorEncoding = Encoding.UTF8
-        };
-
-        psi.ArgumentList.Add("qe");
-        psi.ArgumentList.Add(logName);
-        psi.ArgumentList.Add($"/q:{query}");
-        psi.ArgumentList.Add("/f:xml");
-        psi.ArgumentList.Add($"/c:{max}");
-        psi.ArgumentList.Add("/rd:true");
+        // wevtutil 的输出是连续拼接的 <Event> 片段（无根节点、带 BOM），
+        // 统一走 AppManagerService.RunProcessAsync：它并发读两个流 + 超时杀进程。
+        var arguments = $"qe {logName} /q:\"{query.Replace("\"", "'")}\" /f:xml /c:{max} /rd:true";
 
         try
         {
-            using var process = Process.Start(psi);
-            if (process is null) return (entries, "无法启动 wevtutil");
-
-            var output = process.StandardOutput.ReadToEnd();
-            var error = process.StandardError.ReadToEnd();
-            process.WaitForExit(30000);
+            var (code, output, error) = AppManagerService
+                .RunProcessAsync("wevtutil.exe", arguments, TimeSpan.FromSeconds(30))
+                .GetAwaiter()
+                .GetResult();
 
             if (string.IsNullOrWhiteSpace(output))
-                return (entries, string.IsNullOrWhiteSpace(error) ? null : error.Trim());
+                return (entries, string.IsNullOrWhiteSpace(error) || code == 0 ? null : error.Trim());
 
             // wevtutil 输出的是连续拼接的 <Event> 片段，没有根节点，需要自己包一层
             var xml = output.TrimStart('\uFEFF', '\r', '\n', ' ');

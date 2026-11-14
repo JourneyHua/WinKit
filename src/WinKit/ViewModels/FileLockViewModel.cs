@@ -23,7 +23,7 @@ public sealed class FileLockViewModel : ObservableObject, IModule
         BrowseCommand = new RelayCommand(Browse);
         ScanCommand = new RelayCommand(() => _ = ScanAsync());
         KillCommand = new RelayCommand(p => Kill(p as FileLocker));
-        KillAllCommand = new RelayCommand(KillAll);
+        KillAllCommand = new RelayCommand(() => _ = KillAllAsync());
         CopyPathCommand = new RelayCommand(p => CopyPath(p as FileLocker));
         OpenFolderCommand = new RelayCommand(p => OpenFolder(p as FileLocker));
         ClearCommand = new RelayCommand(Clear);
@@ -150,7 +150,7 @@ public sealed class FileLockViewModel : ObservableObject, IModule
         _ = ScanAsync();
     }
 
-    private void KillAll()
+    private async Task KillAllAsync()
     {
         var targets = Lockers.Where(l => l.CanKill).ToList();
         if (targets.Count == 0) return;
@@ -163,14 +163,33 @@ public sealed class FileLockViewModel : ObservableObject, IModule
 
         if (confirm != MessageBoxResult.OK) return;
 
-        var failed = 0;
-        foreach (var target in targets)
+        // 每个 Kill 最多等 3 秒，遇到不响应终止的进程批量结束会假死，必须放到后台
+        IsBusy = true;
+        _status($"正在结束 {targets.Count} 个进程…");
+
+        try
         {
-            var (ok, _) = _service.Kill(target.ProcessId);
-            if (!ok) failed++;
+            var results = await Task.Run(() =>
+                targets.Select(t => (t.ProcessName, t.ProcessId, Result: _service.Kill(t.ProcessId))).ToList());
+
+            var failed = results.Count(r => !r.Result.Ok);
+            _status(failed == 0
+                ? $"已结束 {targets.Count} 个进程"
+                : $"已结束 {targets.Count - failed} 个，{failed} 个失败");
+
+            if (failed > 0)
+            {
+                MessageBox.Show(
+                    "以下进程未能结束（可能仍在退出中或受保护）：\n\n• " +
+                    string.Join("\n• ", results.Where(r => !r.Result.Ok).Select(r => $"{r.ProcessName}（PID {r.ProcessId}）")),
+                    "部分结束失败", MessageBoxButton.OK, MessageBoxImage.Warning);
+            }
+        }
+        finally
+        {
+            IsBusy = false;
         }
 
-        _status(failed == 0 ? $"已结束 {targets.Count} 个进程" : $"已结束 {targets.Count - failed} 个，{failed} 个失败");
         _ = ScanAsync();
     }
 

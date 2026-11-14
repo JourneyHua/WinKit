@@ -25,19 +25,52 @@ public readonly record struct RegPath(HiveKind Hive, string SubKey)
 
 public static class Reg
 {
+    /// <summary>打开注册表键的结果：必须区分“不存在”和“存在但没权限”。</summary>
+    public enum OpenStatus
+    {
+        Ok,
+        NotFound,
+        Denied
+    }
+
     private static RegistryHive ToRegistryHive(HiveKind hive)
         => hive == HiveKind.CurrentUser ? RegistryHive.CurrentUser : RegistryHive.LocalMachine;
 
     public static RegistryKey? Open(RegPath path, bool writable)
+        => TryOpen(path, writable).Key;
+
+    /// <summary>
+    /// 区分三态。把“拒绝访问”当成“不存在”会让快照记 Existed=false，
+    /// 撤销时就会对一个真实存在的键执行删树——这是不可接受的数据丢失路径。
+    /// </summary>
+    public static (RegistryKey? Key, OpenStatus Status) TryOpen(RegPath path, bool writable)
     {
+        RegistryKey? baseKey = null;
+
         try
         {
-            using var baseKey = RegistryKey.OpenBaseKey(ToRegistryHive(path.Hive), RegistryView.Default);
-            return baseKey.OpenSubKey(path.SubKey, writable);
+            baseKey = RegistryKey.OpenBaseKey(ToRegistryHive(path.Hive), RegistryView.Default);
+            var key = baseKey.OpenSubKey(path.SubKey, writable);
+            if (key is not null) return (key, OpenStatus.Ok);
+
+            return (null, OpenStatus.NotFound);
+        }
+        catch (System.Security.SecurityException)
+        {
+            return (null, OpenStatus.Denied);
+        }
+        catch (UnauthorizedAccessException)
+        {
+            return (null, OpenStatus.Denied);
         }
         catch (Exception)
         {
-            return null;
+            // 键路径非法等异常：按“没读到”处理，但上层必须据此拒绝做破坏性还原
+            return (null, OpenStatus.Denied);
+        }
+        finally
+        {
+            baseKey?.Dispose();
         }
     }
 
@@ -53,16 +86,18 @@ public static class Reg
         return baseKey.CreateSubKey(path.SubKey, true);
     }
 
-    public static void DeleteTree(RegPath path)
+    /// <summary>删除整棵子树；返回是否确实删掉（或本来就不存在）。失败时不再静默。</summary>
+    public static bool DeleteTree(RegPath path)
     {
         try
         {
             using var baseKey = RegistryKey.OpenBaseKey(ToRegistryHive(path.Hive), RegistryView.Default);
             baseKey.DeleteSubKeyTree(path.SubKey, false);
+            return true;
         }
         catch (Exception)
         {
-            // 权限不足或已被删除，交给上层判断
+            return false;
         }
     }
 
@@ -94,8 +129,23 @@ public static class Reg
         return value switch
         {
             int i => i,
-            long l => (int)l,
+            // QWORD 直接 (int) 截断会静默变号/丢高位，超出 int 范围时按“读不到”处理
+            long l when l is >= int.MinValue and <= int.MaxValue => (int)l,
+            long => null,
             string s when int.TryParse(s, out var p) => p,
+            _ => null
+        };
+    }
+
+    /// <summary>需要 64 位值时用这个，避免经 GetInt 丢精度。</summary>
+    public static long? GetLong(RegPath path, string name)
+    {
+        var value = GetValue(path, name);
+        return value switch
+        {
+            long l => l,
+            int i => i,
+            string s when long.TryParse(s, out var p) => p,
             _ => null
         };
     }

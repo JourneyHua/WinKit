@@ -403,16 +403,16 @@ public sealed class StartupServiceManager
         var (code, output, err) = await AppManagerService.RunProcessAsync(
             "sc.exe", $"{verb} \"{item.ServiceName}\"", TimeSpan.FromSeconds(25));
 
-        if (code == 0 || output.Contains("RUNNING", StringComparison.OrdinalIgnoreCase)
-                      || output.Contains("STOPPED", StringComparison.OrdinalIgnoreCase)
-                      || output.Contains("START_PENDING", StringComparison.OrdinalIgnoreCase)
-                      || output.Contains("STOP_PENDING", StringComparison.OrdinalIgnoreCase))
+        // 只认退出码：sc 失败时也会把 `STATE : 4 RUNNING` 打到 stdout，
+        // 按子串判定会把“停止失败”报成已停止，界面与实际状态相反。
+        if (code == 0)
         {
             item.IsRunning = start;
             return (true, $"已{(start ? "启动" : "停止")}服务：{item.DisplayName}");
         }
 
-        return (false, string.IsNullOrWhiteSpace(err) ? output.Trim() : err.Trim());
+        var detail = string.IsNullOrWhiteSpace(err) ? output.Trim() : err.Trim();
+        return (false, detail.Length == 0 ? $"sc {verb} 返回失败（错误码 {code}）" : detail);
     }
 
     public async Task<List<ScheduledTaskItem>> LoadScheduledTasksAsync()
@@ -489,17 +489,65 @@ public sealed class StartupServiceManager
     public async Task<(bool Success, string Message)> SetTaskEnabledAsync(ScheduledTaskItem task, bool enable)
     {
         var flag = enable ? "/ENABLE" : "/DISABLE";
-        var (code, output, err) = await AppManagerService.RunProcessAsync(
-            "schtasks.exe", $"/Change /TN \"{task.FullPath}\" {flag}", TimeSpan.FromSeconds(15));
 
-        if (code == 0)
+        // 计划任务的定义文件在 C:\Windows\System32\Tasks\<任务路径>，schtasks 改的就是它。
+        // 不把它纳入快照，用户点“撤销上一步”时任务状态不会回滚，与界面承诺不符。
+        var taskFile = ResolveTaskDefinitionFile(task.FullPath);
+        var title = $"{(enable ? "启用" : "禁用")}计划任务：{task.TaskName}";
+
+        try
         {
+            if (taskFile is not null)
+            {
+                await _journal.RecordAsync(
+                    title,
+                    Array.Empty<(HiveKind, string)>(),
+                    async () =>
+                    {
+                        var (code, output, err) = await AppManagerService.RunProcessAsync(
+                            "schtasks.exe", $"/Change /TN \"{task.FullPath}\" {flag}", TimeSpan.FromSeconds(15));
+
+                        if (code != 0)
+                            throw new InvalidOperationException(string.IsNullOrWhiteSpace(err) ? output.Trim() : err.Trim());
+                    },
+                    new[] { taskFile });
+            }
+            else
+            {
+                // 读不到定义文件（受保护任务/权限不足）时仍然执行，但要如实说明不可撤销
+                var (code, output, err) = await AppManagerService.RunProcessAsync(
+                    "schtasks.exe", $"/Change /TN \"{task.FullPath}\" {flag}", TimeSpan.FromSeconds(15));
+
+                if (code != 0)
+                    return (false, string.IsNullOrWhiteSpace(err) ? output.Trim() : err.Trim());
+            }
+
             task.IsEnabled = enable;
             task.StateText = enable ? "已启用" : "已禁用";
-            return (true, $"已{(enable ? "启用" : "禁用")}计划任务：{task.TaskName}");
+            return (true, $"已{(enable ? "启用" : "禁用")}计划任务：{task.TaskName}"
+                          + (taskFile is null ? "（读不到任务定义文件，此项无法撤销）" : ""));
         }
+        catch (Exception ex)
+        {
+            return (false, ex.Message);
+        }
+    }
 
-        return (false, string.IsNullOrWhiteSpace(err) ? output.Trim() : err.Trim());
+    /// <summary>把任务路径映射到 System32\Tasks 下的定义文件；拿不到时返回 null。</summary>
+    private static string? ResolveTaskDefinitionFile(string fullPath)
+    {
+        if (string.IsNullOrWhiteSpace(fullPath)) return null;
+
+        try
+        {
+            var winDir = Environment.GetFolderPath(Environment.SpecialFolder.Windows);
+            var file = Path.Combine(winDir, "System32", "Tasks", fullPath.TrimStart('\\'));
+            return File.Exists(file) ? file : null;
+        }
+        catch (Exception)
+        {
+            return null;
+        }
     }
 
     public async Task<(bool Success, string Message)> RunTaskNowAsync(ScheduledTaskItem task)
@@ -537,12 +585,34 @@ public sealed class StartupServiceManager
     private static (string Publisher, bool IsMicrosoft) InspectServicePublisher(string exePath, string expandedImg)
     {
         var winDir = Environment.GetFolderPath(Environment.SpecialFolder.Windows);
-        if (expandedImg.Contains("svchost.exe", StringComparison.OrdinalIgnoreCase)
-            || (!string.IsNullOrWhiteSpace(exePath) && exePath.StartsWith(winDir, StringComparison.OrdinalIgnoreCase)))
+        var system32 = Path.Combine(winDir, "System32");
+        var sysWow64 = Path.Combine(winDir, "SysWOW64");
+
+        // 只按“文件名 + 所在目录”双重判定：伪装成 svchost.exe 的第三方服务
+        // （例如 C:\Users\Public\svchost.exe -k netsvcs）不能被当成微软组件，
+        // 否则“仅显示第三方”过滤会把它藏起来，正好帮了恶意软件的忙。
+        if (!string.IsNullOrWhiteSpace(exePath))
+        {
+            var inSystemDir = exePath.StartsWith(system32 + "\\", StringComparison.OrdinalIgnoreCase)
+                              || exePath.StartsWith(sysWow64 + "\\", StringComparison.OrdinalIgnoreCase);
+
+            if (inSystemDir &&
+                (Path.GetFileName(exePath).Equals("svchost.exe", StringComparison.OrdinalIgnoreCase)
+                 || File.Exists(exePath)))
+            {
+                return ("Microsoft Windows", true);
+            }
+
+            return InspectBinaryPublisher(exePath);
+        }
+
+        // 解析不出 exe 路径时（ImagePath 用变量/引号异常），退回原始 ImagePath 判定
+        if (expandedImg.Contains(@"\System32\", StringComparison.OrdinalIgnoreCase)
+            && expandedImg.Contains("svchost.exe", StringComparison.OrdinalIgnoreCase))
         {
             return ("Microsoft Windows", true);
         }
 
-        return InspectBinaryPublisher(exePath);
+        return ("未知", false);
     }
 }

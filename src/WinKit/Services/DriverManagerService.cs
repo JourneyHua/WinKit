@@ -101,17 +101,7 @@ public sealed class DriverManagerService
         Directory.CreateDirectory(DriverBackupRoot);
     }
 
-    private static Encoding GetPnpEncoding()
-    {
-        try
-        {
-            return Encoding.GetEncoding(CultureInfo.CurrentCulture.TextInfo.OEMCodePage);
-        }
-        catch (Exception)
-        {
-            return Encoding.Default;
-        }
-    }
+    private static Encoding GetPnpEncoding() => AppManagerService.GetOemEncoding();
 
     public (List<DriverPackageItem> Drivers, string? Error) LoadDrivers()
     {
@@ -134,9 +124,20 @@ public sealed class DriverManagerService
             };
 
             process.Start();
-            var output = process.StandardOutput.ReadToEnd();
-            var err = process.StandardError.ReadToEnd();
-            process.WaitForExit(15000);
+
+            // 必须先异步读流再等待退出：同步 ReadToEnd 会一直阻塞到进程退出，
+            // 后面的 WaitForExit(15000) 永远没机会生效；stdout/stderr 顺序读还有管道互锁风险。
+            var outTask = process.StandardOutput.ReadToEndAsync();
+            var errTask = process.StandardError.ReadToEndAsync();
+
+            if (!process.WaitForExit(15000))
+            {
+                try { process.Kill(true); } catch (Exception) { }
+                return (new List<DriverPackageItem>(), "pnputil /enum-drivers 超过 15 秒未返回，已终止");
+            }
+
+            var output = outTask.GetAwaiter().GetResult();
+            var err = errTask.GetAwaiter().GetResult();
 
             if (process.ExitCode != 0 && string.IsNullOrWhiteSpace(output))
                 return (new List<DriverPackageItem>(), string.IsNullOrWhiteSpace(err) ? "调用 pnputil 失败" : err);
@@ -291,15 +292,27 @@ public sealed class DriverManagerService
         var targetDir = Path.Combine(DriverBackupRoot, folderName);
         Directory.CreateDirectory(targetDir);
 
+        // 大驱动包（显卡可达 1 GB）导出很慢，给足 10 分钟；超时被强杀时目录里可能已有半截 .inf，
+        // 所以成功判定必须以退出码为准，不能只看目录里有没有 .inf。
         var (code, output, err) = await AppManagerService.RunProcessAsync(
             "pnputil.exe",
             $"/export-driver {driver.PublishedName} \"{targetDir}\"",
-            TimeSpan.FromMinutes(2));
+            TimeSpan.FromMinutes(10),
+            GetPnpEncoding());
 
-        if (code != 0 && !Directory.EnumerateFiles(targetDir, "*.inf", SearchOption.AllDirectories).Any())
+        var exportedInf = Directory.EnumerateFiles(targetDir, "*.inf", SearchOption.AllDirectories).ToList();
+
+        if (code != 0)
         {
             try { Directory.Delete(targetDir, true); } catch (Exception) { }
             return (false, "", string.IsNullOrWhiteSpace(err) ? output.Trim() : err.Trim());
+        }
+
+        // 退出码为 0 但一个 .inf 都没有，同样不能当作备份成功
+        if (exportedInf.Count == 0)
+        {
+            try { Directory.Delete(targetDir, true); } catch (Exception) { }
+            return (false, "", "pnputil 报告成功，但导出目录里没有 .inf 文件，已丢弃该备份以避免误判");
         }
 
         var meta = new DriverBackupEntry
@@ -328,7 +341,8 @@ public sealed class DriverManagerService
         var (code, output, err) = await AppManagerService.RunProcessAsync(
             "pnputil.exe",
             $"/delete-driver {driver.PublishedName} /uninstall{forceArg}",
-            TimeSpan.FromMinutes(2));
+            TimeSpan.FromMinutes(2),
+            GetPnpEncoding());
 
         var combined = $"{output}\n{err}".Trim();
         if (code == 0)

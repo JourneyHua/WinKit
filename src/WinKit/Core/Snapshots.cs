@@ -20,6 +20,12 @@ public sealed class SnapshotKey
     public bool Existed { get; set; }
     public List<SnapshotValue> Values { get; set; } = new();
     public List<SnapshotKey> Children { get; set; } = new();
+
+    /// <summary>读取时被拒绝：既不能当作“原本不存在”，也不能参与任何删除。</summary>
+    public bool CaptureFailed { get; set; }
+
+    /// <summary>子键数超过预算被截断：还原时不能做整树删除，否则会删掉没被记下来的子树。</summary>
+    public bool Truncated { get; set; }
 }
 
 public sealed class SnapshotFile
@@ -73,14 +79,22 @@ public static class SnapshotEngine
             SubKey = subKey
         };
 
-        using var key = Reg.Open(new RegPath(hive, subKey), false);
-        node.Existed = key is not null;
-        if (key is null) return node;
-
-        foreach (var valueName in key.GetValueNames())
+        var (key, status) = Reg.TryOpen(new RegPath(hive, subKey), false);
+        if (status == Reg.OpenStatus.Denied)
         {
-            var kind = key.GetValueKind(valueName);
-            var raw = key.GetValue(valueName, null, RegistryValueOptions.DoNotExpandEnvironmentNames);
+            // 明确区分“拒绝访问”：不能记成 Existed=false，否则撤销时会删掉真实存在的键
+            node.CaptureFailed = true;
+            return node;
+        }
+
+        using var owned = key;
+        node.Existed = status == Reg.OpenStatus.Ok;
+        if (owned is null) return node;
+
+        foreach (var valueName in owned.GetValueNames())
+        {
+            var kind = owned.GetValueKind(valueName);
+            var raw = owned.GetValue(valueName, null, RegistryValueOptions.DoNotExpandEnvironmentNames);
             node.Values.Add(new SnapshotValue
             {
                 Name = valueName,
@@ -89,9 +103,15 @@ public static class SnapshotEngine
             });
         }
 
-        foreach (var child in key.GetSubKeyNames())
+        foreach (var child in owned.GetSubKeyNames())
         {
-            if (!budget.TryTake()) break;
+            if (!budget.TryTake())
+            {
+                // 预算耗尽意味着快照不完整：标记出来，还原时禁止整树删除
+                node.Truncated = true;
+                break;
+            }
+
             node.Children.Add(Capture(hive, subKey + "\\" + child, budget));
         }
 
@@ -116,15 +136,32 @@ public static class SnapshotEngine
             case RegistryValueKind.Binary:
                 return JsonValue.Create(raw is byte[] bytes ? Convert.ToBase64String(bytes) : "");
             case RegistryValueKind.None:
-                return null;
+                // None 值也可能是带字节的（REG_NONE 存二进制），丢了就还原不回去
+                return raw is byte[] noneBytes && noneBytes.Length > 0
+                    ? JsonValue.Create(Convert.ToBase64String(noneBytes))
+                    : null;
             default:
+                // Unknown 等未覆盖类型会返回 byte[]；直接 ToString() 会得到 "System.Byte[]"
+                if (raw is byte[] unknownBytes) return JsonValue.Create(Convert.ToBase64String(unknownBytes));
                 return JsonValue.Create(raw?.ToString() ?? "");
         }
     }
 
+    private static HiveKind ParseHive(string? hive)
+    {
+        // 只接受明确的两种取值：手改/损坏的备份文件不能靠“非 HKCU 即 HKLM”落到系统区
+        if (string.Equals(hive, "HKCU", StringComparison.OrdinalIgnoreCase)) return HiveKind.CurrentUser;
+        if (string.Equals(hive, "HKLM", StringComparison.OrdinalIgnoreCase)) return HiveKind.LocalMachine;
+
+        throw new InvalidOperationException($"快照里的注册表根无效：'{hive}'，已拒绝还原以避免写错位置");
+    }
+
     public static void Restore(SnapshotKey node)
     {
-        var hive = node.Hive == "HKCU" ? HiveKind.CurrentUser : HiveKind.LocalMachine;
+        // 读取被拒的键，我们并不知道它原本长什么样，任何写入/删除都可能造成丢失
+        if (node.CaptureFailed) return;
+
+        var hive = ParseHive(node.Hive);
         var path = new RegPath(hive, node.SubKey);
 
         if (!node.Existed)
@@ -133,23 +170,40 @@ public static class SnapshotEngine
             return;
         }
 
-        Reg.DeleteTree(path);
+        if (node.Truncated)
+        {
+            // 截断的快照只记了部分子键，整树还原会把没记下来的子树删掉
+            throw new InvalidOperationException(
+                $"快照不完整（子键超过上限），已拒绝还原 {node.Hive}\\{node.SubKey}，请手工核对");
+        }
+
         using var key = Reg.Create(path);
-        if (key is null) return;
+        if (key is null)
+            throw new InvalidOperationException($"无法创建注册表键以还原：{node.Hive}\\{node.SubKey}");
+
+        // 差量还原：不删整键，保留原安全描述符，也不会把键短暂置为不存在
+        var snapshotValues = node.Values.Select(v => v.Name).ToHashSet(StringComparer.OrdinalIgnoreCase);
+        foreach (var existing in key.GetValueNames())
+        {
+            if (!snapshotValues.Contains(existing)) key.DeleteValue(existing, false);
+        }
 
         foreach (var value in node.Values)
         {
-            try
-            {
-                var kind = Enum.TryParse<RegistryValueKind>(value.Kind, out var parsed)
-                    ? parsed
-                    : RegistryValueKind.String;
-                key.SetValue(value.Name, FromJson(kind, value.Data), kind);
-            }
-            catch (Exception)
-            {
-                // 单个值写回失败不应阻断整体还原
-            }
+            var kind = Enum.TryParse<RegistryValueKind>(value.Kind, out var parsed)
+                ? parsed
+                : RegistryValueKind.String;
+            key.SetValue(value.Name, FromJson(kind, value.Data), kind);
+        }
+
+        var snapshotChildren = node.Children
+            .Select(c => c.SubKey[(c.SubKey.LastIndexOf('\\') + 1)..])
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
+
+        foreach (var existingChild in key.GetSubKeyNames())
+        {
+            if (!snapshotChildren.Contains(existingChild))
+                key.DeleteSubKeyTree(existingChild, false);
         }
 
         foreach (var child in node.Children)
@@ -174,8 +228,16 @@ public static class SnapshotEngine
                 var b64 = node.GetValue<string>();
                 return string.IsNullOrEmpty(b64) ? Array.Empty<byte>() : Convert.FromBase64String(b64);
             case RegistryValueKind.None:
-                return Array.Empty<byte>();
+                var noneB64 = node.GetValue<string>();
+                return string.IsNullOrEmpty(noneB64) ? Array.Empty<byte>() : Convert.FromBase64String(noneB64);
             default:
+                if (node is JsonValue jv && jv.TryGetValue<string>(out var text))
+                {
+                    // 未知类型按 Base64 记录，原样写回
+                    try { return Convert.FromBase64String(text); }
+                    catch (FormatException) { return text; }
+                }
+
                 return node.GetValue<string>();
         }
     }
@@ -253,17 +315,7 @@ public sealed class ChangeJournal
         Action action,
         IEnumerable<string>? trackedFiles = null)
     {
-        var snapshot = new OperationSnapshot { Title = title };
-        foreach (var (hive, subKey) in tracked.Distinct())
-            snapshot.Keys.Add(SnapshotEngine.Capture(hive, subKey));
-
-        if (trackedFiles is not null)
-        {
-            foreach (var file in trackedFiles.Where(f => !string.IsNullOrWhiteSpace(f)).Distinct(StringComparer.OrdinalIgnoreCase))
-                snapshot.Files.Add(SnapshotEngine.CaptureFile(file));
-        }
-
-        snapshot.KeyCount = SnapshotEngine.CountKeys(snapshot.Keys) + snapshot.Files.Count;
+        var snapshot = CaptureSnapshot(title, tracked, trackedFiles);
 
         try
         {
@@ -276,26 +328,109 @@ public sealed class ChangeJournal
             throw;
         }
 
-        _session.Add(snapshot);
-        Save(snapshot);
-        Changed?.Invoke($"已执行：{title}");
+        Commit(snapshot);
         return snapshot;
     }
 
-    private static void RestoreSnapshot(OperationSnapshot snapshot)
+    /// <summary>
+    /// 异步版本：schtasks / pnputil 这类需要 await 的写操作也要能进快照，
+    /// 否则界面上的「撤销上一步」对它们是空的。
+    /// </summary>
+    public async Task<OperationSnapshot> RecordAsync(
+        string title,
+        IEnumerable<(HiveKind Hive, string SubKey)> tracked,
+        Func<Task> action,
+        IEnumerable<string>? trackedFiles = null)
     {
+        var snapshot = CaptureSnapshot(title, tracked, trackedFiles);
+
+        try
+        {
+            await action();
+        }
+        catch
+        {
+            RestoreSnapshot(snapshot);
+            throw;
+        }
+
+        Commit(snapshot);
+        return snapshot;
+    }
+
+    private static OperationSnapshot CaptureSnapshot(
+        string title,
+        IEnumerable<(HiveKind Hive, string SubKey)> tracked,
+        IEnumerable<string>? trackedFiles)
+    {
+        var snapshot = new OperationSnapshot { Title = title };
+        foreach (var (hive, subKey) in tracked.Distinct())
+            snapshot.Keys.Add(SnapshotEngine.Capture(hive, subKey));
+
+        if (trackedFiles is not null)
+        {
+            foreach (var file in trackedFiles.Where(f => !string.IsNullOrWhiteSpace(f)).Distinct(StringComparer.OrdinalIgnoreCase))
+                snapshot.Files.Add(SnapshotEngine.CaptureFile(file));
+        }
+
+        snapshot.KeyCount = SnapshotEngine.CountKeys(snapshot.Keys) + snapshot.Files.Count;
+        return snapshot;
+    }
+
+    private void Commit(OperationSnapshot snapshot)
+    {
+        _session.Add(snapshot);
+        Save(snapshot);
+        Changed?.Invoke($"已执行：{snapshot.Title}");
+    }
+
+    private static List<string> RestoreSnapshot(OperationSnapshot snapshot)
+    {
+        var failures = new List<string>();
+
         foreach (var key in snapshot.Keys)
-            SnapshotEngine.Restore(key);
+        {
+            try
+            {
+                SnapshotEngine.Restore(key);
+            }
+            catch (Exception ex)
+            {
+                failures.Add($"{key.Hive}\\{key.SubKey}：{ex.Message}");
+            }
+        }
+
         foreach (var file in snapshot.Files)
-            SnapshotEngine.RestoreFile(file);
+        {
+            try
+            {
+                SnapshotEngine.RestoreFile(file);
+            }
+            catch (Exception ex)
+            {
+                failures.Add($"{file.Path}：{ex.Message}");
+            }
+        }
+
+        return failures;
     }
 
     public string? UndoLast()
     {
         if (_session.Count == 0) return null;
+
         var snapshot = _session[^1];
+
+        // 先还原、成功后才摘掉记录：还原抛异常时不能把撤销历史一起丢掉
+        var failures = RestoreSnapshot(snapshot);
+
+        if (failures.Count > 0)
+        {
+            Changed?.Invoke($"撤销「{snapshot.Title}」有 {failures.Count} 项未还原");
+            return $"撤销「{snapshot.Title}」时 {failures.Count} 项未能还原：\n" + string.Join("\n", failures);
+        }
+
         _session.RemoveAt(_session.Count - 1);
-        RestoreSnapshot(snapshot);
         TryDeleteFile(snapshot);
         Changed?.Invoke($"已撤销：{snapshot.Title}");
         return snapshot.Title;
@@ -309,14 +444,15 @@ public sealed class ChangeJournal
         for (var i = _session.Count - 1; i >= 0; i--)
         {
             // 单条快照写不回去不能中断整个回滚，否则会留下“半还原”且用户无从判断
-            try
+            var itemFailures = RestoreSnapshot(_session[i]);
+
+            if (itemFailures.Count == 0)
             {
-                RestoreSnapshot(_session[i]);
                 TryDeleteFile(_session[i]);
             }
-            catch (Exception ex)
+            else
             {
-                failures.Add($"{_session[i].Title}：{ex.Message}");
+                foreach (var f in itemFailures) failures.Add($"{_session[i].Title} → {f}");
             }
         }
 
@@ -410,7 +546,16 @@ public sealed class ChangeJournal
         var json = File.ReadAllText(filePath);
         var snapshot = JsonSerializer.Deserialize<OperationSnapshot>(json, JsonOptions)
                        ?? throw new InvalidOperationException("备份文件无法解析");
-        RestoreSnapshot(snapshot);
+
+        var failures = RestoreSnapshot(snapshot);
+
+        if (failures.Count > 0)
+        {
+            Changed?.Invoke($"从备份还原「{snapshot.Title}」有 {failures.Count} 项未还原");
+            throw new InvalidOperationException(
+                $"从备份还原「{snapshot.Title}」时 {failures.Count} 项未能还原：\n" + string.Join("\n", failures));
+        }
+
         Changed?.Invoke($"已从备份还原：{snapshot.Title}");
     }
 }

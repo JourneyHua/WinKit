@@ -24,7 +24,7 @@ public sealed class NetworkViewModel : ObservableObject, IModule
         DnsResults = new ObservableCollection<DnsResult>();
 
         RefreshCommand = new RelayCommand(() => _ = RefreshAsync());
-        FlushDnsCommand = new RelayCommand(FlushDns);
+        FlushDnsCommand = new RelayCommand(() => _ = RunRepairAsync("刷新 DNS 缓存", "ipconfig.exe", "/flushdns"));
         ResetWinsockCommand = new RelayCommand(ResetWinsock);
         ResetTcpCommand = new RelayCommand(ResetTcp);
         OpenNetworkSettingsCommand = new RelayCommand(() => Open("ms-settings:network"));
@@ -138,11 +138,27 @@ public sealed class NetworkViewModel : ObservableObject, IModule
         }
     }
 
-    private void FlushDns()
+    private async Task RunRepairAsync(string title, string fileName, params string[] args)
     {
-        var (ok, message) = _service.Run("ipconfig.exe", "/flushdns");
-        _status(ok ? "已刷新 DNS 解析缓存" : $"刷新失败：{message}");
-        if (!ok) MessageBox.Show(message, "WinKit", MessageBoxButton.OK, MessageBoxImage.Warning);
+        if (IsBusy) return;
+        IsBusy = true;
+        _status($"正在执行：{title}…");
+
+        try
+        {
+            var (ok, message) = await _service.RunAsync(fileName, args);
+            _status(ok ? $"{title} 完成" : $"{title} 失败：{message}");
+            if (!ok) MessageBox.Show(message, "WinKit", MessageBoxButton.OK, MessageBoxImage.Warning);
+        }
+        catch (Exception ex)
+        {
+            _status($"{title} 失败：{ex.Message}");
+            MessageBox.Show(ex.Message, "WinKit", MessageBoxButton.OK, MessageBoxImage.Warning);
+        }
+        finally
+        {
+            IsBusy = false;
+        }
     }
 
     private void ResetWinsock()
@@ -154,9 +170,7 @@ public sealed class NetworkViewModel : ObservableObject, IModule
 
         if (confirm != MessageBoxResult.OK) return;
 
-        var (ok, message) = _service.Run("netsh.exe", "winsock", "reset");
-        _status(ok ? "Winsock 已重置，重启后生效" : $"重置失败：{message}");
-        if (!ok) MessageBox.Show(message, "WinKit", MessageBoxButton.OK, MessageBoxImage.Warning);
+        _ = RunRepairAsync("重置 Winsock", "netsh.exe", "winsock", "reset");
     }
 
     private void ResetTcp()
@@ -168,9 +182,7 @@ public sealed class NetworkViewModel : ObservableObject, IModule
 
         if (confirm != MessageBoxResult.OK) return;
 
-        var (ok, message) = _service.Run("netsh.exe", "int", "ip", "reset");
-        _status(ok ? "TCP/IP 已重置，重启后生效" : $"重置失败：{message}");
-        if (!ok) MessageBox.Show(message, "WinKit", MessageBoxButton.OK, MessageBoxImage.Warning);
+        _ = RunRepairAsync("重置 TCP/IP", "netsh.exe", "int", "ip", "reset");
     }
 
     private void OpenHosts()
