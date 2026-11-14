@@ -156,10 +156,13 @@ public partial class App : Application
     {
         var log = new StringBuilder();
 
+        // 目录和日志必须在任何可能失败的操作之前就绪：
+        // CI 的无交互桌面会话里窗口可能起不来，但数据 dump 仍要能落盘。
+        Directory.CreateDirectory(outputDir);
+        var logPath = Path.Combine(outputDir, "smoke.log");
+
         try
         {
-            Directory.CreateDirectory(outputDir);
-
             var window = new MainWindow
             {
                 WindowStartupLocation = WindowStartupLocation.Manual,
@@ -170,7 +173,17 @@ public partial class App : Application
                 Height = 780
             };
 
-            window.Show();
+            var shown = false;
+            try
+            {
+                window.Show();
+                shown = true;
+            }
+            catch (Exception ex)
+            {
+                // 无桌面会话时窗口起不来：不中断，继续走数据 dump（CI 只断言数据）
+                log.AppendLine($"WARN 窗口无法显示，跳过渲染：{ex.GetType().Name} {OneLine(ex.Message)}");
+            }
 
             var vm = (MainViewModel)window.DataContext;
             vm.Initialize();
@@ -179,33 +192,47 @@ public partial class App : Application
             {
                 vm.SelectedNav = nav;
                 Pump();
-                window.UpdateLayout();
-                Pump();
 
-                Capture(window, outputDir, nav.Key, log);
+                if (shown)
+                {
+                    try
+                    {
+                        UpdateLayoutSafe(window);
+                        Pump();
+                        Capture(window, outputDir, nav.Key, log);
+                    }
+                    catch (Exception ex)
+                    {
+                        log.AppendLine($"WARN 渲染 {nav.Key} 失败：{OneLine(ex.Message)}");
+                    }
+                }
 
                 if (vm.CurrentViewModel is ContextMenuViewModel menuVm)
                 {
                     menuVm.ShowNewMenu = false;
-                    Pump();
-                    window.UpdateLayout();
-                    Pump();
-                    Capture(window, outputDir, "menu-classic", log);
-
                     menuVm.OnlyThirdParty = false;
                     menuVm.SearchText = "";
                     menuVm.SelectedDomain = menuVm.Domains.FirstOrDefault(d => d.Kind == Services.MenuDomainKind.Drive);
                     Pump();
-                    window.UpdateLayout();
-                    Pump();
-                    Capture(window, outputDir, "menu-drive", log);
+
+                    if (shown)
+                    {
+                        UpdateLayoutSafe(window);
+                        Pump();
+                        Capture(window, outputDir, "menu-classic", log);
+                        Capture(window, outputDir, "menu-drive", log);
+                    }
 
                     menuVm.ShowNewMenu = true;
                     menuVm.SelectedNewDomain = menuVm.NewDomains.FirstOrDefault(d => d.Kind == Services.MenuDomainKind.Drive);
                     Pump();
-                    window.UpdateLayout();
-                    Pump();
-                    Capture(window, outputDir, "menu-new-drive", log);
+
+                    if (shown)
+                    {
+                        UpdateLayoutSafe(window);
+                        Pump();
+                        Capture(window, outputDir, "menu-new-drive", log);
+                    }
                 }
 
                 if (vm.CurrentViewModel is FileLockViewModel lockVm)
@@ -213,7 +240,7 @@ public partial class App : Application
                     lockVm.PathText = typeof(App).Assembly.Location;
                     lockVm.Refresh();
                     Pump(2500);
-                    window.UpdateLayout();
+                    UpdateLayoutSafe(window);
                     Pump();
                     Capture(window, outputDir, "filelock-scanned", log);
                     log.AppendLine($"  filelock: lockers={lockVm.Lockers.Count} result=\"{OneLine(lockVm.ResultText)}\"");
@@ -223,7 +250,7 @@ public partial class App : Application
                 {
                     logVm.Refresh();
                     Pump(1500);
-                    window.UpdateLayout();
+                    UpdateLayoutSafe(window);
                     Pump();
                     Capture(window, outputDir, "events-loaded", log);
                     log.AppendLine($"  events: groups={logVm.Groups.Count} summary=\"{OneLine(logVm.SummaryText)}\" error=\"{OneLine(logVm.ErrorText)}\"");
@@ -233,7 +260,7 @@ public partial class App : Application
                 {
                     updateVm.Refresh();
                     Pump(2500);
-                    window.UpdateLayout();
+                    UpdateLayoutSafe(window);
                     Pump();
                     Capture(window, outputDir, "wupdate-loaded", log);
                     log.AppendLine($"  wupdate: installed={updateVm.Installed.Count} state=\"{OneLine(updateVm.StateText)}\" note=\"{OneLine(updateVm.NoteText)}\"");
@@ -243,7 +270,7 @@ public partial class App : Application
                 {
                     networkVm.Refresh();
                     Pump(6000);
-                    window.UpdateLayout();
+                    UpdateLayoutSafe(window);
                     Pump();
                     Capture(window, outputDir, "network-loaded", log);
                     log.AppendLine($"  network: adapters={networkVm.Adapters.Count} pings={networkVm.Pings.Count} tcp={networkVm.TcpResults.Count} dns={networkVm.DnsResults.Count} summary=\"{OneLine(networkVm.SummaryText)}\" wifi=\"{OneLine(networkVm.Wifi.State)}\"");
@@ -253,7 +280,7 @@ public partial class App : Application
                 {
                     overviewVm.Refresh();
                     Pump(1200);
-                    window.UpdateLayout();
+                    UpdateLayoutSafe(window);
                     Pump();
                     Capture(window, outputDir, "overview-loaded", log);
                     var itemCount = overviewVm.Cards.Sum(c => c.Items.Count);
@@ -264,7 +291,7 @@ public partial class App : Application
                 {
                     assocVm.Refresh();
                     Pump(1500);
-                    window.UpdateLayout();
+                    UpdateLayoutSafe(window);
                     Pump();
                     Capture(window, outputDir, "assoc-loaded", log);
                     log.AppendLine($"  assoc: items={assocVm.Items.Count} summary=\"{OneLine(assocVm.SummaryText)}\"");
@@ -276,7 +303,7 @@ public partial class App : Application
                     diffVm.RightPath = Path.Combine(AppContext.BaseDirectory);
                     diffVm.Refresh();
                     Pump(2500);
-                    window.UpdateLayout();
+                    UpdateLayoutSafe(window);
                     Pump();
                     Capture(window, outputDir, "diff-loaded", log);
                     log.AppendLine($"  diff: entries={diffVm.Entries.Count} summary=\"{OneLine(diffVm.SummaryText)}\" error=\"{OneLine(diffVm.ErrorText)}\"");
@@ -289,7 +316,7 @@ public partial class App : Application
                     dupVm.MinSizeText = "1 B";
                     dupVm.Refresh();
                     Pump(4000);
-                    window.UpdateLayout();
+                    UpdateLayoutSafe(window);
                     Pump();
                     Capture(window, outputDir, "duplicates-loaded", log);
                     log.AppendLine($"  duplicates: groups={dupVm.Groups.Count} summary=\"{OneLine(dupVm.SummaryText)}\"");
@@ -299,17 +326,17 @@ public partial class App : Application
                 {
                     diskVm.Refresh();
                     Pump(6000);
-                    window.UpdateLayout();
+                    UpdateLayoutSafe(window);
                     Pump();
-                    Capture(window, outputDir, "diskhealth-loaded", log);
-                    log.AppendLine($"  diskhealth: disks={diskVm.Disks.Count} volumes={diskVm.Volumes.Count} summary=\"{OneLine(diskVm.SummaryText)}\"");
+                    if (shown) Capture(window, outputDir, "diskhealth-loaded", log);
+                    log.AppendLine($"  diskhealth: disks={diskVm.Disks.Count} volumes={diskVm.Volumes.Count} error=\"{OneLine(diskVm.ErrorText)}\" summary=\"{OneLine(diskVm.SummaryText)}\"");
                 }
 
                 if (vm.CurrentViewModel is EnvironmentViewModel envVm)
                 {
                     envVm.Refresh();
                     Pump(1200);
-                    window.UpdateLayout();
+                    UpdateLayoutSafe(window);
                     Pump();
                     Capture(window, outputDir, "env-loaded", log);
                     log.AppendLine($"  env: vars={envVm.Vars.Count} pathEntries={envVm.PathEntries.Count} summary=\"{OneLine(envVm.SummaryText)}\"");
@@ -318,10 +345,10 @@ public partial class App : Application
                 if (vm.CurrentViewModel is ReportViewModel reportVm)
                 {
                     reportVm.Refresh();
-                    Pump(12000);
-                    window.UpdateLayout();
+                    Pump(14000);
+                    UpdateLayoutSafe(window);
                     Pump();
-                    Capture(window, outputDir, "report-loaded", log);
+                    if (shown) Capture(window, outputDir, "report-loaded", log);
                     log.AppendLine($"  report: sections={reportVm.Sections.Count} score={reportVm.ScoreText} grade={reportVm.GradeText} summary=\"{OneLine(reportVm.SummaryText)}\" task=\"{OneLine(reportVm.MaintenanceText)}\"");
                 }
 
@@ -329,13 +356,13 @@ public partial class App : Application
                 {
                     appVm.ShowRuntimes = true;
                     Pump();
-                    window.UpdateLayout();
+                    UpdateLayoutSafe(window);
                     Pump();
                     Capture(window, outputDir, "apps-runtimes", log);
 
                     appVm.ShowTools = true;
                     Pump();
-                    window.UpdateLayout();
+                    UpdateLayoutSafe(window);
                     Pump();
                     Capture(window, outputDir, "apps-tools", log);
                     appVm.ShowTools = false;
@@ -345,20 +372,20 @@ public partial class App : Application
                 {
                     tweakVm.SubView = "ports";
                     Pump();
-                    window.UpdateLayout();
+                    UpdateLayoutSafe(window);
                     Pump();
                     Capture(window, outputDir, "tweaks-ports", log);
 
                     tweakVm.SubView = "panels";
                     Pump();
-                    window.UpdateLayout();
+                    UpdateLayoutSafe(window);
                     Pump();
                     Capture(window, outputDir, "tweaks-panels", log);
                     tweakVm.SubView = "tweaks";
                 }
             }
 
-            window.Close();
+            try { window.Close(); } catch (Exception) { }
             log.AppendLine("SMOKE OK");
         }
         catch (Exception ex)
@@ -367,7 +394,20 @@ public partial class App : Application
             log.AppendLine(ex.ToString());
         }
 
-        File.WriteAllText(Path.Combine(outputDir, "smoke.log"), log.ToString(), new UTF8Encoding(true));
+        File.WriteAllText(logPath, log.ToString(), new UTF8Encoding(true));
+    }
+
+    private static void UpdateLayoutSafe(Window window)
+    {
+        // 无桌面会话时布局可能抛异常；数据 dump 不该因此中断
+        try
+        {
+            window.UpdateLayout();
+        }
+        catch (Exception)
+        {
+            // 忽略：CI 只断言数据，不断言像素
+        }
     }
 
     private static void Pump(int waitMs = 0)

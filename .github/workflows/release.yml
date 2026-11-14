@@ -47,9 +47,27 @@ jobs:
           $out = Join-Path $PWD "smoke-out"
           Remove-Item $out -Recurse -Force -ErrorAction SilentlyContinue
 
-          & "publish/preview/WinKit.exe" --smoke $out
+          $exe = Join-Path $PWD "publish/preview/WinKit.exe"
+          if (-not (Test-Path $exe)) { throw "找不到预览版 exe：$exe" }
+
+          Write-Host "运行 $exe --smoke $out"
+          $proc = Start-Process -FilePath $exe -ArgumentList '--smoke', "`"$out`"" -PassThru -Wait `
+            -RedirectStandardOutput "$PWD/smoke.stdout.txt" -RedirectStandardError "$PWD/smoke.stderr.txt"
+          Write-Host "退出码：$($proc.ExitCode)"
+
+          foreach ($f in @("$PWD/smoke.stdout.txt", "$PWD/smoke.stderr.txt")) {
+            if ((Test-Path $f) -and (Get-Item $f).Length -gt 0) {
+              Write-Host "---- $(Split-Path $f -Leaf) ----"
+              Get-Content $f | Write-Host
+            }
+          }
+
           $logPath = Join-Path $out "smoke.log"
-          if (-not (Test-Path $logPath)) { throw "smoke.log 没有生成" }
+          if (-not (Test-Path $logPath)) {
+            Write-Host "输出目录内容："
+            if (Test-Path $out) { Get-ChildItem $out | Write-Host } else { Write-Host "(目录不存在)" }
+            throw "smoke.log 没有生成"
+          }
 
           $log = Get-Content $logPath -Raw
           $failures = @()
@@ -94,7 +112,10 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: smoke-log
-          path: smoke-out/smoke.log
+          path: |
+            smoke-out/smoke.log
+            smoke.stdout.txt
+            smoke.stderr.txt
           if-no-files-found: warn
 
       - name: Publish (framework-dependent)
