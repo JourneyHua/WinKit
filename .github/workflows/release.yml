@@ -78,7 +78,9 @@ jobs:
           $okCount = ([regex]::Matches($log, '(?m)^OK ')).Count
           if ($okCount -lt 21) { $failures += "只有 $okCount 个模块渲染成功，期望至少 21 个" }
 
-          # 关键模块必须真的读到数据，而不只是"渲染出来了"
+          # 关键模块必须真的读到数据，而不只是"渲染出来了"。
+          # 阈值取「任何正常机器都必然满足」的下限：CI runner 只有 1~2 个网卡、3 条 PATH，
+          # 环境与本地开发机差别很大，卡太死会变成假失败。
           function Assert-Data($pattern, $name, $min) {
             $m = [regex]::Match($log, $pattern)
             if (-not $m.Success) { $script:failures += "$name 缺失数据行"; return }
@@ -89,15 +91,16 @@ jobs:
           }
 
           Assert-Data 'overview: cards=(\d+)' '系统概览' 4
-          Assert-Data 'assoc: items=(\d+)' '默认打开方式' 100
+          Assert-Data 'assoc: items=(\d+)' '默认打开方式' 50
           Assert-Data 'diff: entries=(\d+)' '文件对比' 1
-          Assert-Data 'env: vars=(\d+)' '环境变量' 5
+          Assert-Data 'env: vars=(\d+)' '环境变量' 10
           Assert-Data 'report: sections=(\d+)' '体检报告' 5
-          Assert-Data 'diskhealth: volumes=(\d+)' '磁盘健康' 1
+          Assert-Data 'diskhealth: disks=(\d+)' '磁盘健康' 1
           Assert-Data 'network: adapters=(\d+)' '网络诊断' 1
           Assert-Data 'events: groups=(\d+)' '事件日志' 0
           Assert-Data 'wupdate: installed=(\d+)' 'Windows 更新' 0
           Assert-Data 'filelock: lockers=(\d+)' '文件占用' 0
+          Assert-Data 'duplicates: groups=(\d+)' '重复文件' 0
 
           if ($failures.Count -gt 0) {
             Write-Host "---- smoke.log ----"
