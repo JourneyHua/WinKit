@@ -465,6 +465,109 @@ internal static class Program
         Check("非法 Hive 的快照被拒绝还原", badHiveRefused);
         Check("删除不存在的键视为成功", Reg.DeleteTree(RegPath.Hkcu(@"Software\WinKitSelfTest\NoSuchKey")));
 
+        // ---------- 文件对比 / 重复文件 / Scoop 解析（纯文件系统，低完整性也能跑） ----------
+        var workDir = Path.Combine(Path.GetTempPath(), "winkit_selftest_" + Guid.NewGuid().ToString("N")[..8]);
+        var leftDir = Path.Combine(workDir, "left");
+        var rightDir = Path.Combine(workDir, "right");
+        Directory.CreateDirectory(leftDir);
+        Directory.CreateDirectory(rightDir);
+
+        try
+        {
+            File.WriteAllText(Path.Combine(leftDir, "same.txt"), "same-content");
+            File.WriteAllText(Path.Combine(rightDir, "same.txt"), "same-content");
+            File.SetLastWriteTime(Path.Combine(leftDir, "same.txt"), new DateTime(2026, 1, 1, 0, 0, 0));
+            File.SetLastWriteTime(Path.Combine(rightDir, "same.txt"), new DateTime(2026, 1, 1, 0, 0, 0));
+
+            File.WriteAllText(Path.Combine(leftDir, "changed.txt"), "AAAA");
+            File.WriteAllText(Path.Combine(rightDir, "changed.txt"), "BBBBBB");
+
+            File.WriteAllText(Path.Combine(leftDir, "only-left.txt"), "left");
+            File.WriteAllText(Path.Combine(rightDir, "only-right.txt"), "right");
+
+            var (diffEntries, diffError) = new DiffService().Compare(leftDir, rightDir);
+            Check("文件夹对比无错误", diffError is null, diffError ?? "");
+            Check("对比识别相同文件",
+                diffEntries.Any(e => e.RelativePath == "same.txt" && e.Kind == DiffKind.Same));
+            Check("对比识别内容不同",
+                diffEntries.Any(e => e.RelativePath == "changed.txt" && e.Kind == DiffKind.ContentDiffers));
+            Check("对比识别仅左侧",
+                diffEntries.Any(e => e.RelativePath == "only-left.txt" && e.Kind == DiffKind.OnlyLeft));
+            Check("对比识别仅右侧",
+                diffEntries.Any(e => e.RelativePath == "only-right.txt" && e.Kind == DiffKind.OnlyRight));
+
+            var (_, mixedError) = new DiffService().Compare(leftDir, Path.Combine(rightDir, "same.txt"));
+            Check("文件与文件夹混比被拒绝", mixedError is not null);
+
+            // 重复文件：同内容必进组，同大小不同内容不能进组
+            var dupDir = Path.Combine(workDir, "dup");
+            Directory.CreateDirectory(Path.Combine(dupDir, "sub"));
+            File.WriteAllText(Path.Combine(dupDir, "a.txt"), "duplicate-payload");
+            File.WriteAllText(Path.Combine(dupDir, "sub", "b.txt"), "duplicate-payload");
+            File.WriteAllText(Path.Combine(dupDir, "c.txt"), "duplicate-payloaX"); // 同长度不同内容
+            File.WriteAllText(Path.Combine(dupDir, "unique.txt"), "only-one");
+
+            var (dupGroups, dupError) = new DuplicateFinderService().Find(new[] { dupDir }, minSize: 1);
+            Check("重复检测无错误", dupError is null, dupError ?? "");
+            Check("重复检测只认内容相同（同大小不同内容不算）",
+                dupGroups.Count == 1 && dupGroups[0].Count == 2,
+                $"实际 {dupGroups.Count} 组");
+            Check("重复检测识别跨子目录",
+                dupGroups.Count == 1 && dupGroups[0].Files.Any(f => f.FullPath.Contains("sub")));
+            Check("重复检测统计可省空间",
+                dupGroups.Count == 1 && dupGroups[0].WastedBytes == "duplicate-payload".Length);
+
+            // Scoop 解析：两种清单文件名、bucket 回填、无清单时不虚报可升级
+            var scoopRoot = Path.Combine(workDir, "scoop");
+            var appsDir = Path.Combine(scoopRoot, "apps");
+            var bucketDir = Path.Combine(scoopRoot, "buckets", "main", "bucket");
+            Directory.CreateDirectory(bucketDir);
+
+            void MakeApp(string name, string fileName, string version, string? installBucket = null)
+            {
+                var dir = Path.Combine(appsDir, name, "current");
+                Directory.CreateDirectory(dir);
+                File.WriteAllText(Path.Combine(dir, fileName),
+                    $$"""{"version":"{{version}}"{{(installBucket is null ? "" : $",\"bucket\":\"{installBucket}\"")}}}""");
+            }
+
+            MakeApp("newstyle", "scoop-manifest.json", "1.0");
+            MakeApp("oldstyle", "manifest.json", "2.0");
+            MakeApp("bucketless", "scoop-manifest.json", "3.0");
+
+            // bucket 清单给出更高版本 → 应判定可升级
+            File.WriteAllText(Path.Combine(bucketDir, "newstyle.json"), """{"version":"1.1"}""");
+            File.WriteAllText(Path.Combine(bucketDir, "oldstyle.json"), """{"version":"2.0"}""");
+            File.WriteAllText(Path.Combine(bucketDir, "bucketless.json"), """{"version":"3.0"}""");
+
+            // scoop 自身没有清单
+            Directory.CreateDirectory(Path.Combine(appsDir, "selfboot", "current"));
+
+            var scoopPackages = new ScoopService(new[] { scoopRoot }).Load();
+            var newstyle = scoopPackages.FirstOrDefault(p => p.Name == "newstyle");
+            var oldstyle = scoopPackages.FirstOrDefault(p => p.Name == "oldstyle");
+            var bucketless = scoopPackages.FirstOrDefault(p => p.Name == "bucketless");
+            var selfboot = scoopPackages.FirstOrDefault(p => p.Name == "selfboot");
+
+            Check("Scoop 能读 scoop-manifest.json", newstyle?.Version == "1.0");
+            Check("Scoop 能读 manifest.json", oldstyle?.Version == "2.0");
+            Check("Scoop 识别可升级", newstyle?.HasUpdate == true && newstyle.LatestVersion == "1.1");
+            Check("Scoop 同版本不算可升级", oldstyle?.HasUpdate == false);
+            Check("Scoop bucket 从清单回填", bucketless?.Bucket == "main", $"实际 {bucketless?.Bucket}");
+            Check("Scoop 自身无清单时不虚报升级",
+                selfboot is not null && !selfboot.HasUpdate && selfboot.Version == "版本未知");
+
+            // 文件关联：只验证能读出数据且字段自洽
+            var assocItems = new FileAssocService(journal).Load();
+            Check("文件关联可读取", assocItems.Count > 0);
+            Check("文件关联字段自洽",
+                assocItems.All(i => i.Extension.StartsWith('.') && !string.IsNullOrWhiteSpace(i.ProgId)));
+        }
+        finally
+        {
+            try { Directory.Delete(workDir, true); } catch (Exception) { }
+        }
+
         Console.WriteLine();
         Console.WriteLine(failures == 0
             ? $"全部通过（跳过 {skipped} 项）"

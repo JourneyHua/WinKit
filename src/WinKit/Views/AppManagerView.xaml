@@ -59,6 +59,9 @@
                     <ToggleButton Content="商店与打包" Style="{StaticResource Chip}" Margin="0,0,6,0"
                                   IsChecked="{Binding IsStoreSelected, Mode=OneWay}"
                                   Command="{Binding FilterStoreCommand}" />
+                    <ToggleButton Content="Scoop 包" Style="{StaticResource Chip}" Margin="0,0,6,0"
+                                  IsChecked="{Binding IsScoopSelected, Mode=OneWay}"
+                                  Command="{Binding FilterScoopCommand}" />
                     <ToggleButton Content="仅看可更新" Style="{StaticResource Chip}"
                                   IsChecked="{Binding OnlyUpdatable, Mode=TwoWay}" />
                 </StackPanel>

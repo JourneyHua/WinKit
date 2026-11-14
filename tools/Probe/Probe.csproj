@@ -27,6 +27,10 @@
     <Compile Include="..\..\src\WinKit\Services\NavPaneService.cs" Link="Services\NavPaneService.cs" />
     <Compile Include="..\..\src\WinKit\Services\UninstallService.cs" Link="Services\UninstallService.cs" />
     <Compile Include="..\..\src\WinKit\Services\AppManagerService.cs" Link="Services\AppManagerService.cs" />
+    <Compile Include="..\..\src\WinKit\Services\ScoopService.cs" Link="Services\ScoopService.cs" />
+    <Compile Include="..\..\src\WinKit\Services\FileAssocService.cs" Link="Services\FileAssocService.cs" />
+    <Compile Include="..\..\src\WinKit\Services\DiffService.cs" Link="Services\DiffService.cs" />
+    <Compile Include="..\..\src\WinKit\Services\DuplicateFinderService.cs" Link="Services\DuplicateFinderService.cs" />
     <Compile Include="..\..\src\WinKit\Services\RuntimeCheckService.cs" Link="Services\RuntimeCheckService.cs" />
     <Compile Include="..\..\src\WinKit\Services\SystemToolCatalogService.cs" Link="Services\SystemToolCatalogService.cs" />
     <Compile Include="..\..\src\WinKit\Services\StartupServiceManager.cs" Link="Services\StartupServiceManager.cs" />

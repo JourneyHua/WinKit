@@ -223,6 +223,41 @@ public partial class App : Application
                     log.AppendLine($"  overview: cards={overviewVm.Cards.Count} items={itemCount} summary=\"{OneLine(overviewVm.SummaryText)}\"");
                 }
 
+                if (vm.CurrentViewModel is FileAssocViewModel assocVm)
+                {
+                    assocVm.Refresh();
+                    Pump(1500);
+                    window.UpdateLayout();
+                    Pump();
+                    Capture(window, outputDir, "assoc-loaded", log);
+                    log.AppendLine($"  assoc: items={assocVm.Items.Count} summary=\"{OneLine(assocVm.SummaryText)}\"");
+                }
+
+                if (vm.CurrentViewModel is DiffViewModel diffVm)
+                {
+                    diffVm.LeftPath = Path.Combine(AppContext.BaseDirectory);
+                    diffVm.RightPath = Path.Combine(AppContext.BaseDirectory);
+                    diffVm.Refresh();
+                    Pump(2500);
+                    window.UpdateLayout();
+                    Pump();
+                    Capture(window, outputDir, "diff-loaded", log);
+                    log.AppendLine($"  diff: entries={diffVm.Entries.Count} summary=\"{OneLine(diffVm.SummaryText)}\" error=\"{OneLine(diffVm.ErrorText)}\"");
+                }
+
+                if (vm.CurrentViewModel is DuplicateViewModel dupVm)
+                {
+                    dupVm.Roots.Clear();
+                    dupVm.Roots.Add(Path.Combine(AppContext.BaseDirectory));
+                    dupVm.MinSizeText = "1 B";
+                    dupVm.Refresh();
+                    Pump(4000);
+                    window.UpdateLayout();
+                    Pump();
+                    Capture(window, outputDir, "duplicates-loaded", log);
+                    log.AppendLine($"  duplicates: groups={dupVm.Groups.Count} summary=\"{OneLine(dupVm.SummaryText)}\"");
+                }
+
                 if (vm.CurrentViewModel is AppManagerViewModel appVm)
                 {
                     appVm.ShowRuntimes = true;

@@ -141,6 +141,30 @@ public sealed class MainViewModel : ObservableObject
             },
             new()
             {
+                Key = "diff",
+                Title = "文件与文件夹对比",
+                Subtitle = "按大小/时间/哈希对比两个目录，列出仅左侧、仅右侧、内容不同与更新方向",
+                AccentBrush = new System.Windows.Media.SolidColorBrush(System.Windows.Media.Color.FromRgb(0x7A, 0x5C, 0x1E)),
+                Factory = () => new DiffViewModel(SetStatus, SetBusy)
+            },
+            new()
+            {
+                Key = "duplicates",
+                Title = "重复文件检测",
+                Subtitle = "大小 → 头部 64KB → 全文件 SHA-256 三级校验，清理一律进回收站",
+                AccentBrush = new System.Windows.Media.SolidColorBrush(System.Windows.Media.Color.FromRgb(0x8A, 0x3F, 0x8A)),
+                Factory = () => new DuplicateViewModel(SetStatus, SetBusy)
+            },
+            new()
+            {
+                Key = "assoc",
+                Title = "默认打开方式",
+                Subtitle = "查看每个扩展名关联到哪个程序，一键调起系统设置或「打开方式」，清理失效关联",
+                AccentBrush = new System.Windows.Media.SolidColorBrush(System.Windows.Media.Color.FromRgb(0x1E, 0x6B, 0x52)),
+                Factory = () => new FileAssocViewModel(_journal, SetStatus, SetBusy)
+            },
+            new()
+            {
                 Key = "registry",
                 Title = "注册表管理",
                 Subtitle = "按分类体检，只清理可证明无效的项",

@@ -8,7 +8,8 @@ namespace WinKit.Services;
 public enum AppSourceKind
 {
     Desktop,
-    Store
+    Store,
+    Scoop
 }
 
 public sealed class InstalledAppItem : ObservableObject
@@ -36,7 +37,16 @@ public sealed class InstalledAppItem : ObservableObject
             ? $"{InstallDate[..4]}-{InstallDate[4..6]}-{InstallDate[6..8]}"
             : string.IsNullOrWhiteSpace(InstallDate) ? "—" : InstallDate;
 
-    public string KindText => Kind == AppSourceKind.Desktop ? "桌面软件" : "商店/打包";
+    public string KindText => Kind switch
+    {
+        AppSourceKind.Desktop => "桌面软件",
+        AppSourceKind.Store => "商店/打包",
+        AppSourceKind.Scoop => "Scoop 包",
+        _ => "未知"
+    };
+
+    /// <summary>Scoop 包名（scoop update/uninstall 用），非 Scoop 应用为空。</summary>
+    public string ScoopName { get; init; } = "";
 
     public string Version
     {
@@ -249,8 +259,43 @@ public sealed class AppManagerService
             }
         }
 
+        // Scoop 包：直接读本地目录，已装版本 vs 本地 bucket 清单（离线，不跑 scoop 命令）
+        try
+        {
+            var scoop = new ScoopService();
+            foreach (var pkg in scoop.Load())
+            {
+                // 同名桌面软件已列出时标注来源即可，避免一行两遍
+                var existing = list.FirstOrDefault(a =>
+                    a.Name.Equals(pkg.Name, StringComparison.OrdinalIgnoreCase));
+
+                if (existing is not null)
+                {
+                    // 桌面软件的版本信息来自 Uninstall 登记，通常比 scoop 目录新，保留原行
+                    continue;
+                }
+
+                list.Add(new InstalledAppItem
+                {
+                    Id = $"scoop:{pkg.Name}",
+                    Name = pkg.Name,
+                    Publisher = pkg.Bucket,
+                    Version = pkg.Version,
+                    LatestVersion = pkg.HasUpdate ? pkg.LatestVersion : "",
+                    Kind = AppSourceKind.Scoop,
+                    ScoopName = pkg.Name,
+                    InstallLocation = pkg.InstallPath,
+                    SizeText = "Scoop 包"
+                });
+            }
+        }
+        catch (Exception)
+        {
+            // Scoop 未安装或目录异常时不影响其它来源
+        }
+
         return list
-            .OrderBy(a => a.Kind == AppSourceKind.Desktop ? 0 : 1)
+            .OrderBy(a => a.Kind == AppSourceKind.Desktop ? 0 : a.Kind == AppSourceKind.Scoop ? 1 : 2)
             .ThenBy(a => a.Name, StringComparer.CurrentCulture)
             .ToList();
     }
@@ -331,6 +376,26 @@ public sealed class AppManagerService
                 });
                 matched++;
             }
+        }
+
+        // Scoop：用本地 bucket 清单比对版本（离线，不调用 scoop.exe；先 scoop update 才能拿到最新清单）
+        try
+        {
+            foreach (var pkg in new ScoopService().Load().Where(p => p.HasUpdate))
+            {
+                var target = apps.FirstOrDefault(a =>
+                    a.Kind == AppSourceKind.Scoop
+                    && a.ScoopName.Equals(pkg.Name, StringComparison.OrdinalIgnoreCase));
+
+                if (target is null) continue;
+
+                target.LatestVersion = pkg.LatestVersion;
+                matched++;
+            }
+        }
+        catch (Exception)
+        {
+            // Scoop 读取失败不影响 winget 结果
         }
 
         return (matched, upgrades, null);
@@ -419,6 +484,25 @@ public sealed class AppManagerService
         InstalledAppItem app,
         Action<string>? progress = null)
     {
+        // Scoop 包走 scoop update，不能交给 winget
+        if (app.Kind == AppSourceKind.Scoop)
+        {
+            if (!ScoopService.CommandAvailable())
+                return (false, "找不到 scoop.cmd，请确认 Scoop 已安装并加入 PATH");
+
+            var name = string.IsNullOrWhiteSpace(app.ScoopName) ? app.Name : app.ScoopName;
+
+            // 不指定 App 的 scoop update 会顺带更新 bucket 清单；这里只更新目标包，
+            // 用 scoop update <name> 即可（scoop 自己会刷新 bucket）
+            progress?.Invoke($"正在通过 scoop 更新「{app.Name}」→ {app.LatestVersion}…");
+            var (ok, message) = await new ScoopService().RunScoopAsync($"update {name}", TimeSpan.FromMinutes(10));
+
+            if (!ok) return (false, $"scoop 更新「{app.Name}」失败：{message}");
+
+            // scoop 成功时输出里通常有 'was installed successfully'
+            return (true, $"「{app.Name}」已更新至 {app.LatestVersion}");
+        }
+
         var selector = !string.IsNullOrWhiteSpace(app.WingetId)
             ? $"--id \"{app.WingetId}\" --exact"
             : $"--name \"{app.Name}\"";

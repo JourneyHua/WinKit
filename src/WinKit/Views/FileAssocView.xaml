@@ -1,0 +1,126 @@
+<UserControl x:Class="WinKit.Views.FileAssocView"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             FontFamily="Microsoft YaHei UI, Segoe UI">
+
+    <UserControl.Resources>
+        <Style x:Key="CellText" TargetType="TextBlock">
+            <Setter Property="VerticalAlignment" Value="Center" />
+            <Setter Property="TextTrimming" Value="CharacterEllipsis" />
+            <Setter Property="Foreground" Value="{StaticResource Brush.Text}" />
+            <Setter Property="FontSize" Value="13" />
+        </Style>
+        <Style x:Key="CellMuted" TargetType="TextBlock" BasedOn="{StaticResource CellText}">
+            <Setter Property="Foreground" Value="{StaticResource Brush.TextMuted}" />
+            <Setter Property="FontSize" Value="12" />
+        </Style>
+    </UserControl.Resources>
+
+    <Grid Margin="24,16,24,16">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="*" />
+        </Grid.RowDefinitions>
+
+        <Border Grid.Row="0" Style="{StaticResource Card}" Padding="14,10" Margin="0,0,0,10"
+                Background="{StaticResource Brush.AccentSoft}" BorderBrush="#FFC9D5F8">
+            <TextBlock Style="{StaticResource Muted}" Foreground="{StaticResource Brush.Accent}"
+                       Text="Windows 8 起「默认打开方式」由 UserChoice 的哈希签名保护，直接改注册表会被系统判定篡改并自动重置。所以这里不硬改关联，而是：① 一键打开系统官方设置；② 对单个扩展名调起「打开方式」对话框；③ 清理指向的程序已不存在的失效关联（带快照可撤销）。" />
+        </Border>
+
+        <Grid Grid.Row="1" Margin="0,0,0,10">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="Auto" />
+                <ColumnDefinition Width="*" />
+                <ColumnDefinition Width="Auto" />
+            </Grid.ColumnDefinitions>
+
+            <StackPanel Grid.Column="0" Orientation="Horizontal" VerticalAlignment="Center">
+                <TextBox Style="{StaticResource SearchBox}" Width="240" Margin="0,0,10,0"
+                         Text="{Binding SearchText, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
+                         ToolTip="按扩展名 / ProgID / 程序名搜索" />
+                <CheckBox Content="只看用户指定" IsChecked="{Binding OnlyUserChoice, Mode=TwoWay}"
+                          VerticalAlignment="Center" />
+            </StackPanel>
+
+            <TextBlock Grid.Column="1" Text="{Binding SummaryText}" Style="{StaticResource Muted}"
+                       VerticalAlignment="Center" Margin="14,0,0,0" />
+
+            <StackPanel Grid.Column="2" Orientation="Horizontal" VerticalAlignment="Center">
+                <Button Content="系统默认应用设置" Style="{StaticResource BtnBase}" Margin="0,0,8,0"
+                        Command="{Binding OpenSettingsCommand}" />
+                <Button Content="清理失效关联" Style="{StaticResource BtnDanger}" Margin="0,0,8,0"
+                        Command="{Binding CleanInvalidCommand}" />
+                <Button Content="刷新" Style="{StaticResource BtnPrimary}"
+                        Command="{Binding RefreshCommand}" />
+            </StackPanel>
+        </Grid>
+
+        <Border Grid.Row="2" Style="{StaticResource Card}" Padding="0">
+            <DataGrid ItemsSource="{Binding Items}" Style="{StaticResource Grid}">
+                <DataGrid.Columns>
+                    <DataGridTemplateColumn Header="扩展名" Width="110" SortMemberPath="Extension">
+                        <DataGridTemplateColumn.CellTemplate>
+                            <DataTemplate>
+                                <TextBlock Text="{Binding Extension}" Style="{StaticResource CellText}"
+                                           FontWeight="SemiBold" />
+                            </DataTemplate>
+                        </DataGridTemplateColumn.CellTemplate>
+                    </DataGridTemplateColumn>
+                    <DataGridTemplateColumn Header="来源" Width="95" SortMemberPath="SourceText">
+                        <DataGridTemplateColumn.CellTemplate>
+                            <DataTemplate>
+                                <TextBlock Text="{Binding SourceText}" Style="{StaticResource CellMuted}" />
+                            </DataTemplate>
+                        </DataGridTemplateColumn.CellTemplate>
+                    </DataGridTemplateColumn>
+                    <DataGridTemplateColumn Header="关联程序" Width="1.5*" SortMemberPath="FriendlyName">
+                        <DataGridTemplateColumn.CellTemplate>
+                            <DataTemplate>
+                                <TextBlock Text="{Binding DisplayText}" Style="{StaticResource CellText}"
+                                           ToolTip="{Binding ProgId}" />
+                            </DataTemplate>
+                        </DataGridTemplateColumn.CellTemplate>
+                    </DataGridTemplateColumn>
+                    <DataGridTemplateColumn Header="ProgID" Width="1.3*" SortMemberPath="ProgId">
+                        <DataGridTemplateColumn.CellTemplate>
+                            <DataTemplate>
+                                <TextBlock Text="{Binding ProgId}" Style="{StaticResource CellMuted}"
+                                           ToolTip="{Binding ProgId}" />
+                            </DataTemplate>
+                        </DataGridTemplateColumn.CellTemplate>
+                    </DataGridTemplateColumn>
+                    <DataGridTemplateColumn Header="打开命令" Width="2*" SortMemberPath="Command">
+                        <DataGridTemplateColumn.CellTemplate>
+                            <DataTemplate>
+                                <TextBlock Text="{Binding Command}" Style="{StaticResource CellMuted}"
+                                           ToolTip="{Binding Command}" />
+                            </DataTemplate>
+                        </DataGridTemplateColumn.CellTemplate>
+                    </DataGridTemplateColumn>
+                    <DataGridTemplateColumn Header="操作" Width="290" CanUserSort="False">
+                        <DataGridTemplateColumn.CellTemplate>
+                            <DataTemplate>
+                                <StackPanel Orientation="Horizontal">
+                                    <Button Content="更改" Style="{StaticResource BtnSmall}" Margin="0,0,6,0"
+                                            Command="{Binding DataContext.OpenForExtensionCommand, RelativeSource={RelativeSource AncestorType=DataGrid}}"
+                                            CommandParameter="{Binding}" />
+                                    <Button Content="打开方式" Style="{StaticResource BtnSmall}" Margin="0,0,6,0"
+                                            Command="{Binding DataContext.OpenWithCommand, RelativeSource={RelativeSource AncestorType=DataGrid}}"
+                                            CommandParameter="{Binding}" />
+                                    <Button Content="复制命令" Style="{StaticResource BtnSmall}" Margin="0,0,6,0"
+                                            Command="{Binding DataContext.CopyCommandCommand, RelativeSource={RelativeSource AncestorType=DataGrid}}"
+                                            CommandParameter="{Binding}" />
+                                    <Button Content="复制注册表路径" Style="{StaticResource BtnSmall}"
+                                            Command="{Binding DataContext.CopyPathCommand, RelativeSource={RelativeSource AncestorType=DataGrid}}"
+                                            CommandParameter="{Binding}" />
+                                </StackPanel>
+                            </DataTemplate>
+                        </DataGridTemplateColumn.CellTemplate>
+                    </DataGridTemplateColumn>
+                </DataGrid.Columns>
+            </DataGrid>
+        </Border>
+    </Grid>
+</UserControl>

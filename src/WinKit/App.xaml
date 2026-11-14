@@ -61,6 +61,15 @@
             <DataTemplate DataType="{x:Type vm:NetworkViewModel}">
                 <views:NetworkView />
             </DataTemplate>
+            <DataTemplate DataType="{x:Type vm:DiffViewModel}">
+                <views:DiffView />
+            </DataTemplate>
+            <DataTemplate DataType="{x:Type vm:DuplicateViewModel}">
+                <views:DuplicateView />
+            </DataTemplate>
+            <DataTemplate DataType="{x:Type vm:FileAssocViewModel}">
+                <views:FileAssocView />
+            </DataTemplate>
         </ResourceDictionary>
     </Application.Resources>
 </Application>

@@ -62,6 +62,7 @@ public sealed class AppManagerViewModel : ObservableObject, IModule
         FilterAllCommand = new RelayCommand(() => SourceFilter = "all");
         FilterDesktopCommand = new RelayCommand(() => SourceFilter = "desktop");
         FilterStoreCommand = new RelayCommand(() => SourceFilter = "store");
+        FilterScoopCommand = new RelayCommand(() => SourceFilter = "scoop");
 
         ShowAppsViewCommand = new RelayCommand(() => SubView = "apps");
         ShowRuntimesViewCommand = new RelayCommand(() => SubView = "runtimes");
@@ -96,6 +97,7 @@ public sealed class AppManagerViewModel : ObservableObject, IModule
     public RelayCommand FilterAllCommand { get; }
     public RelayCommand FilterDesktopCommand { get; }
     public RelayCommand FilterStoreCommand { get; }
+    public RelayCommand FilterScoopCommand { get; }
 
     public RelayCommand ShowAppsViewCommand { get; }
     public RelayCommand ShowRuntimesViewCommand { get; }
@@ -213,6 +215,7 @@ public sealed class AppManagerViewModel : ObservableObject, IModule
             OnPropertyChanged(nameof(IsAllSelected));
             OnPropertyChanged(nameof(IsDesktopSelected));
             OnPropertyChanged(nameof(IsStoreSelected));
+            OnPropertyChanged(nameof(IsScoopSelected));
             ApplyFilter();
         }
     }
@@ -220,6 +223,7 @@ public sealed class AppManagerViewModel : ObservableObject, IModule
     public bool IsAllSelected => _sourceFilter == "all";
     public bool IsDesktopSelected => _sourceFilter == "desktop";
     public bool IsStoreSelected => _sourceFilter == "store";
+    public bool IsScoopSelected => _sourceFilter == "scoop";
 
     public bool OnlyUpdatable
     {
@@ -331,19 +335,22 @@ public sealed class AppManagerViewModel : ObservableObject, IModule
             {
                 "desktop" => a.Kind == AppSourceKind.Desktop,
                 "store" => a.Kind == AppSourceKind.Store,
+                "scoop" => a.Kind == AppSourceKind.Scoop,
                 _ => true
             })
             .Where(a => !_onlyUpdatable || a.HasUpdate)
             .Where(a => kw.Length == 0 || a.SearchBlob.Contains(kw))
             .OrderByDescending(a => a.HasUpdate)
-            .ThenBy(a => a.Kind == AppSourceKind.Desktop ? 0 : 1)
+            .ThenBy(a => a.Kind == AppSourceKind.Desktop ? 0 : a.Kind == AppSourceKind.Scoop ? 1 : 2)
             .ThenBy(a => a.Name, StringComparer.CurrentCulture);
 
         foreach (var item in query) Apps.Add(item);
 
         var desktopCount = _all.Count(a => a.Kind == AppSourceKind.Desktop);
         var storeCount = _all.Count(a => a.Kind == AppSourceKind.Store);
-        SummaryText = $"共 {_all.Count} 个应用（桌面 {desktopCount} · 商店/打包 {storeCount}）· 可更新 {UpdatableCount} 个 · 当前显示 {Apps.Count} 个";
+        var scoopCount = _all.Count(a => a.Kind == AppSourceKind.Scoop);
+        SummaryText = $"共 {_all.Count} 个应用（桌面 {desktopCount} · 商店/打包 {storeCount} · Scoop {scoopCount}）" +
+                      $"· 可更新 {UpdatableCount} 个 · 当前显示 {Apps.Count} 个";
 
         OnPropertyChanged(nameof(UpdatableCount));
         OnPropertyChanged(nameof(HasUpdatable));
@@ -479,6 +486,43 @@ public sealed class AppManagerViewModel : ObservableObject, IModule
     private async Task UninstallAppAsync(InstalledAppItem? app)
     {
         if (app is null || IsBusy) return;
+
+        if (app.Kind == AppSourceKind.Scoop)
+        {
+            if (!ScoopService.CommandAvailable())
+            {
+                MessageBox.Show("找不到 scoop.cmd，请确认 Scoop 已安装并加入 PATH。", "Scoop",
+                    MessageBoxButton.OK, MessageBoxImage.Warning);
+                return;
+            }
+
+            var confirmScoop = MessageBox.Show(
+                $"将通过 scoop 卸载「{app.Name}」：\n\nscoop uninstall {app.ScoopName}\n\n" +
+                "不删除任何个人数据；如需保留配置可用 scoop uninstall 的 -p 参数（本工具不代传）。确定继续吗？",
+                "卸载 Scoop 包", MessageBoxButton.OKCancel, MessageBoxImage.Warning);
+
+            if (confirmScoop != MessageBoxResult.OK) return;
+
+            IsBusy = true;
+            try
+            {
+                _status($"正在卸载 Scoop 包「{app.Name}」…");
+                var (ok, msg) = await new ScoopService().RunScoopAsync($"uninstall {app.ScoopName}", TimeSpan.FromMinutes(3));
+                _status(ok ? $"已卸载 Scoop 包：{app.Name}" : $"卸载失败：{msg}");
+                if (!ok)
+                {
+                    MessageBox.Show(msg, "卸载失败", MessageBoxButton.OK, MessageBoxImage.Warning);
+                    return;
+                }
+            }
+            finally
+            {
+                IsBusy = false;
+            }
+
+            Refresh();
+            return;
+        }
 
         if (app.Kind == AppSourceKind.Store)
         {
