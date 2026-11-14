@@ -31,6 +31,10 @@
     <Compile Include="..\..\src\WinKit\Services\FileAssocService.cs" Link="Services\FileAssocService.cs" />
     <Compile Include="..\..\src\WinKit\Services\DiffService.cs" Link="Services\DiffService.cs" />
     <Compile Include="..\..\src\WinKit\Services\DuplicateFinderService.cs" Link="Services\DuplicateFinderService.cs" />
+    <Compile Include="..\..\src\WinKit\Services\DiskHealthService.cs" Link="Services\DiskHealthService.cs" />
+    <Compile Include="..\..\src\WinKit\Services\EnvironmentService.cs" Link="Services\EnvironmentService.cs" />
+    <Compile Include="..\..\src\WinKit\Services\HealthReportService.cs" Link="Services\HealthReportService.cs" />
+    <Compile Include="..\..\src\WinKit\Services\MaintenanceService.cs" Link="Services\MaintenanceService.cs" />
     <Compile Include="..\..\src\WinKit\Services\RuntimeCheckService.cs" Link="Services\RuntimeCheckService.cs" />
     <Compile Include="..\..\src\WinKit\Services\SystemToolCatalogService.cs" Link="Services\SystemToolCatalogService.cs" />
     <Compile Include="..\..\src\WinKit\Services\StartupServiceManager.cs" Link="Services\StartupServiceManager.cs" />

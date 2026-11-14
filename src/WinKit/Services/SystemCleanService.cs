@@ -263,7 +263,8 @@ public sealed class SystemCleanService
 
     public async Task<(long FreedBytes, int DeletedFiles)> CleanTargetsAsync(
         IReadOnlyList<CleanupTargetItem> selectedTargets,
-        Action<string>? progress = null)
+        Action<string>? progress = null,
+        int minAgeMinutes = 0)
     {
         return await Task.Run(() =>
         {
@@ -297,7 +298,7 @@ public sealed class SystemCleanService
                 foreach (var dir in item.Paths)
                 {
                     if (string.IsNullOrWhiteSpace(dir) || !Directory.Exists(dir)) continue;
-                    var (b, c) = CleanDirectory(dir, item.FilePattern, item.Recursive);
+                    var (b, c) = CleanDirectory(dir, item.FilePattern, item.Recursive, minAgeMinutes);
                     freedBytes += b;
                     deletedFiles += c;
                 }
@@ -366,10 +367,20 @@ public sealed class SystemCleanService
         return (bytes, count);
     }
 
-    private static (long FreedBytes, int DeletedCount) CleanDirectory(string rootDir, string pattern, bool recursive)
+    /// <summary>
+    /// 清理目录内容。
+    /// minAgeMinutes &gt; 0 时只删「最后写入时间早于该阈值」的文件与子目录——
+    /// 避免把其它进程（包括本工具自己、构建工具、沙箱）刚创建、正在用的临时目录当成垃圾删掉。
+    /// </summary>
+    private static (long FreedBytes, int DeletedCount) CleanDirectory(
+        string rootDir, string pattern, bool recursive, int minAgeMinutes = 0)
     {
         long freed = 0;
         var deleted = 0;
+
+        var cutoff = minAgeMinutes > 0
+            ? DateTime.Now.AddMinutes(-minAgeMinutes)
+            : DateTime.MinValue;
 
         var dirs = new List<string>();
         var stack = new Stack<string>();
@@ -386,6 +397,10 @@ public sealed class SystemCleanService
                     try
                     {
                         var fi = new FileInfo(file);
+
+                        // 太新的文件可能是别人正在写的，跳过
+                        if (cutoff != DateTime.MinValue && fi.LastWriteTime > cutoff) continue;
+
                         var len = fi.Length;
                         fi.Attributes = FileAttributes.Normal;
                         fi.Delete();
@@ -405,8 +420,13 @@ public sealed class SystemCleanService
                         try
                         {
                             var attr = File.GetAttributes(sub);
-                            if ((attr & FileAttributes.ReparsePoint) == 0)
-                                stack.Push(sub);
+                            if ((attr & FileAttributes.ReparsePoint) != 0) continue;
+
+                            // 新目录不递归进去：里面大概率是活跃会话的数据
+                            if (cutoff != DateTime.MinValue &&
+                                Directory.GetLastWriteTime(sub) > cutoff) continue;
+
+                            stack.Push(sub);
                         }
                         catch (Exception) { }
                     }
@@ -422,6 +442,9 @@ public sealed class SystemCleanService
             {
                 try
                 {
+                    // 新目录不删：可能属于正在运行的进程
+                    if (cutoff != DateTime.MinValue && Directory.GetLastWriteTime(dirs[i]) > cutoff) continue;
+
                     if (!Directory.EnumerateFileSystemEntries(dirs[i]).Any())
                         Directory.Delete(dirs[i], false);
                 }

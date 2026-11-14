@@ -70,6 +70,15 @@
             <DataTemplate DataType="{x:Type vm:FileAssocViewModel}">
                 <views:FileAssocView />
             </DataTemplate>
+            <DataTemplate DataType="{x:Type vm:DiskHealthViewModel}">
+                <views:DiskHealthView />
+            </DataTemplate>
+            <DataTemplate DataType="{x:Type vm:EnvironmentViewModel}">
+                <views:EnvironmentView />
+            </DataTemplate>
+            <DataTemplate DataType="{x:Type vm:ReportViewModel}">
+                <views:ReportView />
+            </DataTemplate>
         </ResourceDictionary>
     </Application.Resources>
 </Application>

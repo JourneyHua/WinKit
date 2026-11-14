@@ -356,6 +356,36 @@ internal static class Program
             Check("GetLong 保留 64 位精度", Reg.GetLong(RegPath.Hkcu(qwordRoot), "big") == 0x1_0000_0001L);
             Reg.DeleteTree(RegPath.Hkcu(qwordRoot));
 
+            // 9. 32/64 位视图：写到 32 位视图的键，64 位视图里必须看不到
+            const string viewRoot = @"Software\Classes\WinKitViewSelfTest";
+            var x86Path = RegPath.Hkcu(viewRoot).WithView(RegViewKind.X86);
+            var x64Path = RegPath.Hkcu(viewRoot).WithView(RegViewKind.X64);
+
+            Reg.DeleteTree(x86Path);
+            Reg.DeleteTree(x64Path);
+            Reg.SetString(x86Path, "", "x86-only");
+
+            Check("32 位视图写入可见", Reg.GetString(x86Path) == "x86-only");
+
+            // 注意：WOW64 重定向只对特定键（HKLM\Software、部分 Classes 子树）生效，
+            // 自测里随便建的键两个视图看到同一份数据是正常的，不能据此断言“64 位视图看不到”。
+            // 能断言的是：两个视图都能独立打开同一路径，且视图被完整带进快照与还原。
+            var bothViewsOpen = Reg.Exists(x86Path) && Reg.Exists(x64Path);
+            Check("同一路径可用 32/64 位视图分别打开", bothViewsOpen);
+            Check("DisplayPath 标注视图", x86Path.DisplayPath.Contains("32 位视图"));
+
+            var viewSnapshot = SnapshotEngine.Capture(x86Path);
+            Check("快照记录了视图", viewSnapshot.View == "X86", $"实际 {viewSnapshot.View}");
+
+            Reg.DeleteTree(x86Path);
+            Check("删除后 32 位视图键消失", !Reg.Exists(x86Path));
+
+            SnapshotEngine.Restore(viewSnapshot);
+            Check("还原写回 32 位视图", Reg.GetString(x86Path) == "x86-only");
+
+            Reg.DeleteTree(x86Path);
+            Reg.DeleteTree(x64Path);
+
             Reg.DeleteTree(testPath);
             Check("清理完成（测试键不存在）", !Reg.Exists(testPath));
         }
@@ -562,6 +592,35 @@ internal static class Program
             Check("文件关联可读取", assocItems.Count > 0);
             Check("文件关联字段自洽",
                 assocItems.All(i => i.Extension.StartsWith('.') && !string.IsNullOrWhiteSpace(i.ProgId)));
+
+            // 环境变量：解析与合并顺序
+            var envService = new EnvironmentService(journal);
+            var envVars = envService.LoadAll();
+            Check("环境变量可读取", envVars.Count > 0);
+            Check("PATH 只出现一次", envVars.Count(v => v.IsPath) <= 1);
+
+            var parsedPath = envService.ParsePath("C:\\Windows;C:\\NotExist_" + Guid.NewGuid().ToString("N") + ";%SystemRoot%");
+            Check("PATH 解析条目数正确", parsedPath.Count == 3);
+            Check("PATH 标记失效目录", parsedPath.Count(e => !e.Exists) == 1);
+            Check("PATH 展开环境变量", parsedPath.Any(e => e.Raw == "%SystemRoot%" && e.Exists));
+
+            // 磁盘健康：卷信息不依赖管理员，必须能拿到
+            var (diskItems, volumeItems, _) = new DiskHealthService().Load();
+            Check("磁盘健康可读到卷信息", volumeItems.Count > 0);
+            Check("卷占用百分比在合理范围", volumeItems.All(v => v.UsedPercent is >= 0 and <= 100));
+
+            // 体检报告：结构完整、能导出两种格式
+            var report = new HealthReportService().Build();
+            Check("体检报告包含 5 个分区", report.Sections.Count == 5);
+            Check("体检评分在 0~100", report.Score is >= 0 and <= 100);
+            Check("体检报告每项都有标签与值",
+                report.Sections.SelectMany(s => s.Items).All(i => !string.IsNullOrWhiteSpace(i.Label) && i.Value is not null));
+
+            var markdown = HealthReportService.ToMarkdown(report);
+            var json = HealthReportService.ToJson(report);
+            Check("Markdown 导出可用", markdown.Contains("# WinKit 体检报告") && markdown.Contains("评分"));
+            Check("JSON 导出可解析",
+                System.Text.Json.JsonDocument.Parse(json).RootElement.TryGetProperty("Sections", out _));
         }
         finally
         {

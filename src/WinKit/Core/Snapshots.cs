@@ -17,6 +17,10 @@ public sealed class SnapshotKey
 {
     public string Hive { get; set; } = "HKCU";
     public string SubKey { get; set; } = "";
+
+    /// <summary>Default / X64 / X86。还原时必须写回同一个视图，否则 32 位登记会被写到 64 位侧。</summary>
+    public string View { get; set; } = "Default";
+
     public bool Existed { get; set; }
     public List<SnapshotValue> Values { get; set; } = new();
     public List<SnapshotKey> Children { get; set; } = new();
@@ -56,7 +60,11 @@ public static class SnapshotEngine
     private const int MaxNodes = 20000;
 
     public static SnapshotKey Capture(HiveKind hive, string subKey, int budget = MaxNodes)
-        => Capture(hive, subKey, new Budget(budget));
+        => Capture(new RegPath(hive, subKey), new Budget(budget));
+
+    /// <summary>带视图的捕获：32 位视图的键必须按 32 位读，否则 WOW6432Node 的内容根本进不了快照。</summary>
+    public static SnapshotKey Capture(RegPath path, int budget = MaxNodes)
+        => Capture(path, new Budget(budget));
 
     /// <summary>
     /// 递归预算必须是共享计数器：按值传 budget 时每个子键都会拿到一份新的预算，
@@ -71,15 +79,16 @@ public static class SnapshotEngine
         public bool TryTake() => _remaining-- > 0;
     }
 
-    private static SnapshotKey Capture(HiveKind hive, string subKey, Budget budget)
+    private static SnapshotKey Capture(RegPath path, Budget budget)
     {
         var node = new SnapshotKey
         {
-            Hive = hive == HiveKind.CurrentUser ? "HKCU" : "HKLM",
-            SubKey = subKey
+            Hive = path.Hive == HiveKind.CurrentUser ? "HKCU" : "HKLM",
+            SubKey = path.SubKey,
+            View = path.View.ToString()
         };
 
-        var (key, status) = Reg.TryOpen(new RegPath(hive, subKey), false);
+        var (key, status) = Reg.TryOpen(path, false);
         if (status == Reg.OpenStatus.Denied)
         {
             // 明确区分“拒绝访问”：不能记成 Existed=false，否则撤销时会删掉真实存在的键
@@ -112,7 +121,7 @@ public static class SnapshotEngine
                 break;
             }
 
-            node.Children.Add(Capture(hive, subKey + "\\" + child, budget));
+            node.Children.Add(Capture(path with { SubKey = path.SubKey + "\\" + child }, budget));
         }
 
         return node;
@@ -156,13 +165,23 @@ public static class SnapshotEngine
         throw new InvalidOperationException($"快照里的注册表根无效：'{hive}'，已拒绝还原以避免写错位置");
     }
 
+    private static RegViewKind ParseView(string? view)
+    {
+        if (string.IsNullOrWhiteSpace(view)) return RegViewKind.Default;
+        if (!Enum.TryParse<RegViewKind>(view, true, out var parsed))
+            throw new InvalidOperationException($"快照里的注册表视图无效：'{view}'，已拒绝还原");
+
+        return parsed;
+    }
+
     public static void Restore(SnapshotKey node)
     {
         // 读取被拒的键，我们并不知道它原本长什么样，任何写入/删除都可能造成丢失
         if (node.CaptureFailed) return;
 
         var hive = ParseHive(node.Hive);
-        var path = new RegPath(hive, node.SubKey);
+        // 必须写回捕获时的视图：32 位登记被写到 64 位侧等于没还原
+        var path = new RegPath(hive, node.SubKey, ParseView(node.View));
 
         if (!node.Existed)
         {

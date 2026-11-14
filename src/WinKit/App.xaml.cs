@@ -34,6 +34,43 @@ public partial class App : Application
             return;
         }
 
+        // 无人值守维护：由计划任务拉起，跑完即退，不建窗口
+        if (e.Args.Contains("--maintain"))
+        {
+            var crashFile = Path.Combine(
+                Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+                "WinKit", "Logs", "maintain-crash.txt");
+
+            int exitCode;
+            try
+            {
+                // 必须整体放到线程池上：维护里是同步调异步（GetResult），
+                // 在 UI 线程上等会与 await 的 dispatcher 续体互相等死。
+                exitCode = Task.Run(() => Services.MaintenanceService.RunMaintenance())
+                    .GetAwaiter()
+                    .GetResult();
+            }
+            catch (Exception ex)
+            {
+                // 双保险：既写维护日志，也单独落一份崩溃文件（日志本身可能就没建起来）
+                try
+                {
+                    Directory.CreateDirectory(Path.GetDirectoryName(crashFile)!);
+                    File.WriteAllText(crashFile, $"{DateTime.Now:yyyy-MM-dd HH:mm:ss}{Environment.NewLine}{ex}");
+                }
+                catch (Exception)
+                {
+                    // 崩溃文件也写不了就只能放弃
+                }
+
+                Services.MaintenanceService.AppendLog($"  [FAILED] 未处理异常：{ex}");
+                exitCode = 1;
+            }
+
+            Shutdown(exitCode);
+            return;
+        }
+
         DispatcherUnhandledException += OnDispatcherUnhandledException;
         AppDomain.CurrentDomain.UnhandledException += (_, args) => ShowFatal(args.ExceptionObject as Exception);
     }
@@ -256,6 +293,36 @@ public partial class App : Application
                     Pump();
                     Capture(window, outputDir, "duplicates-loaded", log);
                     log.AppendLine($"  duplicates: groups={dupVm.Groups.Count} summary=\"{OneLine(dupVm.SummaryText)}\"");
+                }
+
+                if (vm.CurrentViewModel is DiskHealthViewModel diskVm)
+                {
+                    diskVm.Refresh();
+                    Pump(6000);
+                    window.UpdateLayout();
+                    Pump();
+                    Capture(window, outputDir, "diskhealth-loaded", log);
+                    log.AppendLine($"  diskhealth: disks={diskVm.Disks.Count} volumes={diskVm.Volumes.Count} summary=\"{OneLine(diskVm.SummaryText)}\"");
+                }
+
+                if (vm.CurrentViewModel is EnvironmentViewModel envVm)
+                {
+                    envVm.Refresh();
+                    Pump(1200);
+                    window.UpdateLayout();
+                    Pump();
+                    Capture(window, outputDir, "env-loaded", log);
+                    log.AppendLine($"  env: vars={envVm.Vars.Count} pathEntries={envVm.PathEntries.Count} summary=\"{OneLine(envVm.SummaryText)}\"");
+                }
+
+                if (vm.CurrentViewModel is ReportViewModel reportVm)
+                {
+                    reportVm.Refresh();
+                    Pump(12000);
+                    window.UpdateLayout();
+                    Pump();
+                    Capture(window, outputDir, "report-loaded", log);
+                    log.AppendLine($"  report: sections={reportVm.Sections.Count} score={reportVm.ScoreText} grade={reportVm.GradeText} summary=\"{OneLine(reportVm.SummaryText)}\" task=\"{OneLine(reportVm.MaintenanceText)}\"");
                 }
 
                 if (vm.CurrentViewModel is AppManagerViewModel appVm)

@@ -22,7 +22,80 @@ jobs:
           dotnet-version: '10.0.x'
 
       - name: Restore & build
-        run: dotnet build WinKit.slnx -c Release --nologo
+        run: dotnet build WinKit.slnx -c Release --nologo -m:1
+
+      # ---- 质量门槛 1：服务层自测（快照/撤销/还原保真、解析器、分类器、报告导出）----
+      - name: Self test
+        shell: pwsh
+        run: |
+          dotnet run --project tools/Probe/Probe.csproj -c Release -m:1 -- --selftest
+          if ($LASTEXITCODE -ne 0) { throw "Selftest failed with exit code $LASTEXITCODE" }
+
+      # ---- 质量门槛 2：界面离屏渲染 + 每个模块的数据断言 ----
+      - name: Publish preview (asInvoker)
+        shell: pwsh
+        run: |
+          dotnet publish src/WinKit/WinKit.csproj -c Release -m:1 `
+            -t:Rebuild `
+            -p:ApplicationManifest="$((Resolve-Path src/WinKit/app.preview.manifest).Path)" `
+            -o publish/preview --nologo
+          if ($LASTEXITCODE -ne 0) { throw "Preview publish failed" }
+
+      - name: UI smoke with assertions
+        shell: pwsh
+        run: |
+          $out = Join-Path $PWD "smoke-out"
+          Remove-Item $out -Recurse -Force -ErrorAction SilentlyContinue
+
+          & "publish/preview/WinKit.exe" --smoke $out
+          $logPath = Join-Path $out "smoke.log"
+          if (-not (Test-Path $logPath)) { throw "smoke.log 没有生成" }
+
+          $log = Get-Content $logPath -Raw
+          $failures = @()
+
+          if ($log -notmatch 'SMOKE OK') { $failures += "日志里没有 SMOKE OK" }
+
+          # 每个模块都必须有 OK 行（导航栏共 21 个模块）
+          $okCount = ([regex]::Matches($log, '(?m)^OK ')).Count
+          if ($okCount -lt 21) { $failures += "只有 $okCount 个模块渲染成功，期望至少 21 个" }
+
+          # 关键模块必须真的读到数据，而不只是"渲染出来了"
+          function Assert-Data($pattern, $name, $min) {
+            $m = [regex]::Match($log, $pattern)
+            if (-not $m.Success) { $script:failures += "$name 缺失数据行"; return }
+            if ($min -gt 0) {
+              $value = [int]$m.Groups[1].Value
+              if ($value -lt $min) { $script:failures += "$name 数据量为 $value，期望 >= $min" }
+            }
+          }
+
+          Assert-Data 'overview: cards=(\d+)' '系统概览' 4
+          Assert-Data 'assoc: items=(\d+)' '默认打开方式' 100
+          Assert-Data 'diff: entries=(\d+)' '文件对比' 1
+          Assert-Data 'env: vars=(\d+)' '环境变量' 5
+          Assert-Data 'report: sections=(\d+)' '体检报告' 5
+          Assert-Data 'diskhealth: volumes=(\d+)' '磁盘健康' 1
+          Assert-Data 'network: adapters=(\d+)' '网络诊断' 1
+          Assert-Data 'events: groups=(\d+)' '事件日志' 0
+          Assert-Data 'wupdate: installed=(\d+)' 'Windows 更新' 0
+          Assert-Data 'filelock: lockers=(\d+)' '文件占用' 0
+
+          if ($failures.Count -gt 0) {
+            Write-Host "---- smoke.log ----"
+            Get-Content $logPath | Write-Host
+            throw ("界面自检失败：`n" + ($failures -join "`n"))
+          }
+
+          Write-Host "界面自检通过：$okCount 个模块 OK，关键模块数据齐备"
+
+      - name: Upload smoke output
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: smoke-log
+          path: smoke-out/smoke.log
+          if-no-files-found: warn
 
       - name: Publish (framework-dependent)
         run: dotnet publish src/WinKit/WinKit.csproj -c Release -o publish/framework-dependent --nologo
@@ -47,8 +120,9 @@ jobs:
           body: |
             ### 运行要求与使用说明
 
-            - **WinKit 免 Runtime 轻量包**（`framework-dependent`，约 350 KB）：需系统安装 [.NET 10 Desktop Runtime](https://dotnet.microsoft.com/download/dotnet/10.0)
+            - **WinKit 免 Runtime 轻量包**（`framework-dependent`，约 500 KB）：需系统安装 [.NET 10 Desktop Runtime](https://dotnet.microsoft.com/download/dotnet/10.0)
             - 双击 `WinKit.exe`，接受 UAC 提权即可使用。
-            - 包含：**系统概览**、**右键菜单管理**、**此电脑管理**、**导航栏管理**、**应用管理（卸载/残留清理/winget+scoop 更新）**、**驱动管理（自动备份/卸载/官方与本地更新）**、**启动与服务**、**系统清理**、**系统调优与百宝箱**、**文件占用解锁**、**文件与文件夹对比**、**重复文件检测**、**默认打开方式**、**事件日志诊断**、**Windows 更新管理**、**网络诊断**、**注册表体检**与**快照备份还原**。
+            - 包含：**体检与维护**、**系统概览**、**磁盘健康**、**环境变量**、**右键菜单管理**、**此电脑管理**、**导航栏管理**、**应用管理（卸载/残留清理/winget+scoop 更新）**、**驱动管理（自动备份/卸载/官方与本地更新）**、**启动与服务**、**系统清理**、**系统调优与百宝箱**、**文件占用解锁**、**文件与文件夹对比**、**重复文件检测**、**默认打开方式**、**事件日志诊断**、**Windows 更新管理**、**网络诊断**、**注册表体检**与**快照备份还原**。
+            - 本版本 CI 增加两道质量门槛：服务层自测（60+ 项）与界面离屏自检（21 个模块 + 关键模块数据断言）。
           files: |
             WinKit-${{ github.ref_name }}-framework-dependent.zip

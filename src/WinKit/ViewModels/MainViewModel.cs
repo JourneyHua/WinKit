@@ -165,6 +165,30 @@ public sealed class MainViewModel : ObservableObject
             },
             new()
             {
+                Key = "report",
+                Title = "体检与维护",
+                Subtitle = "一键汇总各模块检查结果，导出 Markdown/JSON；可注册每周自动维护任务",
+                AccentBrush = new System.Windows.Media.SolidColorBrush(System.Windows.Media.Color.FromRgb(0x0E, 0x7C, 0x86)),
+                Factory = () => new ReportViewModel(SetStatus, SetMaintenanceStatus, SetBusy)
+            },
+            new()
+            {
+                Key = "diskhealth",
+                Title = "磁盘健康",
+                Subtitle = "SMART 预测失败、SSD 磨损度、温度、通电时长、读写错误与各卷占用",
+                AccentBrush = new System.Windows.Media.SolidColorBrush(System.Windows.Media.Color.FromRgb(0x5B, 0x3F, 0x8F)),
+                Factory = () => new DiskHealthViewModel(SetStatus, SetBusy)
+            },
+            new()
+            {
+                Key = "env",
+                Title = "环境变量",
+                Subtitle = "查看/编辑用户与系统环境变量，可视化调整 PATH 顺序并标记失效目录",
+                AccentBrush = new System.Windows.Media.SolidColorBrush(System.Windows.Media.Color.FromRgb(0x8A, 0x6D, 0x1F)),
+                Factory = () => new EnvironmentViewModel(_journal, SetStatus, SetBusy)
+            },
+            new()
+            {
                 Key = "registry",
                 Title = "注册表管理",
                 Subtitle = "按分类体检，只清理可证明无效的项",
@@ -252,9 +276,17 @@ public sealed class MainViewModel : ObservableObject
     {
         if (SelectedNav is null) SelectedNav = NavItems[0];
         else if (CurrentViewModel is IModule module) module.Refresh();
+
+        // 无人值守的定期维护失败时，用户下次打开就能看到，而不是静默烂在日志里
+        var lastOutcome = MaintenanceService.LastOutcomeText();
+        if (lastOutcome.Contains("失败", StringComparison.Ordinal))
+            StatusText = $"上次定期维护未成功（{lastOutcome}），详见「体检与维护」页";
     }
 
     private void SetStatus(string message) => StatusText = message;
+
+    /// <summary>体检/维护模块专用：把结论推到状态栏，异常时同时提示。</summary>
+    private void SetMaintenanceStatus(string message) => StatusText = message;
 
     private void SetBusy(bool busy)
     {

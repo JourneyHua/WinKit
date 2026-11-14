@@ -8,11 +8,33 @@ public enum HiveKind
     LocalMachine
 }
 
-public readonly record struct RegPath(HiveKind Hive, string SubKey)
+/// <summary>
+/// 注册表视图。x64 进程默认只看 64 位视图，32 位软件写到 WOW6432Node 的登记
+/// （CLSID / Uninstall / Classes）在 Default 下读不到，也不会进快照。
+/// </summary>
+public enum RegViewKind
+{
+    /// <summary>跟随进程位数（x64 进程等于 64 位视图）。</summary>
+    Default,
+    /// <summary>强制 64 位视图。</summary>
+    X64,
+    /// <summary>强制 32 位视图（WOW6432Node）。</summary>
+    X86
+}
+
+public readonly record struct RegPath(HiveKind Hive, string SubKey, RegViewKind View = RegViewKind.Default)
 {
     public string FullPath => Prefix + SubKey;
 
     private string Prefix => Hive == HiveKind.CurrentUser ? @"HKEY_CURRENT_USER\" : @"HKEY_LOCAL_MACHINE\";
+
+    /// <summary>给界面和日志用：同一路径在不同视图下指向不同的键。</summary>
+    public string DisplayPath => View switch
+    {
+        RegViewKind.X86 => FullPath + "（32 位视图）",
+        RegViewKind.X64 => FullPath + "（64 位视图）",
+        _ => FullPath
+    };
 
     public override string ToString() => FullPath;
 
@@ -21,6 +43,9 @@ public readonly record struct RegPath(HiveKind Hive, string SubKey)
     public static RegPath Hklm(string subKey) => new(HiveKind.LocalMachine, subKey);
 
     public static RegPath Of(HiveKind hive, string subKey) => new(hive, subKey);
+
+    /// <summary>用指定视图打开同一路径。</summary>
+    public RegPath WithView(RegViewKind view) => this with { View = view };
 }
 
 public static class Reg
@@ -36,6 +61,13 @@ public static class Reg
     private static RegistryHive ToRegistryHive(HiveKind hive)
         => hive == HiveKind.CurrentUser ? RegistryHive.CurrentUser : RegistryHive.LocalMachine;
 
+    private static RegistryView ToRegistryView(RegViewKind view) => view switch
+    {
+        RegViewKind.X64 => RegistryView.Registry64,
+        RegViewKind.X86 => RegistryView.Registry32,
+        _ => RegistryView.Default
+    };
+
     public static RegistryKey? Open(RegPath path, bool writable)
         => TryOpen(path, writable).Key;
 
@@ -49,7 +81,7 @@ public static class Reg
 
         try
         {
-            baseKey = RegistryKey.OpenBaseKey(ToRegistryHive(path.Hive), RegistryView.Default);
+            baseKey = RegistryKey.OpenBaseKey(ToRegistryHive(path.Hive), ToRegistryView(path.View));
             var key = baseKey.OpenSubKey(path.SubKey, writable);
             if (key is not null) return (key, OpenStatus.Ok);
 
@@ -82,7 +114,7 @@ public static class Reg
 
     public static RegistryKey? Create(RegPath path)
     {
-        using var baseKey = RegistryKey.OpenBaseKey(ToRegistryHive(path.Hive), RegistryView.Default);
+        using var baseKey = RegistryKey.OpenBaseKey(ToRegistryHive(path.Hive), ToRegistryView(path.View));
         return baseKey.CreateSubKey(path.SubKey, true);
     }
 
@@ -91,7 +123,7 @@ public static class Reg
     {
         try
         {
-            using var baseKey = RegistryKey.OpenBaseKey(ToRegistryHive(path.Hive), RegistryView.Default);
+            using var baseKey = RegistryKey.OpenBaseKey(ToRegistryHive(path.Hive), ToRegistryView(path.View));
             baseKey.DeleteSubKeyTree(path.SubKey, false);
             return true;
         }
