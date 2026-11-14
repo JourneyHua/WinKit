@@ -94,7 +94,8 @@
                                                                    FontFamily="Segoe Fluent Icons, Segoe MDL2 Assets"
                                                                    FontSize="15" Width="22"
                                                                    VerticalAlignment="Center"
-                                                                   Foreground="{Binding AccentBrush}" />
+                                                                   Foreground="{Binding AccentBrush}"
+                                                                   Visibility="{Binding DataContext.ShowNavIcons, RelativeSource={RelativeSource AncestorType=Window}, Converter={StaticResource BoolToVis}}" />
 
                                                         <TextBlock Grid.Column="1" Text="{Binding Title}"
                                                                    VerticalAlignment="Center" FontSize="13"

@@ -84,6 +84,48 @@ public static class UiSettingsService
     }
 }
 
+/// <summary>
+/// 图标字体探测：Segoe Fluent Icons 在 Win10 1809+ / Win11 才有，
+/// 缺失时界面会显示成方框（.notdef），所以启动时探测一次并决定是否降级。
+/// </summary>
+public static class IconFont
+{
+    private static bool? _available;
+
+    /// <summary>图标字体是否可用；不可用时界面应隐藏图标列而不是显示豆腐块。</summary>
+    public static bool IsAvailable
+    {
+        get
+        {
+            if (_available.HasValue) return _available.Value;
+
+            try
+            {
+                var typeface = new System.Windows.Media.Typeface(
+                    new System.Windows.Media.FontFamily("Segoe Fluent Icons, Segoe MDL2 Assets"),
+                    System.Windows.FontStyles.Normal,
+                    System.Windows.FontWeights.Normal,
+                    System.Windows.FontStretches.Normal);
+
+                var probe = new System.Windows.Media.FormattedText(
+                    "\uE700",
+                    System.Globalization.CultureInfo.InvariantCulture,
+                    System.Windows.FlowDirection.LeftToRight,
+                    typeface, 15, System.Windows.Media.Brushes.Black, 96);
+
+                // 缺字形时 WPF 渲染 .notdef，宽度会明显偏小
+                _available = probe.Width > 8;
+            }
+            catch (Exception)
+            {
+                _available = false;
+            }
+
+            return _available.Value;
+        }
+    }
+}
+
 /// <summary>主题切换：整体替换资源字典（不能改画刷颜色——XAML 里的画刷是冻结的）。</summary>
 public static class ThemeService
 {
