@@ -142,9 +142,13 @@ public sealed class SystemRestoreViewModel : ObservableObject, IModule
             ErrorText = error ?? "";
 
             var latest = Points.FirstOrDefault();
-            SummaryText = Points.Count == 0
-                ? "没有还原点"
-                : $"共 {Points.Count} 个还原点，最近一个：{latest?.CreatedAt} {latest?.Description}";
+            // 空列表不能只写「没有还原点」：用户看不出是自己机器上真没有、还是程序没读到。
+            // 按系统保护状态把原因和下一步说清楚，这也是界面自检要求的「要么有数据、要么说清原因」。
+            SummaryText = Points.Count > 0
+                ? $"共 {Points.Count} 个还原点，最近一个：{latest?.CreatedAt} {latest?.Description}"
+                : _protectionEnabled
+                    ? "系统保护已开启，但这台机器上还没有任何还原点——点「创建还原点」可以立刻建一个"
+                    : "系统保护没有开启，所以没有任何还原点——先点「开启系统保护」";
 
             _status($"系统还原：{Points.Count} 个还原点");
         }

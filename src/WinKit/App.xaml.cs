@@ -495,14 +495,17 @@ public partial class App : Application
                     if (shown) Capture(window, outputDir, "restore-loaded", log);
 
                     // 还原点要靠管理员权限才读得到。冒烟进程是 asInvoker，读不到属正常，
-                    // 所以这里只要求「要么列出还原点，要么把原因说清楚」（错误信息或
-                    // 「系统保护没开」都算说清楚了），三者皆空才算失败。
+                    // 所以这里只要求「要么列出还原点，要么把原因说清楚」：有错误信息算说清楚，
+                    // 系统保护没开也算说清楚，「保护开着但一个还原点都没有」则必须由摘要
+                    // 明确告知（含「还没有」），只有列表空、错误空、摘要也是干巴巴一句时才判失败。
+                    var restoreExplained = restoreVm.SummaryText.Contains("还没有", StringComparison.Ordinal);
                     var restoreOk = restoreVm.Points.Count > 0
                         || !string.IsNullOrWhiteSpace(restoreVm.ErrorText)
-                        || !restoreVm.ProtectionEnabled;
+                        || restoreExplained;
                     log.AppendLine($"  restore: points={restoreVm.Points.Count} protection=\"{OneLine(restoreVm.ProtectionText)}\" "
                         + $"enabled={restoreVm.ProtectionEnabled} frequency=\"{OneLine(restoreVm.FrequencyText)}\" "
-                        + $"error=\"{OneLine(restoreVm.ErrorText)}\" result={(restoreOk ? "OK" : "FAILED")}");
+                        + $"summary=\"{OneLine(restoreVm.SummaryText)}\" error=\"{OneLine(restoreVm.ErrorText)}\" "
+                        + $"result={(restoreOk ? "OK" : "FAILED")}");
                 }
 
                 if (vm.CurrentViewModel is ProcessManagerViewModel procVm)
