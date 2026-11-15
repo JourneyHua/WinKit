@@ -16,3 +16,5 @@ dist-next/
 # 输入法/其它程序在当前目录生成的日志，不属于源码
 debug.log
 *.log
+# winget-pkgs 提 PR 用的临时产物（由 packaging/winget/prepare-pr.ps1 生成）
+packaging/winget/pr-out/
