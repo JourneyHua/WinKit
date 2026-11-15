@@ -191,9 +191,16 @@ jobs:
       - name: Package
         shell: pwsh
         run: |
-          # 解除锁定.cmd 要跟着包一起发：浏览器下载的压缩包解压后带 MOTW，
+          # 解除锁定.cmd + unblock.ps1 要跟着包一起发：浏览器下载的压缩包解压后带 MOTW，
           # 用户跑一次这个脚本，SmartScreen 的「Windows 已保护你的电脑」就不会再弹。
+          # 两个文件缺一不可：.cmd 只是纯 ASCII 的启动器，真正干活的是 unblock.ps1，
+          # 而且 .ps1 必须带 BOM，否则 Windows PowerShell 5.1 会把中文读成乱码。
           Copy-Item packaging/解除锁定.cmd publish/framework-dependent/ -Force
+          Copy-Item packaging/unblock.ps1 publish/framework-dependent/ -Force
+          foreach ($file in '解除锁定.cmd', 'unblock.ps1') {
+            $path = Join-Path publish/framework-dependent $file
+            if (-not (Test-Path -LiteralPath $path)) { throw "发布包里缺 $file" }
+          }
           Compress-Archive -Path publish/framework-dependent/* -DestinationPath WinKit-${{ github.ref_name }}-framework-dependent.zip -Force
 
       - name: Upload artifacts

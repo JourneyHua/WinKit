@@ -41,7 +41,7 @@ Windows 11 上的一站式轻量系统管家：**体检与维护（一键体检�
 
 ## 快速开始
 
-1. **解压后先双击一次 `解除锁定.cmd`**：浏览器下载的压缩包会给里面的文件打上「来自 Internet」标记（MOTW），于是每次启动都会被 SmartScreen 拦一下「Windows 已保护你的电脑」。这个脚本把标记去掉，之后就不再弹。
+1. **解压后先双击一次 `解除锁定.cmd`**：浏览器下载的压缩包会给里面的文件打上「来自 Internet」标记（MOTW），于是每次启动都会被 SmartScreen 拦一下「Windows 已保护你的电脑」。这个脚本把标记去掉，之后就不再弹。它会报出「共 N 个文件，其中 M 个带标记，已去掉 M 个」，重复运行也没关系（没标记时直接告诉你「都解锁过」）。
    更彻底的办法是走 winget 安装：`winget install JourneyHua.WinKit`——winget 用自家解包逻辑，**不会传播 MOTW**（这是实测结论，不是推测：`winget download` 下到的 zip 带标记，`winget install` 解出来的文件全部没有）。
 2. 双击 `WinKit.exe`，接受 UAC 提权
 3. 左侧选模块；每条改动都会即时生效，多数情况需要点顶部「重启资源管理器」才看得见效果
@@ -60,6 +60,13 @@ WinKit 没有代码签名证书，所以只要文件带着「来自 Internet」�
 
 包内脚本这条路是真的能解决问题，不是「点一下继续」那种将就：`Unblock-File` 去掉 `Zone.Identifier` 流之后，
 SmartScreen 就不再拿「下载来的程序」这个身份看它了。
+
+这个脚本由两个文件组成，两个坑都在编码上，改动时别踩：
+
+- `解除锁定.cmd` 只当启动器，内容**必须全 ASCII、不要 `chcp`**。cmd 是按字节偏移重读批处理文件的，
+  中途换代码页会让它把一行中文劈成两半，报 `'…' is not recognized as an internal or external command`。
+- `unblock.ps1` 装中文，**必须存成 UTF-8 with BOM**。Windows PowerShell 5.1 读不带 BOM 的脚本时按系统
+  ANSI 代码页解码，中文会变乱码。
 
 ## 各模块怎么用
 
@@ -428,7 +435,7 @@ src/WinKit/
   ViewModels/  24 个模块 + 卸载残留清理 / 任务栏两个子视图 + 壳
   Views/       24 个模块 UserControl、2 个子视图与对话框
   Themes/      颜色与控件样式
-packaging/     随包发的 解除锁定.cmd，以及 winget 清单模板（winget/manifests/）
+packaging/     随包发的 解除锁定.cmd + unblock.ps1，以及 winget 清单模板（winget/manifests/）
 tools/Probe/   只读探测 + 写入自测
 ```
 
