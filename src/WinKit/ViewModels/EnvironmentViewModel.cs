@@ -171,6 +171,12 @@ public sealed class EnvironmentViewModel : ObservableObject, IModule
 
     private void Edit(EnvVarItem? item)
     {
+        // 用户级变量写在 HKCU，不需要管理员；系统级写在 HKLM，必须提权
+        if (item is { Scope: not EnvScope.User } && Native.RequireAdmin("修改系统环境变量") is { } adminNeeded)
+        {
+            SetError(adminNeeded);
+            return;
+        }
         if (item is null) return;
 
         var value = InputDialog.Prompt(Application.Current.MainWindow, "修改环境变量",
@@ -192,6 +198,11 @@ public sealed class EnvironmentViewModel : ObservableObject, IModule
 
     private void Delete(EnvVarItem? item)
     {
+        if (item is { Scope: not EnvScope.User } && Native.RequireAdmin("删除系统环境变量") is { } adminNeeded)
+        {
+            SetError(adminNeeded);
+            return;
+        }
         if (item is null) return;
 
         var confirm = MessageBox.Show(
@@ -265,6 +276,12 @@ public sealed class EnvironmentViewModel : ObservableObject, IModule
 
     private void ApplyPath()
     {
+        if (_pathScope != EnvScope.User && Native.RequireAdmin("应用系统 PATH") is { } adminNeeded)
+        {
+            SetError(adminNeeded);
+            return;
+        }
+
         var scopeText = _pathScope == EnvScope.User ? "用户" : "系统";
         var missing = PathEntries.Count(e => !e.Exists);
 

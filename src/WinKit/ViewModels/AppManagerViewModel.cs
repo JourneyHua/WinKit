@@ -496,6 +496,11 @@ public sealed class AppManagerViewModel : ObservableObject, IModule
 
     private async Task UninstallAppAsync(InstalledAppItem? app)
     {
+        if (Native.RequireAdmin("卸载软件") is { } adminNeeded)
+        {
+            SetError(adminNeeded);
+            return;
+        }
         if (app is null || IsBusy) return;
 
         if (app.Kind == AppSourceKind.Scoop)
@@ -696,6 +701,13 @@ public sealed class AppManagerViewModel : ObservableObject, IModule
 
             if (askClean == MessageBoxResult.Yes)
             {
+                // 只拦写入那一步：上面「只看残留报告」不需要管理员权限
+                if (Native.RequireAdmin("清理注册表残留") is { } adminNeeded)
+                {
+                    SetError(adminNeeded);
+                    return;
+                }
+
                 var cleaned = _service.CleanRegistryResiduals(report);
                 _status($"已清理「{app.Name}」的 {cleaned} 处注册表残留");
             }

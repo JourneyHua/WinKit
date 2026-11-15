@@ -306,6 +306,11 @@ public sealed class DriverManagerViewModel : ObservableObject, IModule
 
     private async Task UninstallDriverAsync(DriverPackageItem? driver)
     {
+        if (Native.RequireAdmin("卸载驱动") is { } adminNeeded)
+        {
+            SetError(adminNeeded);
+            return;
+        }
         if (driver is null || IsBusy) return;
 
         var riskWarning = driver.IsCritical
@@ -432,6 +437,11 @@ public sealed class DriverManagerViewModel : ObservableObject, IModule
 
     private async Task RunInstallWindowsUpdatesAsync(IReadOnlyList<WindowsDriverUpdateItem> items)
     {
+        if (Native.RequireAdmin("安装驱动更新") is { } adminNeeded)
+        {
+            SetError(adminNeeded);
+            return;
+        }
         var names = string.Join("\n• ", items.Take(8).Select(i => i.Title));
         if (items.Count > 8) names += $"\n…等共 {items.Count} 个官方驱动更新";
 
@@ -467,6 +477,11 @@ public sealed class DriverManagerViewModel : ObservableObject, IModule
 
     private async Task InstallLocalInfAsync()
     {
+        if (Native.RequireAdmin("安装本地驱动包") is { } adminNeeded)
+        {
+            SetError(adminNeeded);
+            return;
+        }
         if (IsBusy) return;
 
         var dialog = new Microsoft.Win32.OpenFileDialog

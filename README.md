@@ -453,6 +453,7 @@ src/WinKit/
   Views/       24 个模块 UserControl、2 个子视图与对话框
   Themes/      颜色与控件样式
 packaging/     随包发的 解除锁定.cmd + unblock.ps1，以及 winget 清单模板（winget/manifests/）
+               winget/update.ps1 改版本号和哈希；winget/prepare-pr.ps1 铺出提 PR 用的目录结构
 tools/Probe/   只读探测 + 写入自测
 ```
 

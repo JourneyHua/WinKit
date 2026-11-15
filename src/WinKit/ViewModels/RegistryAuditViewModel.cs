@@ -293,6 +293,11 @@ public sealed class RegistryAuditViewModel : ObservableObject, IModule
 
     private void RemoveAll()
     {
+        if (Native.RequireAdmin("批量清理注册表项") is { } adminNeeded)
+        {
+            SetError(adminNeeded);
+            return;
+        }
         var targets = Items.Where(i => i.CanRemove).ToList();
         if (targets.Count == 0) return;
 
@@ -363,6 +368,11 @@ public sealed class RegistryAuditViewModel : ObservableObject, IModule
 
     private void Remove(RegistryItem? item)
     {
+        if (Native.RequireAdmin("删除注册表项") is { } adminNeeded)
+        {
+            SetError(adminNeeded);
+            return;
+        }
         if (item is null) return;
 
         if (!item.CanRemove)

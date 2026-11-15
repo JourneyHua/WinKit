@@ -178,6 +178,15 @@ public sealed class TaskbarViewModel : ObservableObject
     {
         var previous = !requested;
 
+        if (Native.RequireAdmin("显示或隐藏托盘图标") is { } adminNeeded)
+        {
+            item.ToggleRequested = null;
+            item.IsPromoted = previous;
+            item.ToggleRequested = OnTrayToggleRequested;
+            Error = adminNeeded;
+            return;
+        }
+
         try
         {
             _service.SetPromoted(item, requested);

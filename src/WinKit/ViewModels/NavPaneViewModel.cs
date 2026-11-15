@@ -203,6 +203,15 @@ public sealed class NavPaneViewModel : ObservableObject, IModule
 
     private void OnToggleChanged(NavToggleItem item, bool value)
     {
+        if (Native.RequireAdmin("修改导航栏项") is { } adminNeeded)
+        {
+            item.ToggleRequested = null;
+            item.IsOn = !value;
+            item.ToggleRequested = OnToggleChanged;
+            LoadError = adminNeeded;
+            return;
+        }
+
         try
         {
             _service.SetToggle(item, value);

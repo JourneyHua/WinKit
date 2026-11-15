@@ -619,6 +619,11 @@ public sealed class ContextMenuViewModel : ObservableObject, IModule
 
     private void Delete(MenuEntry? entry)
     {
+        if (Native.RequireAdmin("删除菜单项") is { } adminNeeded)
+        {
+            SetError(adminNeeded);
+            return;
+        }
         if (entry is null) return;
 
         var result = MessageBox.Show(
