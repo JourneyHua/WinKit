@@ -1,7 +1,7 @@
 # yaml-language-server: $schema=https://aka.ms/winget-manifest.defaultLocale.1.12.0.schema.json
 
 PackageIdentifier: JourneyHua.WinKit
-PackageVersion: 1.9.1
+PackageVersion: 1.10.0
 PackageLocale: zh-CN
 Publisher: WinKit
 PublisherUrl: https://github.com/JourneyHua/WinKit
@@ -18,7 +18,7 @@ Description: >-
   导航栏与任务栏固定项、应用卸载与残留清理、驱动备份与更新、启动项与服务、系统清理、
   系统调优、文件占用解锁、文件对比、重复文件检测、默认打开方式、事件日志诊断、
   Windows 更新管理、网络诊断、注册表体检与快照备份还原。
-  界面为中文，需要管理员权限运行。
+  界面为中文，以普通权限启动；清理、服务、驱动、补丁、还原点等写入操作会在程序内提示提权。
 Moniker: winkit
 Tags:
   - windows
