@@ -191,6 +191,20 @@ public partial class App : Application
                 log.AppendLine($"WARN 窗口无法显示，跳过渲染：{ex.GetType().Name} {OneLine(ex.Message)}");
             }
 
+            // 布局尺寸必须钉死，不能依赖窗口实际大小：窗口可用尺寸受屏幕分辨率
+            // 与「记住窗口大小」影响——CI runner 是 1024x768 的虚拟屏幕（内容区只有
+            // 1028x749），本机是 1280x820，同一份列宽配置在两处量出的视口分别是
+            // 733 和 969，columns-* 断言就没法通用。给内容根元素固定尺寸，
+            // 让它在任何屏幕上按同一尺寸排版，超出窗口的部分被裁掉（离屏渲染
+            // 只关心布局尺寸，不关心可见性）。
+            if (shown && window.Content is FrameworkElement smokeRoot)
+            {
+                smokeRoot.Width = 1264;
+                smokeRoot.Height = 781;
+                window.UpdateLayout();
+                Pump();
+            }
+
             var vm = (MainViewModel)window.DataContext;
             vm.Initialize();
             log.AppendLine($"  nav: groups={vm.NavGroups.Count} items={vm.NavItems.Count} expanded={vm.NavGroups.Count(g => g.IsExpanded)}");
