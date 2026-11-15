@@ -17,6 +17,10 @@ param(
 
 $ErrorActionPreference = 'Stop'
 $here = Split-Path -Parent $MyInvocation.MyCommand.Path
+# 三份清单放在 manifests/ 子目录：winget validate --manifest <目录> 会把目录里所有文件
+# 当 YAML 解析，README.md 跟它们混在一起会直接报 scanner 错误「did not find expected comment」。
+$manifestDir = Join-Path $here 'manifests'
+if (-not (Test-Path -LiteralPath $manifestDir)) { throw "找不到清单目录：$manifestDir" }
 
 if ($Version -notmatch '^\d+\.\d+\.\d+$') { throw "版本号要写成 1.9.0 这样：$Version" }
 if (-not (Test-Path -LiteralPath $Zip)) { throw "找不到安装包：$Zip" }
@@ -27,11 +31,11 @@ Write-Host "安装包：$resolved"
 Write-Host "SHA256：$hash"
 
 # 先把原来的版本号读出来，好把 URL 里的旧版本换掉（不能盲目替换所有数字）
-$versionFile = Join-Path $here 'JourneyHua.WinKit.yaml'
+$versionFile = Join-Path $manifestDir 'JourneyHua.WinKit.yaml'
 $oldVersion = (Select-String -LiteralPath $versionFile -Pattern '^PackageVersion:\s*(\S+)').Matches[0].Groups[1].Value
 Write-Host "清单原版本：$oldVersion"
 
-foreach ($file in Get-ChildItem -LiteralPath $here -Filter 'JourneyHua.WinKit*.yaml') {
+foreach ($file in Get-ChildItem -LiteralPath $manifestDir -Filter 'JourneyHua.WinKit*.yaml') {
     $text = [IO.File]::ReadAllText($file.FullName, [Text.Encoding]::UTF8)
     $text = $text -replace "(?m)^PackageVersion:\s*$([regex]::Escape($oldVersion))\s*$", "PackageVersion: $Version"
     $text = $text -replace "v$([regex]::Escape($oldVersion))/WinKit-v$([regex]::Escape($oldVersion))-framework-dependent\.zip",
@@ -43,5 +47,5 @@ foreach ($file in Get-ChildItem -LiteralPath $here -Filter 'JourneyHua.WinKit*.y
 
 Write-Host ''
 Write-Host '现在可以校验清单：'
-Write-Host '  winget validate --manifest .'
-Write-Host '  winget show --manifest .'
+Write-Host '  winget validate --manifest manifests'
+Write-Host '  winget show --manifest manifests'

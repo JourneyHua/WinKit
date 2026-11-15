@@ -17,10 +17,14 @@ Installers:
   - Architecture: x64
     InstallerUrl: https://github.com/JourneyHua/WinKit/releases/download/v1.9.0/WinKit-v1.9.0-framework-dependent.zip
     # 发版后必须用 update.ps1 换成真实哈希，占位值提交上去会被仓库校验打回
-    InstallerSha256: 0000000000000000000000000000000000000000000000000000000000000000
+    InstallerSha256: 281EC166DB333AB29DE1064CF23DEE55896495E5F3CDB139F77AE8575DAB4362
 # 这是 framework-dependent 包（不打包 .NET 运行时），装上运行时才跑得起来。
 # 写进依赖，winget 会自己把它一起装掉。
-PackageDependencies:
+# 注意字段层级：三份清单里只有 installer 有 Dependencies，而包依赖挂在
+# Dependencies.PackageDependencies 下面；直接写根级 PackageDependencies 会被
+# 校验器判为未知字段（winget validate 报 Unknown field: [PackageDependencies]）。
+Dependencies:
+  PackageDependencies:
   - PackageIdentifier: Microsoft.DotNet.DesktopRuntime.10
     MinimumVersion: 10.0.0
 ManifestType: installer

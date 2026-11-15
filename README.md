@@ -428,7 +428,7 @@ src/WinKit/
   ViewModels/  24 个模块 + 卸载残留清理 / 任务栏两个子视图 + 壳
   Views/       24 个模块 UserControl、2 个子视图与对话框
   Themes/      颜色与控件样式
-packaging/     随包发的 解除锁定.cmd，以及 winget 清单模板（winget/）
+packaging/     随包发的 解除锁定.cmd，以及 winget 清单模板（winget/manifests/）
 tools/Probe/   只读探测 + 写入自测
 ```
 

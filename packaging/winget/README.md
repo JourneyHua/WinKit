@@ -13,11 +13,15 @@ winget install  --id BurntSushi.ripgrep.MSVC --silent    → 解出来的文件�
 
 ## 三份清单
 
+都在 `manifests/` 子目录里（**不要**把 README 或脚本放在同一目录：`winget validate --manifest <目录>`
+会把目录里的文件都当 YAML 解析，遇到 Markdown 直接报
+`[YAML:Scanner] ... did not find expected comment or line break`，很难看出是文件名的问题）。
+
 | 文件 | 作用 |
 | --- | --- |
-| `JourneyHua.WinKit.yaml` | 版本号、默认语言环境、License |
-| `JourneyHua.WinKit.installer.yaml` | 安装器类型（zip + portable）、下载地址、SHA256、运行时依赖 |
-| `JourneyHua.WinKit.locale.zh-CN.yaml` | 中文名称、描述、发布说明地址 |
+| `manifests/JourneyHua.WinKit.yaml` | 版本号、默认语言环境 |
+| `manifests/JourneyHua.WinKit.installer.yaml` | 安装器类型（zip + portable）、下载地址、SHA256、运行时依赖 |
+| `manifests/JourneyHua.WinKit.locale.zh-CN.yaml` | 中文名称、描述、许可、发布说明地址 |
 
 `InstallerType: zip` + `NestedInstallerType: portable` 的取舍：不需要写安装器、不需要数字签名
 （社区仓库里 MSIX 必须签名，zip+portable 不必），代价是**不会出现在「设置 → 应用和功能」里**，
@@ -44,9 +48,16 @@ winget install  --id BurntSushi.ripgrep.MSVC --silent    → 解出来的文件�
 ## 本地校验
 
 ```powershell
-winget validate --manifest .
-winget show --manifest .
+winget validate --manifest manifests
+winget show --manifest manifests
 ```
+
+两条命令都跑通过一遍才算清单没写错。踩过的两个坑记在这里：
+
+- `validate` 读整个目录，目录里混了 README 会报 scanner 错误（见上）；
+- 依赖不能写在根级 `PackageDependencies:`，那会被判成未知字段
+  （`Manifest Warning: Unknown field. [PackageDependencies]`），正确层级是
+  `Dependencies:` → `PackageDependencies:` → `- PackageIdentifier`。
 
 注意：`winget install --manifest <目录>` 需要先以管理员身份执行
 `winget settings --enable LocalManifestFiles`，普通权限下会报
