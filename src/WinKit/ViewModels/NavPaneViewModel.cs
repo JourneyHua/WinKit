@@ -12,6 +12,7 @@ public sealed class NavPaneViewModel : ObservableObject, IModule
     private readonly NavPaneService _service;
     private readonly NavPinnedService _pinnedService;
     private readonly StubbornNodeService _stubbornService;
+    private readonly QuickAccessOrderStore _orderStore = new();
     private readonly Action<string> _status;
     private string _loadError = "";
     private bool _isLoading;
@@ -39,6 +40,7 @@ public sealed class NavPaneViewModel : ObservableObject, IModule
         MoveUpCommand = new RelayCommand(p => Move(p as QuickAccessItem, -1));
         MoveDownCommand = new RelayCommand(p => Move(p as QuickAccessItem, 1));
         ApplyOrderCommand = new RelayCommand(() => _ = ApplyOrderAsync());
+        RestoreSavedOrderCommand = new RelayCommand(ApplySavedOrder);
         RestartExplorerCommand = new RelayCommand(RestartExplorer);
         PurgeStubbornCommand = new RelayCommand(p => PurgeStubborn(p as StubbornGroup));
         StopRebuilderCommand = new RelayCommand(p => StopRebuilder(p as StubbornGroup));
@@ -88,6 +90,8 @@ public sealed class NavPaneViewModel : ObservableObject, IModule
     public RelayCommand MoveUpCommand { get; }
     public RelayCommand MoveDownCommand { get; }
     public RelayCommand ApplyOrderCommand { get; }
+    /// <summary>把列表按本地存档（上次排好的顺序）重排一次。</summary>
+    public RelayCommand RestoreSavedOrderCommand { get; }
     public RelayCommand RestartExplorerCommand { get; }
     public RelayCommand PurgeStubbornCommand { get; }
     public RelayCommand StopRebuilderCommand { get; }
@@ -148,6 +152,9 @@ public sealed class NavPaneViewModel : ObservableObject, IModule
 
             Pinned.Clear();
             foreach (var item in items) Pinned.Add(item);
+
+            // 资源管理器给的顺序是它自己的，用户在本页排过的顺序存在本地，加载后盖回去
+            ApplySavedOrder(silent: true);
 
             PinnedFolders.Clear();
             foreach (var folder in _pinnedService.Load())
@@ -276,6 +283,68 @@ public sealed class NavPaneViewModel : ObservableObject, IModule
 
         Pinned.Move(index, target);
         for (var i = 0; i < Pinned.Count; i++) Pinned[i].Order = i;
+
+        // 一挪就存：不然关掉程序这次排序就白排了
+        SaveOrder("上移/下移后自动保存");
+    }
+
+    /// <summary>
+    /// 把当前显示顺序写进本地存档。只存固定文件夹——「最近使用」由资源管理器实时生成，
+    /// 没有稳定顺序可言，存下来下次对不上反而误导。
+    /// </summary>
+    private void SaveOrder(string reason)
+    {
+        var paths = Pinned
+            .Where(i => i.IsFolder && !string.IsNullOrWhiteSpace(i.Path))
+            .Select(i => i.Path)
+            .ToList();
+
+        if (paths.Count == 0) return;
+
+        try
+        {
+            _orderStore.Save(paths);
+            _status($"顺序已保存（{paths.Count} 项）：{reason}");
+        }
+        catch (Exception ex)
+        {
+            // 存档写不进去要明说：否则用户以为排好了，下次打开又变回去
+            _status($"顺序保存失败：{ex.Message}");
+        }
+    }
+
+    private void ApplySavedOrder() => ApplySavedOrder(silent: false);
+
+    /// <summary>
+    /// 按本地存档重排显示顺序。存档里没有的项（新固定的）排在后面，彼此保持原顺序。
+    /// </summary>
+    private void ApplySavedOrder(bool silent)
+    {
+        var saved = _orderStore.Load();
+
+        if (saved.Count > 0)
+        {
+            var rank = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+            for (var i = 0; i < saved.Count; i++) rank.TryAdd(saved[i], i);
+
+            var ordered = Pinned
+                .Select((item, index) => (item, index))
+                .OrderBy(x => rank.TryGetValue(x.item.Path, out var r) ? r : int.MaxValue)
+                .ThenBy(x => x.index)
+                .Select(x => x.item)
+                .ToList();
+
+            Pinned.Clear();
+            foreach (var item in ordered) Pinned.Add(item);
+        }
+
+        for (var i = 0; i < Pinned.Count; i++) Pinned[i].Order = i;
+
+        if (silent) return;
+
+        _status(saved.Count == 0
+            ? "还没有保存过顺序：用上移/下移排一次就会自动存下来"
+            : $"已按存档重排（存档 {saved.Count} 项，当前列表 {Pinned.Count} 项）");
     }
 
     private async Task ApplyOrderAsync()
@@ -295,6 +364,9 @@ public sealed class NavPaneViewModel : ObservableObject, IModule
             MessageBoxImage.Warning);
 
         if (result != MessageBoxResult.OK) return;
+
+        // 先把要应用的顺序落盘：万一重建中途失败，至少知道用户想要的是哪个顺序
+        SaveOrder("应用到资源管理器前存档");
 
         IsLoading = true;
         try

@@ -195,13 +195,14 @@ public sealed class TaskbarViewModel : ObservableObject
 
     // ---------- 固定项动作 ----------
 
-    private void Unpin(TaskbarPinnedItem? item)
+    private async void Unpin(TaskbarPinnedItem? item)
     {
         if (item is null) return;
 
         try
         {
-            _service.Unpin(item);
+            // 等「固定项文件被删掉」的通知可能要等上一两秒，留在 UI 线程会把窗口冻住
+            await Task.Run(() => _service.Unpin(item));
             Pinned.Remove(item);
 
             PinnedSummary = Pinned.Count == 0

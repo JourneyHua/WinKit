@@ -165,7 +165,7 @@ public sealed class EnvironmentViewModel : ObservableObject, IModule
         }
         catch (Exception ex)
         {
-            MessageBox.Show($"新增失败：{ex.Message}", "WinKit", MessageBoxButton.OK, MessageBoxImage.Warning);
+            SetError($"新增失败：{ex.Message}");
         }
     }
 
@@ -186,7 +186,7 @@ public sealed class EnvironmentViewModel : ObservableObject, IModule
         }
         catch (Exception ex)
         {
-            MessageBox.Show($"修改失败：{ex.Message}", "WinKit", MessageBoxButton.OK, MessageBoxImage.Warning);
+            SetError($"修改失败：{ex.Message}");
         }
     }
 
@@ -208,7 +208,7 @@ public sealed class EnvironmentViewModel : ObservableObject, IModule
         }
         catch (Exception ex)
         {
-            MessageBox.Show($"删除失败：{ex.Message}", "WinKit", MessageBoxButton.OK, MessageBoxImage.Warning);
+            SetError($"删除失败：{ex.Message}");
         }
     }
 
@@ -223,7 +223,7 @@ public sealed class EnvironmentViewModel : ObservableObject, IModule
         }
         catch (Exception ex)
         {
-            _status("复制失败：" + ex.Message);
+            SetError("复制失败：" + ex.Message);
         }
     }
 
@@ -284,7 +284,7 @@ public sealed class EnvironmentViewModel : ObservableObject, IModule
         }
         catch (Exception ex)
         {
-            MessageBox.Show($"写入失败：{ex.Message}", "WinKit", MessageBoxButton.OK, MessageBoxImage.Warning);
+            SetError($"写入失败：{ex.Message}");
         }
     }
 

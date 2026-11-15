@@ -382,8 +382,7 @@ public sealed class AppManagerViewModel : ObservableObject, IModule
             if (!string.IsNullOrWhiteSpace(error))
             {
                 _status($"检查更新失败：{error}");
-                MessageBox.Show($"调用 winget 检查更新失败：\n{error}", "WinKit",
-                    MessageBoxButton.OK, MessageBoxImage.Warning);
+                SetError($"调用 winget 检查更新失败：{error}");
                 return;
             }
 
@@ -588,8 +587,7 @@ public sealed class AppManagerViewModel : ObservableObject, IModule
         }
         catch (Exception ex)
         {
-            MessageBox.Show($"无法启动卸载程序：{ex.Message}\n\n你也可以点击右键菜单「扫描并清理残留」直接清理失效的卸载记录。",
-                "启动失败", MessageBoxButton.OK, MessageBoxImage.Warning);
+            SetError($"无法启动卸载程序：{ex.Message}");
             HandleResidualCheck(app);
         }
     }
@@ -742,8 +740,7 @@ public sealed class AppManagerViewModel : ObservableObject, IModule
         }
         catch (Exception ex)
         {
-            MessageBox.Show($"打开目录失败：{ex.Message}", "WinKit",
-                MessageBoxButton.OK, MessageBoxImage.Warning);
+            SetError($"打开目录失败：{ex.Message}");
         }
     }
 
@@ -973,7 +970,7 @@ public sealed class AppManagerViewModel : ObservableObject, IModule
         }
         catch (Exception ex)
         {
-            MessageBox.Show($"打开目录失败：{ex.Message}", "WinKit", MessageBoxButton.OK, MessageBoxImage.Warning);
+            SetError($"打开目录失败：{ex.Message}");
         }
     }
 

@@ -250,7 +250,7 @@ public sealed class SystemCleanService
                 foreach (var dir in item.Paths)
                 {
                     if (string.IsNullOrWhiteSpace(dir) || !Directory.Exists(dir)) continue;
-                    var (b, c) = MeasureDirectory(dir, item.FilePattern, item.Recursive);
+                    var (b, c, _) = MeasureDirectory(dir, item.FilePattern, item.Recursive);
                     totalBytes += b;
                     totalFiles += c;
                 }
@@ -261,7 +261,7 @@ public sealed class SystemCleanService
         });
     }
 
-    public async Task<(long FreedBytes, int DeletedFiles)> CleanTargetsAsync(
+    public async Task<(long FreedBytes, int DeletedFiles, int SkippedItems)> CleanTargetsAsync(
         IReadOnlyList<CleanupTargetItem> selectedTargets,
         Action<string>? progress = null,
         int minAgeMinutes = 0)
@@ -270,6 +270,7 @@ public sealed class SystemCleanService
         {
             long freedBytes = 0;
             var deletedFiles = 0;
+            var skippedItems = 0;
 
             foreach (var item in selectedTargets)
             {
@@ -290,6 +291,7 @@ public sealed class SystemCleanService
                     else
                     {
                         progress?.Invoke($"回收站未能清空（HRESULT 0x{hr:X8}），已跳过统计");
+                        skippedItems++;
                     }
 
                     continue;
@@ -298,13 +300,14 @@ public sealed class SystemCleanService
                 foreach (var dir in item.Paths)
                 {
                     if (string.IsNullOrWhiteSpace(dir) || !Directory.Exists(dir)) continue;
-                    var (b, c) = CleanDirectory(dir, item.FilePattern, item.Recursive, minAgeMinutes);
+                    var (b, c, s) = CleanDirectory(dir, item.FilePattern, item.Recursive, minAgeMinutes);
                     freedBytes += b;
                     deletedFiles += c;
+                    skippedItems += s;
                 }
             }
 
-            return (freedBytes, deletedFiles);
+            return (freedBytes, deletedFiles, skippedItems);
         });
     }
 
@@ -323,17 +326,31 @@ public sealed class SystemCleanService
         return (0, 0);
     }
 
-    private static (long Bytes, int Count) MeasureDirectory(string rootDir, string pattern, bool recursive)
+    /// <summary>
+    /// 遍历深度上限。缓存目录里偶尔会出现软链成环、或构建工具留下的超深嵌套，
+    /// 无上限时会一直走下去（清理这类操作还是管理员权限，走错就是大范围删）。
+    /// </summary>
+    private const int MaxTraverseDepth = 16;
+
+    /// <summary>
+    /// 统计目录占用。两个约束：
+    /// 1. 有深度上限（见 <see cref="MaxTraverseDepth"/>）；
+    /// 2. 跳过项要计数，而不是只 catch 掉——被跳过的基本都是「访问被拒」，
+    ///    静默吞掉会让用户以为体积已经算全了。
+    /// </summary>
+    private static (long Bytes, int Count, int Skipped) MeasureDirectory(
+        string rootDir, string pattern, bool recursive)
     {
         long bytes = 0;
         var count = 0;
+        var skipped = 0;
 
-        var stack = new Stack<string>();
-        stack.Push(rootDir);
+        var stack = new Stack<(string Path, int Depth)>();
+        stack.Push((rootDir, 0));
 
         while (stack.Count > 0)
         {
-            var current = stack.Pop();
+            var (current, depth) = stack.Pop();
             try
             {
                 foreach (var file in Directory.EnumerateFiles(current, pattern))
@@ -344,27 +361,42 @@ public sealed class SystemCleanService
                         bytes += fi.Length;
                         count++;
                     }
-                    catch (Exception) { }
+                    catch (Exception)
+                    {
+                        skipped++;
+                    }
                 }
 
-                if (recursive)
+                if (!recursive) continue;
+
+                if (depth >= MaxTraverseDepth)
                 {
-                    foreach (var sub in Directory.EnumerateDirectories(current))
+                    skipped++;
+                    continue;
+                }
+
+                foreach (var sub in Directory.EnumerateDirectories(current))
+                {
+                    try
                     {
-                        try
-                        {
-                            var attr = File.GetAttributes(sub);
-                            if ((attr & FileAttributes.ReparsePoint) == 0)
-                                stack.Push(sub);
-                        }
-                        catch (Exception) { }
+                        var attr = File.GetAttributes(sub);
+                        if ((attr & FileAttributes.ReparsePoint) == 0)
+                            stack.Push((sub, depth + 1));
+                    }
+                    catch (Exception)
+                    {
+                        skipped++;
                     }
                 }
             }
-            catch (Exception) { }
+            catch (Exception)
+            {
+                // 枚举本层就失败（权限/设备不可读），计一次跳过
+                skipped++;
+            }
         }
 
-        return (bytes, count);
+        return (bytes, count, skipped);
     }
 
     /// <summary>
@@ -372,23 +404,24 @@ public sealed class SystemCleanService
     /// minAgeMinutes &gt; 0 时只删「最后写入时间早于该阈值」的文件与子目录——
     /// 避免把其它进程（包括本工具自己、构建工具、沙箱）刚创建、正在用的临时目录当成垃圾删掉。
     /// </summary>
-    private static (long FreedBytes, int DeletedCount) CleanDirectory(
+    private static (long FreedBytes, int DeletedCount, int Skipped) CleanDirectory(
         string rootDir, string pattern, bool recursive, int minAgeMinutes = 0)
     {
         long freed = 0;
         var deleted = 0;
+        var skipped = 0;
 
         var cutoff = minAgeMinutes > 0
             ? DateTime.Now.AddMinutes(-minAgeMinutes)
             : DateTime.MinValue;
 
         var dirs = new List<string>();
-        var stack = new Stack<string>();
-        stack.Push(rootDir);
+        var stack = new Stack<(string Path, int Depth)>();
+        stack.Push((rootDir, 0));
 
         while (stack.Count > 0)
         {
-            var current = stack.Pop();
+            var (current, depth) = stack.Pop();
             dirs.Add(current);
             try
             {
@@ -409,30 +442,44 @@ public sealed class SystemCleanService
                     }
                     catch (Exception)
                     {
-                        // 被正在运行的进程锁定的临时文件直接跳过
+                        // 被正在运行的进程锁定的临时文件跳过，但不能当作「清理完成」蒙过去，
+                        // 计数后在结果里如实报出来
+                        skipped++;
                     }
                 }
 
-                if (recursive)
+                if (!recursive) continue;
+
+                if (depth >= MaxTraverseDepth)
                 {
-                    foreach (var sub in Directory.EnumerateDirectories(current))
+                    skipped++;
+                    continue;
+                }
+
+                foreach (var sub in Directory.EnumerateDirectories(current))
+                {
+                    try
                     {
-                        try
-                        {
-                            var attr = File.GetAttributes(sub);
-                            if ((attr & FileAttributes.ReparsePoint) != 0) continue;
+                        var attr = File.GetAttributes(sub);
+                        if ((attr & FileAttributes.ReparsePoint) != 0) continue;
 
-                            // 新目录不递归进去：里面大概率是活跃会话的数据
-                            if (cutoff != DateTime.MinValue &&
-                                Directory.GetLastWriteTime(sub) > cutoff) continue;
+                        // 新目录不递归进去：里面大概率是活跃会话的数据
+                        if (cutoff != DateTime.MinValue &&
+                            Directory.GetLastWriteTime(sub) > cutoff) continue;
 
-                            stack.Push(sub);
-                        }
-                        catch (Exception) { }
+                        stack.Push((sub, depth + 1));
+                    }
+                    catch (Exception)
+                    {
+                        skipped++;
                     }
                 }
             }
-            catch (Exception) { }
+            catch (Exception)
+            {
+                // 整层枚举失败（权限不足、设备已拔出），计一次跳过
+                skipped++;
+            }
         }
 
         if (recursive && pattern == "*")
@@ -448,11 +495,14 @@ public sealed class SystemCleanService
                     if (!Directory.EnumerateFileSystemEntries(dirs[i]).Any())
                         Directory.Delete(dirs[i], false);
                 }
-                catch (Exception) { }
+                catch (Exception)
+                {
+                    skipped++;
+                }
             }
         }
 
-        return (freed, deleted);
+        return (freed, deleted, skipped);
     }
 
     public async Task<List<LargeFileItem>> ScanLargeFilesAsync(

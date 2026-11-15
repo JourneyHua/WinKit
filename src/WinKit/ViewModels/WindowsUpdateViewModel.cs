@@ -134,7 +134,7 @@ public sealed class WindowsUpdateViewModel : ObservableObject, IModule
         }
         catch (Exception ex)
         {
-            MessageBox.Show($"暂停失败：{ex.Message}", "WinKit", MessageBoxButton.OK, MessageBoxImage.Warning);
+            SetError($"暂停失败：{ex.Message}");
         }
     }
 
@@ -148,7 +148,7 @@ public sealed class WindowsUpdateViewModel : ObservableObject, IModule
         }
         catch (Exception ex)
         {
-            MessageBox.Show($"恢复失败：{ex.Message}", "WinKit", MessageBoxButton.OK, MessageBoxImage.Warning);
+            SetError($"恢复失败：{ex.Message}");
         }
     }
 
@@ -184,7 +184,7 @@ public sealed class WindowsUpdateViewModel : ObservableObject, IModule
         }
         catch (Exception ex)
         {
-            MessageBox.Show($"清理失败：{ex.Message}", "WinKit", MessageBoxButton.OK, MessageBoxImage.Warning);
+            SetError($"清理失败：{ex.Message}");
         }
         finally
         {
@@ -221,7 +221,7 @@ public sealed class WindowsUpdateViewModel : ObservableObject, IModule
         }
         catch (Exception ex)
         {
-            MessageBox.Show($"重启服务失败：{ex.Message}", "WinKit", MessageBoxButton.OK, MessageBoxImage.Warning);
+            SetError($"重启服务失败：{ex.Message}");
         }
         finally
         {

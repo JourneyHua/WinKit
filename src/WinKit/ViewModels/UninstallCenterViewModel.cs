@@ -494,7 +494,7 @@ public sealed class UninstallCenterViewModel : ObservableObject
 
     // ---------- 清理 ----------
 
-    private void CleanSelected()
+    private async void CleanSelected()
     {
         var selected = Residuals.Where(i => i.IsSelected && i.CanClean).ToList();
         if (selected.Count == 0)
@@ -537,33 +537,41 @@ public sealed class UninstallCenterViewModel : ObservableObject
             var failures = new List<string>();
             var done = 0;
 
-            _journal.Record($"清理「{TargetFolderName}」的卸载残留（{selected.Count} 项）",
-                tracked, () =>
-                {
-                    foreach (var service in services)
+            // 停服务最多等 20 × 250ms，还要叠加 sc.exe 每次几百毫秒的启动开销，多服务串行能拖到分钟级。
+            // 这段留在 UI 线程上就是整窗口假死、进度也刷不出来，所以整体搬到线程池。
+            await Task.Run(() =>
+            {
+                _journal.Record($"清理「{TargetFolderName}」的卸载残留（{selected.Count} 项）",
+                    tracked, () =>
                     {
-                        if (TryStopService(service, out var error))
+                        foreach (var service in services)
                         {
-                            TryRegistryAction(() => Reg.DeleteTree(RegPath.Of(
-                                service.Hive ?? HiveKind.LocalMachine, service.SubKey)), failures, service.Path);
+                            if (TryStopService(service, out var error))
+                            {
+                                TryRegistryAction(() => Reg.DeleteTree(RegPath.Of(
+                                    service.Hive ?? HiveKind.LocalMachine, service.SubKey)), failures, service.Path);
+                            }
+                            else
+                            {
+                                failures.Add($"{service.Path}：{error}");
+                            }
                         }
-                        else
-                        {
-                            failures.Add($"{service.Path}：{error}");
-                        }
-                    }
 
-                    foreach (var task in tasks)
-                        DeleteScheduledTask(task, failures);
+                        foreach (var task in tasks)
+                            DeleteScheduledTask(task, failures);
 
-                    foreach (var startup in startups)
-                        TryRegistryAction(() => Reg.DeleteValue(
-                            RegPath.Of(startup.Hive ?? HiveKind.CurrentUser, startup.SubKey),
-                            startup.ValueName), failures, startup.Path);
-                },
-                trackedFiles);
+                        foreach (var startup in startups)
+                            TryRegistryAction(() => Reg.DeleteValue(
+                                RegPath.Of(startup.Hive ?? HiveKind.CurrentUser, startup.SubKey),
+                                startup.ValueName), failures, startup.Path);
+                    },
+                    trackedFiles);
 
-            // 文件与目录不进 journal 的还原闭环（回收站里的东西由用户自己决定要不要还原）
+                done += services.Count + tasks.Count + startups.Count;
+            });
+
+            // 文件与目录不进 journal 的还原闭环（回收站里的东西由用户自己决定要不要还原）。
+            // 这两个循环必须留在 UI 线程：回收站走 SHFileOperation，依赖 STA，换到线程池会直接失败。
             foreach (var shortcut in shortcuts)
                 if (RecycleFile(shortcut.Path, out var error)) done++;
                 else failures.Add($"{shortcut.Path}：{error}");
@@ -571,8 +579,6 @@ public sealed class UninstallCenterViewModel : ObservableObject
             foreach (var directory in directories)
                 if (RecycleDirectory(directory.Path, out var error)) done++;
                 else failures.Add($"{directory.Path}：{error}");
-
-            done += services.Count + tasks.Count + startups.Count;
 
             _archiveStatusFile = WriteArchive(selected, failures);
             ArchivePath = _archiveStatusFile;

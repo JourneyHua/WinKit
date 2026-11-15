@@ -269,7 +269,7 @@ public sealed class StartupServiceViewModel : ObservableObject, IModule
             item.ToggleRequested = null;
             item.IsEnabled = !enabled;
             item.ToggleRequested = OnStartupToggled;
-            MessageBox.Show($"修改开机启动状态失败：{ex.Message}", "WinKit", MessageBoxButton.OK, MessageBoxImage.Warning);
+            SetError($"修改开机启动状态失败：{ex.Message}");
         }
     }
 
@@ -323,7 +323,7 @@ public sealed class StartupServiceViewModel : ObservableObject, IModule
         }
         catch (Exception ex)
         {
-            MessageBox.Show($"删除失败：{ex.Message}", "WinKit", MessageBoxButton.OK, MessageBoxImage.Warning);
+            SetError($"删除失败：{ex.Message}");
         }
     }
 
@@ -386,7 +386,7 @@ public sealed class StartupServiceViewModel : ObservableObject, IModule
         }
         catch (Exception ex)
         {
-            MessageBox.Show($"修改服务启动类型失败：{ex.Message}", "WinKit", MessageBoxButton.OK, MessageBoxImage.Warning);
+            SetError($"修改服务启动类型失败：{ex.Message}");
         }
     }
 

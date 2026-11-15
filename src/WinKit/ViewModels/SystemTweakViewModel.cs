@@ -170,7 +170,7 @@ public sealed class SystemTweakViewModel : ObservableObject, IModule
             item.ToggleRequested = null;
             item.IsOn = !isOn;
             item.ToggleRequested = OnTweakToggled;
-            MessageBox.Show($"设置失败：{ex.Message}", "WinKit", MessageBoxButton.OK, MessageBoxImage.Warning);
+            SetError($"设置失败：{ex.Message}");
         }
     }
 
@@ -249,7 +249,7 @@ public sealed class SystemTweakViewModel : ObservableObject, IModule
         }
         catch (Exception ex)
         {
-            MessageBox.Show($"结束进程失败：{ex.Message}", "WinKit", MessageBoxButton.OK, MessageBoxImage.Warning);
+            SetError($"结束进程失败：{ex.Message}");
         }
     }
 
@@ -307,7 +307,7 @@ public sealed class SystemTweakViewModel : ObservableObject, IModule
         }
         catch (Exception ex)
         {
-            MessageBox.Show($"打开 hosts 文件失败：{ex.Message}", "WinKit", MessageBoxButton.OK, MessageBoxImage.Warning);
+            SetError($"打开 hosts 文件失败：{ex.Message}");
         }
     }
 
@@ -321,8 +321,7 @@ public sealed class SystemTweakViewModel : ObservableObject, IModule
         }
         catch (Exception ex)
         {
-            MessageBox.Show($"打开「{shortcut.Title}」失败：{ex.Message}", "WinKit",
-                MessageBoxButton.OK, MessageBoxImage.Warning);
+            SetError($"打开「{shortcut.Title}」失败：{ex.Message}");
         }
     }
 

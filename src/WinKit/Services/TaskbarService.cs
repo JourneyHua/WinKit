@@ -147,11 +147,37 @@ public sealed class TaskbarService
             .ToList();
     }
 
-    /// <summary>取消固定。成功与否以 .lnk 是否真的消失为准，不看返回值。</summary>
+    /// <summary>
+    /// 取消固定。成功与否以 .lnk 是否真的消失为准，不看返回值。
+    ///
+    /// 系统移除固定项文件是异步的，必须等一会儿；但「每 100ms 查一次、最多 1.5 秒」
+    /// 的轮询既慢又白等——快的时候几十毫秒就没了，却总要睡满。这里改成挂
+    /// <see cref="FileSystemWatcher"/> 等删除事件：事件到就立刻返回，超时才放弃。
+    /// </summary>
     public void Unpin(TaskbarPinnedItem item)
     {
         if (!File.Exists(item.ShortcutPath))
             throw new FileNotFoundException($"固定项快捷方式不存在：{item.ShortcutPath}");
+
+        var fileName = System.IO.Path.GetFileName(item.ShortcutPath);
+        using var removed = new ManualResetEventSlim(false);
+
+        // 监听要在调 verb 之前挂好，否则文件删得比事件订阅快就永远等不到通知
+        using var watcher = new FileSystemWatcher(PinnedFolder, "*.lnk")
+        {
+            NotifyFilter = NotifyFilters.FileName,
+            EnableRaisingEvents = true
+        };
+
+        watcher.Deleted += (_, e) =>
+        {
+            if (string.Equals(e.Name, fileName, StringComparison.OrdinalIgnoreCase)) removed.Set();
+        };
+        watcher.Renamed += (_, e) =>
+        {
+            // 有的系统实现是「改名为临时名再删」，所以改名也要算
+            if (string.Equals(e.OldName, fileName, StringComparison.OrdinalIgnoreCase)) removed.Set();
+        };
 
         Exception? last = null;
 
@@ -167,12 +193,9 @@ public sealed class TaskbarService
                 continue;
             }
 
-            // verb 调起后系统是异步处理固定项文件的，给一小段时间再复查
-            for (var i = 0; i < 15; i++)
-            {
-                if (!File.Exists(item.ShortcutPath)) return;
-                Thread.Sleep(100);
-            }
+            // 2 秒是保险值，不是期望值：事件正常几十毫秒就到。
+            // 事件也可能被漏掉（同名文件被重建、监听缓冲溢出），所以超时后再复查一次磁盘。
+            if (removed.Wait(2000) || !File.Exists(item.ShortcutPath)) return;
         }
 
         throw new InvalidOperationException(

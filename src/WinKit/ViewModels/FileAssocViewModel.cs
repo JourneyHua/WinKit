@@ -128,7 +128,7 @@ public sealed class FileAssocViewModel : ObservableObject, IModule
     {
         var (ok, message) = FileAssocService.OpenDefaultAppsSettings(extension);
         _status(message);
-        if (!ok) MessageBox.Show(message, "WinKit", MessageBoxButton.OK, MessageBoxImage.Warning);
+        if (!ok) SetError(message);
     }
 
     private void ShowOpenWith(FileAssocItem? item)
@@ -137,7 +137,7 @@ public sealed class FileAssocViewModel : ObservableObject, IModule
 
         var (ok, message) = FileAssocService.ShowOpenWith(item.Extension);
         _status(message);
-        if (!ok) MessageBox.Show(message, "WinKit", MessageBoxButton.OK, MessageBoxImage.Warning);
+        if (!ok) SetError(message);
     }
 
     private void CopyCommand(FileAssocItem? item)
@@ -151,7 +151,7 @@ public sealed class FileAssocViewModel : ObservableObject, IModule
         }
         catch (Exception ex)
         {
-            _status("复制失败：" + ex.Message);
+            SetError("复制失败：" + ex.Message);
         }
     }
 
@@ -167,7 +167,7 @@ public sealed class FileAssocViewModel : ObservableObject, IModule
         }
         catch (Exception ex)
         {
-            _status("复制失败：" + ex.Message);
+            SetError("复制失败：" + ex.Message);
         }
     }
 
@@ -189,7 +189,7 @@ public sealed class FileAssocViewModel : ObservableObject, IModule
         }
         catch (Exception ex)
         {
-            MessageBox.Show($"清理失败：{ex.Message}", "WinKit", MessageBoxButton.OK, MessageBoxImage.Warning);
+            SetError($"清理失败：{ex.Message}");
         }
     }
 

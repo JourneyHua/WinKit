@@ -563,8 +563,8 @@ public sealed class ContextMenuViewModel : ObservableObject, IModule
         }
         catch (Exception ex)
         {
-            entry.IsDisabled = !enabled;
-            MessageBox.Show($"操作失败：{ex.Message}", "WinKit", MessageBoxButton.OK, MessageBoxImage.Warning);
+            Rollback(entry, enabled);
+            SetError($"{(enabled ? "启用" : "禁用")}「{entry.DisplayName}」失败：{ex.Message}");
         }
     }
 
@@ -577,9 +577,30 @@ public sealed class ContextMenuViewModel : ObservableObject, IModule
         }
         catch (Exception ex)
         {
-            item.IsBlocked = !blocked;
-            MessageBox.Show($"操作失败：{ex.Message}", "WinKit", MessageBoxButton.OK, MessageBoxImage.Warning);
+            Rollback(item, blocked);
+            SetError($"{(blocked ? "屏蔽" : "恢复")}「{item.DisplayName}」失败：{ex.Message}");
         }
+    }
+
+    /// <summary>
+    /// 回滚勾选状态。必须先摘掉回调：IsDisabled 的 setter 会再次触发 ToggleRequested，
+    /// 若反向写入也失败就会无限互递归，StackOverflow 会直接杀掉进程、连提示都留不下。
+    /// 其它四个页面（此电脑/导航栏/任务栏/系统调优）早就是这么写的，这里之前只写回了属性。
+    /// </summary>
+    private static void Rollback(MenuEntry entry, bool attempted)
+    {
+        var handler = entry.ToggleRequested;
+        entry.ToggleRequested = null;
+        entry.IsDisabled = !attempted;
+        entry.ToggleRequested = handler;
+    }
+
+    private static void Rollback(NewMenuItem item, bool attempted)
+    {
+        var handler = item.ToggleRequested;
+        item.ToggleRequested = null;
+        item.IsBlocked = !attempted;
+        item.ToggleRequested = handler;
     }
 
     private void Delete(MenuEntry? entry)
@@ -693,4 +714,23 @@ public sealed class ContextMenuViewModel : ObservableObject, IModule
         if (Native.OpenInRegedit(regPath))
             _status($"已在注册表编辑器中定位：{regPath}");
     }
+
+    private string _errorText = "";
+
+    /// <summary>
+    /// 页面级错误：开关切换失败时统一由 ErrorBar 展示。
+    /// 这里原本弹 MessageBox，一闪就没了、也没留下任何痕迹，翻不到刚才失败的是哪一项。
+    /// </summary>
+    public string ErrorText
+    {
+        get => _errorText;
+        private set
+        {
+            if (Set(ref _errorText, value)) OnPropertyChanged(nameof(HasError));
+        }
+    }
+
+    public bool HasError => !string.IsNullOrWhiteSpace(_errorText);
+
+    public void SetError(string? message) => ErrorText = message ?? "";
 }

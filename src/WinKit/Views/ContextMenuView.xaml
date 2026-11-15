@@ -375,5 +375,11 @@
                 </Grid>
             </Grid>
         </Grid>
+        <!-- 页面级错误条：开关切换失败时统一展示，替代原先一闪而过的 MessageBox -->
+        <Border Style="{StaticResource ErrorBar}" VerticalAlignment="Top"
+                Panel.ZIndex="99" Margin="24,8,24,0"
+                Visibility="{Binding HasError, Converter={StaticResource BoolToVis}}">
+            <TextBlock Text="{Binding ErrorText}" Style="{StaticResource ErrorText}" />
+        </Border>
     </Grid>
 </UserControl>

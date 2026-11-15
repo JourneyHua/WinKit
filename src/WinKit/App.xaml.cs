@@ -12,9 +12,40 @@ namespace WinKit;
 
 public partial class App : Application
 {
+    /// <summary>本程序认识的命令行开关。不在这张表里的开关一律当误用处理。</summary>
+    private static readonly string[] KnownSwitches =
+    [
+        "--smoke",
+        "--manifest-probe",
+        "--maintain",
+        "--help",
+        "-?"
+    ];
+
     protected override void OnStartup(StartupEventArgs e)
     {
         base.OnStartup(e);
+
+        // 这里以前没有 else 分支：随手传一个不认识的开关——最典型的是把 tools/Probe 的
+        // --selftest 当成 WinKit.exe 的参数——不会报错，会静默启动完整 GUI 并弹 UAC，
+        // 让人以为工具坏了或是自测跑起来了。宁可明确拒绝，也不要糊里糊涂跑起来。
+        var badSwitches = e.Args
+            .Where(a => a.StartsWith("-", StringComparison.Ordinal) && !KnownSwitches.Contains(a))
+            .ToList();
+
+        if (badSwitches.Count > 0)
+        {
+            ShowUsage(badSwitches);
+            Shutdown(2);
+            return;
+        }
+
+        if (e.Args.Contains("--help") || e.Args.Contains("-?"))
+        {
+            ShowUsage([]);
+            Shutdown(0);
+            return;
+        }
 
         var smokeIndex = Array.IndexOf(e.Args, "--smoke");
         if (smokeIndex >= 0)
@@ -87,13 +118,98 @@ public partial class App : Application
         e.Handled = true;
     }
 
+    /// <summary>
+    /// 兜底异常处理：写日志 + 提示一句人话。
+    /// 以前是把整个 StackTrace 塞进 MessageBox 然后 e.Handled = true —— 用户看不懂、复制不出来，
+    /// 关掉窗口就什么都没留下，等于把故障现场销毁了。现在完整堆栈落盘，框里只给人话和日志路径。
+    /// </summary>
     private static void ShowFatal(Exception? ex)
     {
+        var logPath = "";
+
+        try
+        {
+            var logDir = Path.Combine(
+                Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+                "WinKit", "Logs");
+            Directory.CreateDirectory(logDir);
+            logPath = Path.Combine(logDir, $"crash-{DateTime.Now:yyyyMMdd-HHmmss}.txt");
+            File.WriteAllText(
+                logPath,
+                $"=== WinKit 未处理异常 ==={Environment.NewLine}" +
+                $"时间：{DateTime.Now:yyyy-MM-dd HH:mm:ss}{Environment.NewLine}" +
+                $"版本：{typeof(App).Assembly.GetName().Version}{Environment.NewLine}" +
+                $"提权：{(Core.Native.IsElevated() ? "是" : "否")}{Environment.NewLine}{Environment.NewLine}" +
+                (ex?.ToString() ?? "（异常对象为 null）"),
+                new UTF8Encoding(true));
+        }
+        catch (Exception)
+        {
+            // 日志都写不进去（磁盘满、目录被锁）就只能退回到只弹框
+        }
+
+        var body = $"WinKit 遇到了一个未处理的错误，功能可能已经不正常。{Environment.NewLine}{Environment.NewLine}" +
+                   $"错误：{ex?.Message ?? "未知"}";
+
+        body += string.IsNullOrEmpty(logPath)
+            ? $"{Environment.NewLine}{Environment.NewLine}（详细堆栈写入日志失败，可能是日志目录不可写）"
+            : $"{Environment.NewLine}{Environment.NewLine}完整堆栈已写入：{Environment.NewLine}{logPath}";
+
+        MessageBox.Show(body, "WinKit 系统管家", MessageBoxButton.OK, MessageBoxImage.Error);
+    }
+
+    /// <summary>
+    /// 打印用法。GUI 程序没有控制台，双击误传参数时只写 stderr 等于什么都没说，
+    /// 所以除了落一份日志文件，还要弹一次框。
+    /// </summary>
+    private static void ShowUsage(IReadOnlyCollection<string> badSwitches)
+    {
+        var sb = new StringBuilder();
+
+        if (badSwitches.Count > 0)
+        {
+            sb.AppendLine($"无法识别的参数：{string.Join(" ", badSwitches)}");
+
+            // 这条误用太常见了（README 与旧文档都容易让人以为 --selftest 是 exe 参数），单独说清楚
+            if (badSwitches.Contains("--selftest"))
+            {
+                sb.AppendLine();
+                sb.AppendLine("--selftest 是 tools/Probe 的参数，不是 WinKit.exe 的：");
+                sb.AppendLine("  dotnet run --project tools/Probe -- --selftest");
+                sb.AppendLine("或直接运行它的产物 WinKitProbe.exe --selftest。");
+            }
+
+            sb.AppendLine();
+        }
+
+        sb.AppendLine("可用参数：");
+        sb.AppendLine("  （无参数）            正常启动");
+        sb.AppendLine("  --smoke <输出目录>    界面离屏自检：逐模块渲染 PNG 后退出");
+        sb.AppendLine("  --manifest-probe      枚举菜单项 / 快速访问 / 驱动器并输出报告");
+        sb.AppendLine("  --maintain            无人值守维护（计划任务用），跑完即退");
+        sb.AppendLine("  --help                显示这段说明");
+
+        var text = sb.ToString();
+
+        // 从计划任务或脚本里误调时没有人在屏幕前，日志是唯一的线索
+        try
+        {
+            var logDir = Path.Combine(
+                Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+                "WinKit", "Logs");
+            Directory.CreateDirectory(logDir);
+            File.WriteAllText(Path.Combine(logDir, "command-line.txt"), text, new UTF8Encoding(true));
+        }
+        catch (Exception)
+        {
+            // 日志写不了不影响把话说到用户眼前，下面还有弹框
+        }
+
         MessageBox.Show(
-            $"发生了未处理的错误：\n\n{ex?.Message}\n\n{ex?.StackTrace}",
+            text,
             "WinKit 系统管家",
             MessageBoxButton.OK,
-            MessageBoxImage.Error);
+            badSwitches.Count > 0 ? MessageBoxImage.Warning : MessageBoxImage.Information);
     }
 
     /// <summary>
@@ -370,6 +486,58 @@ public partial class App : Application
                     log.AppendLine($"  diskhealth: disks={diskVm.Disks.Count} volumes={diskVm.Volumes.Count} error=\"{OneLine(diskVm.ErrorText)}\" summary=\"{OneLine(diskVm.SummaryText)}\"");
                 }
 
+                if (vm.CurrentViewModel is SystemRestoreViewModel restoreVm)
+                {
+                    restoreVm.Refresh();
+                    WaitWhileBusy(() => restoreVm.IsBusy, 40000);
+                    UpdateLayoutSafe(window);
+                    Pump();
+                    if (shown) Capture(window, outputDir, "restore-loaded", log);
+
+                    // 还原点要靠管理员权限才读得到。冒烟进程是 asInvoker，读不到属正常，
+                    // 所以这里只要求「要么列出还原点，要么把原因说清楚」（错误信息或
+                    // 「系统保护没开」都算说清楚了），三者皆空才算失败。
+                    var restoreOk = restoreVm.Points.Count > 0
+                        || !string.IsNullOrWhiteSpace(restoreVm.ErrorText)
+                        || !restoreVm.ProtectionEnabled;
+                    log.AppendLine($"  restore: points={restoreVm.Points.Count} protection=\"{OneLine(restoreVm.ProtectionText)}\" "
+                        + $"enabled={restoreVm.ProtectionEnabled} frequency=\"{OneLine(restoreVm.FrequencyText)}\" "
+                        + $"error=\"{OneLine(restoreVm.ErrorText)}\" result={(restoreOk ? "OK" : "FAILED")}");
+                }
+
+                if (vm.CurrentViewModel is ProcessManagerViewModel procVm)
+                {
+                    procVm.Refresh();
+                    WaitWhileBusy(() => procVm.IsBusy, 40000);
+                    UpdateLayoutSafe(window);
+                    Pump();
+                    if (shown) Capture(window, outputDir, "processes-loaded", log);
+
+                    // 进程枚举不依赖权限，必须真的拿到进程；拿不到就是功能坏了。
+                    var selfListed = procVm.Items.Any(p => p.Pid == Environment.ProcessId);
+                    log.AppendLine($"  processes: count={procVm.Items.Count} self={selfListed} "
+                        + $"summary=\"{OneLine(procVm.SummaryText)}\" error=\"{OneLine(procVm.ErrorText)}\" "
+                        + $"result={(procVm.Items.Count > 0 && selfListed ? "OK" : "FAILED")}");
+                }
+
+                if (vm.CurrentViewModel is SmartAttributeViewModel smartVm)
+                {
+                    smartVm.Refresh();
+                    WaitWhileBusy(() => smartVm.IsBusy, 40000);
+                    UpdateLayoutSafe(window);
+                    Pump();
+                    if (shown) Capture(window, outputDir, "smart-loaded", log);
+
+                    // SMART 原始属性同样需要管理员透传。asInvoker 下读不到很正常，
+                    // 但服务层必须把原因说出来（读到磁盘但控制器不透传时，每块盘自己也有 Error）；
+                    // 「一块盘都没有、也没有任何说明」才是真的坏。
+                    var smartOk = smartVm.Attributes.Count > 0
+                        || !string.IsNullOrWhiteSpace(smartVm.ErrorText)
+                        || smartVm.Disks.Any(d => !string.IsNullOrWhiteSpace(d.Error));
+                    log.AppendLine($"  smart: disks={smartVm.Disks.Count} attributes={smartVm.Attributes.Count} "
+                        + $"summary=\"{OneLine(smartVm.SummaryText)}\" error=\"{OneLine(smartVm.ErrorText)}\" result={(smartOk ? "OK" : "FAILED")}");
+                }
+
                 if (vm.CurrentViewModel is EnvironmentViewModel envVm)
                 {
                     envVm.Refresh();
@@ -552,6 +720,20 @@ public partial class App : Application
         }
 
         PumpOnce();
+    }
+
+    /// <summary>
+    /// 等到页面自己说「不忙了」。固定睡 N 秒靠不住：这些页面背后是 powershell，
+    /// 冷启动就能花七八秒，机器一忙十几秒也正常，睡短了断言读到的是加载中的空数据，
+    /// 睡长了每次冒烟都白等。
+    /// </summary>
+    private static void WaitWhileBusy(Func<bool> busy, int timeoutMs)
+    {
+        var deadline = Environment.TickCount64 + timeoutMs;
+        while (busy() && Environment.TickCount64 < deadline)
+        {
+            Pump(200);
+        }
     }
 
     private static void PumpOnce()

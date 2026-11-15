@@ -151,8 +151,7 @@ public sealed class DriverManagerViewModel : ObservableObject, IModule
         }
         catch (Exception ex)
         {
-            _status($"操作失败：{ex.Message}");
-            MessageBox.Show($"操作失败：{ex.Message}", "WinKit", MessageBoxButton.OK, MessageBoxImage.Warning);
+            SetError($"操作失败：{ex.Message}");
         }
         finally
         {
@@ -177,7 +176,12 @@ public sealed class DriverManagerViewModel : ObservableObject, IModule
     public bool HasBackups => BackupCount > 0;
     public string RestoreBackupText => $"从备份还原（{BackupCount}）";
 
-    public void Refresh()
+    /// <summary>
+    /// 刷新驱动列表。IModule 的约定是 void，所以这里点了就走，真正的加载在线程池上跑。
+    /// </summary>
+    public void Refresh() => _ = LoadAsync();
+
+    private async Task LoadAsync()
     {
         if (IsBusy) return;
         IsBusy = true;
@@ -185,10 +189,15 @@ public sealed class DriverManagerViewModel : ObservableObject, IModule
         try
         {
             _status("正在枚举第三方驱动包（pnputil）…");
-            var (drivers, error) = _service.LoadDrivers();
+
+            // LoadDrivers 内部是同步调 pnputil 的，慢机器上要好几秒。留在 UI 线程会把整个窗口冻住，
+            // 连「正在枚举」这行字都刷不出来，用户只会以为程序死了，所以交给线程池。
+            var (drivers, error) = await Task.Run(() => _service.LoadDrivers());
+
             if (!string.IsNullOrWhiteSpace(error))
             {
-                _status($"读取驱动失败：{error}");
+                SetError($"读取驱动失败：{error}");
+                _status("读取驱动失败");
                 return;
             }
 
@@ -200,18 +209,13 @@ public sealed class DriverManagerViewModel : ObservableObject, IModule
         }
         catch (Exception ex)
         {
-            _status($"读取驱动异常：{ex.Message}");
+            SetError($"读取驱动异常：{ex.Message}");
+            _status("读取驱动异常");
         }
         finally
         {
             IsBusy = false;
         }
-    }
-
-    private Task LoadAsync()
-    {
-        Refresh();
-        return Task.CompletedTask;
     }
 
     private void BuildClassNodes()
@@ -291,8 +295,7 @@ public sealed class DriverManagerViewModel : ObservableObject, IModule
             else
             {
                 _status("备份驱动失败");
-                MessageBox.Show($"导出驱动备份失败：\n{err}", "WinKit",
-                    MessageBoxButton.OK, MessageBoxImage.Warning);
+                SetError($"导出驱动备份失败：{err}");
             }
         }
         finally
@@ -394,7 +397,7 @@ public sealed class DriverManagerViewModel : ObservableObject, IModule
             if (!string.IsNullOrWhiteSpace(err))
             {
                 _status(err);
-                MessageBox.Show(err, "在线驱动检测", MessageBoxButton.OK, MessageBoxImage.Warning);
+                SetError(err);
                 return;
             }
 
@@ -579,7 +582,7 @@ public sealed class DriverManagerViewModel : ObservableObject, IModule
         }
         catch (Exception ex)
         {
-            MessageBox.Show($"打开备份目录失败：{ex.Message}", "WinKit", MessageBoxButton.OK, MessageBoxImage.Warning);
+            SetError($"打开备份目录失败：{ex.Message}");
         }
     }
 
@@ -592,7 +595,7 @@ public sealed class DriverManagerViewModel : ObservableObject, IModule
         }
         catch (Exception ex)
         {
-            MessageBox.Show($"打开设备管理器失败：{ex.Message}", "WinKit", MessageBoxButton.OK, MessageBoxImage.Warning);
+            SetError($"打开设备管理器失败：{ex.Message}");
         }
     }
 

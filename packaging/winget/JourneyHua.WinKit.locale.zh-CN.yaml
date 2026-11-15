@@ -1,0 +1,32 @@
+# yaml-language-server: $schema=https://aka.ms/winget-manifest.defaultLocale.1.12.0.schema.json
+
+PackageIdentifier: JourneyHua.WinKit
+PackageVersion: 1.9.0
+PackageLocale: zh-CN
+Publisher: WinKit
+PublisherUrl: https://github.com/JourneyHua/WinKit
+PublisherSupportUrl: https://github.com/JourneyHua/WinKit/issues
+PackageName: WinKit 系统管家
+PackageUrl: https://github.com/JourneyHua/WinKit
+License: MIT
+LicenseUrl: https://github.com/JourneyHua/WinKit/blob/master/LICENSE
+Copyright: Copyright (c) JourneyHua
+ShortDescription: 一个不需要装一堆小工具的 Windows 系统管理面板
+Description: >-
+  WinKit 把日常维护 Windows 要用到的几十项操作集中到一个界面里：体检与维护、系统概览、
+  磁盘健康与 SMART 原始属性、系统还原点、进程管理、环境变量、右键菜单与「此电脑」图标、
+  导航栏与任务栏固定项、应用卸载与残留清理、驱动备份与更新、启动项与服务、系统清理、
+  系统调优、文件占用解锁、文件对比、重复文件检测、默认打开方式、事件日志诊断、
+  Windows 更新管理、网络诊断、注册表体检与快照备份还原。
+  界面为中文，需要管理员权限运行。
+Moniker: winkit
+Tags:
+  - windows
+  - system
+  - utility
+  - cleanup
+  - maintenance
+  - uninstaller
+ReleaseNotesUrl: https://github.com/JourneyHua/WinKit/releases
+ManifestType: defaultLocale
+ManifestVersion: 1.12.0

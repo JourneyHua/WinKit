@@ -247,6 +247,36 @@ public sealed class MainViewModel : ObservableObject
             },
             new()
             {
+                Key = "restore",
+                Title = "系统还原点",
+                Group = "体检与安全",
+                Glyph = "\uE7A7",
+                Subtitle = "创建、删除还原点，或把系统回退到某个还原点（不动个人文件）",
+                AccentBrush = new System.Windows.Media.SolidColorBrush(System.Windows.Media.Color.FromRgb(0x2B, 0x57, 0x9A)),
+                Factory = () => new SystemRestoreViewModel(SetStatus, SetBusy)
+            },
+            new()
+            {
+                Key = "processes",
+                Title = "进程管理",
+                Group = "体检与安全",
+                Glyph = "\uE9D9",
+                Subtitle = "按内存排序看全部进程，可按名字/路径/PID 筛选，结束进程或整棵进程树",
+                AccentBrush = new System.Windows.Media.SolidColorBrush(System.Windows.Media.Color.FromRgb(0x0E, 0x6B, 0x5C)),
+                Factory = () => new ProcessManagerViewModel(SetStatus, SetBusy)
+            },
+            new()
+            {
+                Key = "smart",
+                Title = "SMART 属性",
+                Group = "文件与磁盘",
+                Glyph = "\uE9D2",
+                Subtitle = "逐条看硬盘的 SMART 原始属性（重映射扇区、待映射、温度、通电时长），可导出 CSV",
+                AccentBrush = new System.Windows.Media.SolidColorBrush(System.Windows.Media.Color.FromRgb(0x7A, 0x3E, 0x1D)),
+                Factory = () => new SmartAttributeViewModel(SetStatus, SetBusy)
+            },
+            new()
+            {
                 Key = "env",
                 Title = "环境变量",
                 Group = "系统设置",

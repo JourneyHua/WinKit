@@ -234,11 +234,11 @@ public sealed class MaintenanceService
             // 无人值守时只删「已经存在 2 小时以上」的临时文件：
             // 凌晨跑时可能有其它进程（构建、安装、沙箱）正在用 %TEMP% 下刚建的目录，
             // 不看年龄会把活跃会话的数据一起删掉。
-            var (freed, count) = cleaner.CleanTargetsAsync(targets, minAgeMinutes: 120)
+            var (freed, count, skipped) = cleaner.CleanTargetsAsync(targets, minAgeMinutes: 120)
                 .GetAwaiter()
                 .GetResult();
 
-            log.AppendLine($"  清理：{targets.Count} 类目标，删除 {count} 个文件，释放 {ThisPcService.FormatSize(freed)}（仅 2 小时前的文件）");
+            log.AppendLine($"  清理：{targets.Count} 类目标，删除 {count} 个文件，释放 {ThisPcService.FormatSize(freed)}（仅 2 小时前的文件），跳过 {skipped} 项");
         }
         catch (Exception ex)
         {

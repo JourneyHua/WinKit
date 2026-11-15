@@ -186,7 +186,7 @@ public sealed class ReportViewModel : ObservableObject, IModule
         }
         catch (Exception ex)
         {
-            MessageBox.Show($"导出失败：{ex.Message}", "WinKit", MessageBoxButton.OK, MessageBoxImage.Warning);
+            SetError($"导出失败：{ex.Message}");
         }
     }
 
@@ -220,7 +220,7 @@ public sealed class ReportViewModel : ObservableObject, IModule
 
         if (!ok)
         {
-            MessageBox.Show(message, "注册失败", MessageBoxButton.OK, MessageBoxImage.Warning);
+            SetError(message);
         }
         else
         {
@@ -244,7 +244,7 @@ public sealed class ReportViewModel : ObservableObject, IModule
         var (ok, message) = _maintenance.Delete();
         _status(message);
 
-        if (!ok) MessageBox.Show(message, "删除失败", MessageBoxButton.OK, MessageBoxImage.Warning);
+        if (!ok) SetError(message);
 
         MaintenanceStatus = _maintenance.LoadStatus();
     }
@@ -262,7 +262,7 @@ public sealed class ReportViewModel : ObservableObject, IModule
 
         if (!ok)
         {
-            MessageBox.Show(message, "触发失败", MessageBoxButton.OK, MessageBoxImage.Warning);
+            SetError(message);
             return;
         }
 

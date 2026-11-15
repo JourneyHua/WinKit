@@ -749,6 +749,65 @@ internal static class Program
             // 只能验证「空句柄返回 ERROR_INVALID_PARAMETER 而不是崩溃」这一层；
             // 真正放行成功与否由 smoke 的 dragdrop 断言覆盖。
             Check("拖放放行对空句柄返回错误码", Native.AllowDragDropFromLowerIntegrity(IntPtr.Zero) == 87);
+
+            // SMART 属性块解析：这里造一段 512 字节的假数据，按 ATA 的格式塞两条属性，
+            // 验证偏移计算、原始值小端还原、阈值合并与「原始值不为 0 就提示」的启发式都在位。
+            // 真机上这块数据只有管理员能读（而且 USB/RAID 盘根本读不到），所以必须能脱离真机测。
+            var smartData = new byte[512];
+            var smartThresholds = new byte[512];
+
+            smartData[2] = 5;                       // 属性 ID：重映射扇区数
+            smartData[5] = 100;                     // 当前值
+            smartData[6] = 99;                      // 最差值
+            smartData[7] = 3;                       // 原始值低字节 = 3（确实重映射过 3 个扇区）
+
+            smartData[14] = 9;                      // 属性 ID：通电时间
+            smartData[17] = 90;                     // 当前值
+            smartData[18] = 88;                     // 最差值
+            smartData[19] = 0x39;                   // 原始值 = 0x3039 = 12345
+            smartData[20] = 0x30;
+
+            smartThresholds[2] = 5;                 // 属性 5 的阈值 = 10
+            smartThresholds[3] = 10;
+
+            var attributes = SmartAttributeService.Parse(smartData, smartThresholds);
+
+            Check("SMART 属性块解析出两条属性", attributes.Count == 2, $"实际 {attributes.Count} 条");
+            Check("SMART 属性名按 ID 映射", attributes[0].Name.Contains("重映射", StringComparison.Ordinal),
+                attributes[0].Name);
+            Check("SMART 阈值从阈值块合并", attributes[0].Threshold == 10, $"实际 {attributes[0].Threshold}");
+            Check("SMART 通电时间原始值按小时显示", attributes[1].RawText == "12345 小时",
+                attributes[1].RawText);
+            Check("SMART 重映射扇区原始值不为 0 时标为注意", attributes[0].Level == "warn",
+                attributes[0].Level);
+            Check("SMART 阈值缺失时按 0 处理", attributes[1].Threshold == 0, $"实际 {attributes[1].Threshold}");
+            Check("SMART 数据太短时返回空列表", SmartAttributeService.Parse(new byte[10], null).Count == 0);
+            Check("SMART 导出目录非空", SmartAttributeService.ExportDirectory.Length > 0);
+
+            // 进程枚举：这些信息全来自 System.Diagnostics.Process，不需要管理员权限，
+            // 所以能在自测里真跑一遍（不同于 SMART/还原点那两处必须容错）。
+            var (processes, processError) = new ProcessService().Load();
+            var self = processes.FirstOrDefault(p => p.Pid == Environment.ProcessId);
+
+            Check("进程枚举有结果", processes.Count > 0, $"实际 {processes.Count} 个");
+            Check("进程枚举包含自测进程自己", self is not null);
+            Check("进程列表按内存降序", processes.SequenceEqual(processes.OrderByDescending(p => p.WorkingSetBytes)));
+            Check("进程筛选能按 PID 命中自己", self is not null && self.Matches(Environment.ProcessId.ToString()));
+            Check("进程筛选不命中不存在的关键字", self is not null && !self.Matches("__winkit_probe_no_such_keyword__"));
+            Check("进程摘要非空", ProcessService.Summarize(processes).Length > 0);
+            Check("拒绝结束自己", !new ProcessService().Kill(new ProcessItem { Pid = Environment.ProcessId }, false).Ok);
+            Check("进程枚举容错信息可为空", processError is null || processError.Length > 0);
+
+            // 系统还原点：非管理员会话里必然会失败，只能验证「不抛异常且给出说明」。
+            var restore = new SystemRestoreService();
+            var (points, _ , _, restoreError) = restore.Load();
+            Check("系统还原读取不抛异常", restoreError is null || restoreError.Length > 0,
+                restoreError ?? "");
+            Check("还原点类型码映射中文", new RestorePointItem { TypeCode = 10 }.TypeText == "驱动安装",
+                new RestorePointItem { TypeCode = 10 }.TypeText);
+            Check("未知还原点类型码原样标出", new RestorePointItem { TypeCode = 99 }.TypeText == "类型 99",
+                new RestorePointItem { TypeCode = 99 }.TypeText);
+            Check("还原点列表条数为非负", points.Count >= 0);
         }
         finally
         {

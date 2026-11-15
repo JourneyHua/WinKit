@@ -214,13 +214,17 @@ public sealed class SystemCleanViewModel : ObservableObject, IModule
         IsBusy = true;
         try
         {
-            var (freed, count) = await _service.CleanTargetsAsync(selected, s => _status(s));
+            var (freed, count, skipped) = await _service.CleanTargetsAsync(selected, s => _status(s));
             await _service.ScanTargetsAsync(Targets);
             UpdateJunkSummary();
 
             var freedText = ThisPcService.FormatSize(freed);
-            _status($"清理完成：共删除 {count} 个文件，释放 {freedText} 空间");
-            MessageBox.Show($"清理完成！\n\n已清理文件数：{count} 个\n成功释放空间：{freedText}",
+
+            // 跳过项要报出来：它们多半被进程占着或没权限，用户看到「节省 X」却觉得空间没变时，得有据可查
+            var skippedNote = skipped > 0 ? $"，跳过 {skipped} 项（被占用或无权访问）" : "";
+            _status($"清理完成：共删除 {count} 个文件，释放 {freedText} 空间{skippedNote}");
+            MessageBox.Show($"清理完成！\n\n已清理文件数：{count} 个\n成功释放空间：{freedText}" +
+                            (skipped > 0 ? $"\n跳过项：{skipped} 项（被占用或无权访问，未清理）" : ""),
                 "清理完成", MessageBoxButton.OK, MessageBoxImage.Information);
         }
         finally
@@ -335,7 +339,7 @@ public sealed class SystemCleanViewModel : ObservableObject, IModule
         }
         catch (Exception ex)
         {
-            MessageBox.Show($"移入回收站失败：{ex.Message}", "WinKit", MessageBoxButton.OK, MessageBoxImage.Warning);
+            SetError($"移入回收站失败：{ex.Message}");
         }
     }
 

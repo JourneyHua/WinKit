@@ -145,7 +145,7 @@ public sealed class FileLockViewModel : ObservableObject, IModule
 
         var (ok, message) = _service.Kill(locker.ProcessId);
         _status(message);
-        if (!ok) MessageBox.Show(message, "WinKit", MessageBoxButton.OK, MessageBoxImage.Warning);
+        if (!ok) SetError(message);
 
         _ = ScanAsync();
     }
@@ -205,7 +205,7 @@ public sealed class FileLockViewModel : ObservableObject, IModule
         }
         catch (Exception ex)
         {
-            _status("复制失败：" + ex.Message);
+            SetError("复制失败：" + ex.Message);
         }
     }
 

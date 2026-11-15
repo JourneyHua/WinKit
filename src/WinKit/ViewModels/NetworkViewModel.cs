@@ -148,12 +148,12 @@ public sealed class NetworkViewModel : ObservableObject, IModule
         {
             var (ok, message) = await _service.RunAsync(fileName, args);
             _status(ok ? $"{title} 完成" : $"{title} 失败：{message}");
-            if (!ok) MessageBox.Show(message, "WinKit", MessageBoxButton.OK, MessageBoxImage.Warning);
+            if (!ok) SetError(message);
         }
         catch (Exception ex)
         {
             _status($"{title} 失败：{ex.Message}");
-            MessageBox.Show(ex.Message, "WinKit", MessageBoxButton.OK, MessageBoxImage.Warning);
+            SetError(ex.Message);
         }
         finally
         {
@@ -212,7 +212,7 @@ public sealed class NetworkViewModel : ObservableObject, IModule
         }
         catch (Exception ex)
         {
-            _status("复制失败：" + ex.Message);
+            SetError("复制失败：" + ex.Message);
         }
     }
 

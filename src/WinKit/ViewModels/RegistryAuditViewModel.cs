@@ -246,8 +246,7 @@ public sealed class RegistryAuditViewModel : ObservableObject, IModule
         catch (Exception ex)
         {
             _status($"扫描失败：{ex.Message}");
-            MessageBox.Show($"扫描「{category.Title}」失败：{ex.Message}", "WinKit",
-                MessageBoxButton.OK, MessageBoxImage.Warning);
+            SetError($"扫描「{category.Title}」失败：{ex.Message}");
         }
         finally
         {
@@ -321,7 +320,7 @@ public sealed class RegistryAuditViewModel : ObservableObject, IModule
         }
         catch (Exception ex)
         {
-            MessageBox.Show($"批量清理失败：{ex.Message}", "WinKit", MessageBoxButton.OK, MessageBoxImage.Warning);
+            SetError($"批量清理失败：{ex.Message}");
         }
     }
 
@@ -392,7 +391,7 @@ public sealed class RegistryAuditViewModel : ObservableObject, IModule
         }
         catch (Exception ex)
         {
-            MessageBox.Show($"删除失败：{ex.Message}", "WinKit", MessageBoxButton.OK, MessageBoxImage.Warning);
+            SetError($"删除失败：{ex.Message}");
         }
     }
 

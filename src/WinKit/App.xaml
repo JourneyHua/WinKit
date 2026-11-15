@@ -79,6 +79,15 @@
             <DataTemplate DataType="{x:Type vm:ReportViewModel}">
                 <views:ReportView />
             </DataTemplate>
+            <DataTemplate DataType="{x:Type vm:SystemRestoreViewModel}">
+                <views:SystemRestoreView />
+            </DataTemplate>
+            <DataTemplate DataType="{x:Type vm:ProcessManagerViewModel}">
+                <views:ProcessManagerView />
+            </DataTemplate>
+            <DataTemplate DataType="{x:Type vm:SmartAttributeViewModel}">
+                <views:SmartAttributeView />
+            </DataTemplate>
         </ResourceDictionary>
     </Application.Resources>
 </Application>

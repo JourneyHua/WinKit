@@ -49,6 +49,9 @@
     <Compile Include="..\..\src\WinKit\Services\EventLogService.cs" Link="Services\EventLogService.cs" />
     <Compile Include="..\..\src\WinKit\Services\WindowsUpdateService.cs" Link="Services\WindowsUpdateService.cs" />
     <Compile Include="..\..\src\WinKit\Services\NetworkDiagnosticService.cs" Link="Services\NetworkDiagnosticService.cs" />
+    <Compile Include="..\..\src\WinKit\Services\ProcessService.cs" Link="Services\ProcessService.cs" />
+    <Compile Include="..\..\src\WinKit\Services\SmartAttributeService.cs" Link="Services\SmartAttributeService.cs" />
+    <Compile Include="..\..\src\WinKit\Services\SystemRestoreService.cs" Link="Services\SystemRestoreService.cs" />
   </ItemGroup>
 
 </Project>
