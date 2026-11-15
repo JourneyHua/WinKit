@@ -37,36 +37,33 @@ Windows 11 上的一站式轻量系统管家：**体检与维护（一键体检�
 - Windows 11（已在 26H2 / build 26300 上验证）
 - **.NET 10 Desktop Runtime**（框架依赖发布，约 2 MB 本体）
   → https://dotnet.microsoft.com/download/dotnet/10.0
-- 运行时需要管理员权限（改 HKLM、屏蔽列表、此电脑节点都要写系统区）
+- 以普通权限启动（`asInvoker`），清理 / 服务 / 驱动 / 补丁 / 还原点等写入操作会在程序内提示一次提权（见下文「权限模型」）
 
 ## 快速开始
 
-1. **解压后先双击一次 `解除锁定.cmd`**：浏览器下载的压缩包会给里面的文件打上「来自 Internet」标记（MOTW），于是每次启动都会被 SmartScreen 拦一下「Windows 已保护你的电脑」。这个脚本把标记去掉，之后就不再弹。它会报出「共 N 个文件，其中 M 个带标记，已去掉 M 个」，重复运行也没关系（没标记时直接告诉你「都解锁过」）。
-   更彻底的办法是走 winget 安装：`winget install JourneyHua.WinKit`——winget 用自家解包逻辑，**不会传播 MOTW**（这是实测结论，不是推测：`winget download` 下到的 zip 带标记，`winget install` 解出来的文件全部没有）。
-2. 双击 `WinKit.exe`，接受 UAC 提权
+1. **从浏览器下载的话，解压后先解除标记**：压缩包会把「来自 Internet」标记（MOTW）传给里面的文件，于是每次启动都会被 SmartScreen 拦一下「Windows 已保护你的电脑」。右键 `WinKit.exe` → 属性 → 勾选「解除锁定」→ 确定，标记流被写掉，之后就不再弹（这是 Windows 自带的功能，不需要额外脚本）。
+   更省事的路是走 winget 安装：`winget install JourneyHua.WinKit`——winget 用自家解包逻辑，**不会传播 MOTW**（实测结论，不是推测：`winget download` 下到的 zip 带标记，`winget install` 解出来的文件全部没有）。
+2. 双击 `WinKit.exe` 直接以普通权限启动（不弹 UAC）
 3. 左侧选模块；每条改动都会即时生效，多数情况需要点顶部「重启资源管理器」才看得见效果
 4. 改错了点顶部「撤销上一步」；想整体回到本次启动前，去「备份与还原」→「回滚本次会话」
 
 ## SmartScreen 弹窗是怎么来的，怎么消掉
 
 WinKit 没有代码签名证书，所以只要文件带着「来自 Internet」标记（MOTW），Windows SmartScreen 每次启动都会拦一次
-「Windows 已保护你的电脑」。三条路，从省事到费钱：
+「Windows 已保护你的电脑」。两条路，从省事到费钱：
 
 | 办法 | 做法 | 代价 |
 | --- | --- | --- |
-| **包内脚本解除标记**（默认） | 解压后跑一次 `解除锁定.cmd`（内部是 `Unblock-File`），标记被写掉，之后不再弹 | 每次下载新版本都要跑一次 |
+| **手动解除标记**（默认） | 解压后右键 `WinKit.exe` → 属性 → 勾选「解除锁定」→ 确定；`Zone.Identifier` 流被写掉，之后不再弹 | 每次下载新版本都要点一次 |
 | **winget 分发** | `winget install JourneyHua.WinKit`，winget 自己解包，**不传播 MOTW** | 每发一版要把清单提到 `microsoft/winget-pkgs`（模板在 `packaging/winget/`） |
 | 代码签名 | 自签证书装进「受信任的发布者」，或买 OV/EV 证书 / Azure Trusted Signing | 自签只对装过证书的机器有效；正式证书一年几千元起 |
 
-包内脚本这条路是真的能解决问题，不是「点一下继续」那种将就：`Unblock-File` 去掉 `Zone.Identifier` 流之后，
+手动解除标记这条路是真的能解决问题，不是「点一下继续」那种将就：标记流去掉之后，
 SmartScreen 就不再拿「下载来的程序」这个身份看它了。
 
-这个脚本由两个文件组成，两个坑都在编码上，改动时别踩：
-
-- `解除锁定.cmd` 只当启动器，内容**必须全 ASCII、不要 `chcp`**。cmd 是按字节偏移重读批处理文件的，
-  中途换代码页会让它把一行中文劈成两半，报 `'…' is not recognized as an internal or external command`。
-- `unblock.ps1` 装中文，**必须存成 UTF-8 with BOM**。Windows PowerShell 5.1 读不带 BOM 的脚本时按系统
-  ANSI 代码页解码，中文会变乱码。
+> 1.9.0–1.10.1 的发布包里曾附带过 `解除锁定.cmd` + `unblock.ps1`（内部就是 `Unblock-File`），
+> 1.10.2 起去掉了：多两个文件、两份编码要求（`.cmd` 必须全 ASCII、`.ps1` 必须带 BOM）换来的只是省下
+> 右键属性那两下点击，解释成本反而更高。Windows 自带的「解除锁定」勾选框做的是同一件事。
 
 ## 各模块怎么用
 
@@ -416,7 +413,7 @@ GitHub Actions 在打包前要过两关（`master` 与 `v*` 标签都跑）：
 主清单 `src/WinKit/app.manifest` 声明的是 `asInvoker`，程序以普通权限启动。原因是：
 **未签名的 exe 一旦声明 `requireAdministrator`，双击时 Windows 会先弹「Windows 已保护你的电脑」**
 （SmartScreen），必须点「更多信息 → 仍要运行」才继续——而且这个拦截跟「来自 Internet」标记无关，
-跑 `解除锁定.cmd` 也去不掉，只有加代码签名才能去掉。
+手动解除锁定也去不掉，只有加代码签名才能去掉。
 
 代价是写操作没有管理员权限，所以：
 
@@ -452,7 +449,7 @@ src/WinKit/
   ViewModels/  24 个模块 + 卸载残留清理 / 任务栏两个子视图 + 壳
   Views/       24 个模块 UserControl、2 个子视图与对话框
   Themes/      颜色与控件样式
-packaging/     随包发的 解除锁定.cmd + unblock.ps1，以及 winget 清单模板（winget/manifests/）
+packaging/     winget 清单模板（winget/manifests/）
                winget/update.ps1 改版本号和哈希；winget/prepare-pr.ps1 铺出提 PR 用的目录结构
 tools/Probe/   只读探测 + 写入自测
 ```
