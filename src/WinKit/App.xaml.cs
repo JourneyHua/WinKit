@@ -5,6 +5,7 @@ using System.Windows;
 using System.Windows.Media;
 using System.Windows.Media.Imaging;
 using System.Windows.Threading;
+using WinKit.Core;
 using WinKit.ViewModels;
 
 namespace WinKit;
@@ -150,7 +151,7 @@ public partial class App : Application
             MessageBoxButton.OK,
             MessageBoxImage.Information);
 
-        Process.Start(new ProcessStartInfo { FileName = path, UseShellExecute = true });
+        Native.OpenPath(path);
     }
 
     /// <summary>
@@ -360,17 +361,28 @@ public partial class App : Application
 
                 if (vm.CurrentViewModel is AppManagerViewModel appVm)
                 {
+                    // 默认停在「已安装应用」时，卸载清理面板必须是隐藏的
+                    // （v1.8.0 的 bug 就是它一直可见，叠在应用列表上面）
+                    Pump();
+                    UpdateLayoutSafe(window);
+                    Pump();
+                    log.AppendLine($"  uninstall-hidden: {DescribeView(window, typeof(Views.UninstallCenterView))}");
+                    log.AppendLine(ColumnResizeCheck(window));
+                    log.AppendLine("  columns-apps: " + ColumnLayoutCheck(window));
+
                     appVm.ShowRuntimes = true;
                     Pump();
                     UpdateLayoutSafe(window);
                     Pump();
                     Capture(window, outputDir, "apps-runtimes", log);
+                    log.AppendLine("  columns-runtimes: " + ColumnLayoutCheck(window));
 
                     appVm.ShowTools = true;
                     Pump();
                     UpdateLayoutSafe(window);
                     Pump();
                     Capture(window, outputDir, "apps-tools", log);
+                    log.AppendLine("  columns-tools: " + ColumnLayoutCheck(window));
                     appVm.ShowTools = false;
 
                     // 卸载残留清理：喂一个真实安装目录，走完整的识别链路
@@ -381,7 +393,14 @@ public partial class App : Application
                     Pump();
                     Capture(window, outputDir, "apps-uninstall", log);
                     log.AppendLine($"  uninstall: kind=\"{OneLine(appVm.UninstallCenter.TargetKindText)}\" matches={appVm.UninstallCenter.Matches.Count} candidates={appVm.UninstallCenter.Candidates.Count} residuals={appVm.UninstallCenter.Residuals.Count} summary=\"{OneLine(appVm.UninstallCenter.IdentifySummary)}\"");
+                    log.AppendLine($"  uninstall-view: {DescribeView(window, typeof(Views.UninstallCenterView))}");
                     appVm.ShowUninstallCenter = false;
+
+                    // 关掉之后必须真的消失，否则就是子视图叠在应用列表上（v1.8.0 的 bug）
+                    Pump(600);
+                    UpdateLayoutSafe(window);
+                    Pump();
+                    log.AppendLine($"  uninstall-view-off: {DescribeView(window, typeof(Views.UninstallCenterView))}");
                 }
 
                 if (vm.CurrentViewModel is NavPaneViewModel navPaneVm)
@@ -392,6 +411,7 @@ public partial class App : Application
                     Pump();
                     Capture(window, outputDir, "navpane-taskbar", log);
                     log.AppendLine($"  taskbar: pinned={navPaneVm.Taskbar.Pinned.Count} tray={navPaneVm.Taskbar.TrayIcons.Count} pinnedSummary=\"{OneLine(navPaneVm.Taskbar.PinnedSummary)}\" traySummary=\"{OneLine(navPaneVm.Taskbar.TraySummary)}\" error=\"{OneLine(navPaneVm.Taskbar.Error)}\"");
+                    log.AppendLine($"  taskbar-view: {DescribeView(window, typeof(Views.TaskbarView))}");
                     navPaneVm.ShowTaskbar = false;
                 }
 
@@ -416,8 +436,7 @@ public partial class App : Application
             log.AppendLine("SMOKE OK");
 
             // 主题自检：切换主题后 Brush.Card 的颜色必须真的变化（防止 DynamicResource 失效）
-            log.AppendLine(ThemeCheck());
-        }
+            log.AppendLine(ThemeCheck());        }
         catch (Exception ex)
         {
             log.AppendLine("SMOKE FAILED");
@@ -494,6 +513,147 @@ public partial class App : Application
 
     private static string OneLine(string? text)
         => string.IsNullOrWhiteSpace(text) ? "" : text.Replace("\r", " ").Replace("\n", " ").Trim();
+
+    /// <summary>
+    /// 在可视树里找第一个指定类型的后代。
+    /// 子视图的显隐以前只能靠截图看，而截图在 CI 上未必渲染得出来；
+    /// 直接读 Visibility/ActualWidth 才能断言「这个面板到底显示了没有」。
+    /// </summary>
+    private static T? FindDescendant<T>(DependencyObject root) where T : DependencyObject
+    {
+        var count = VisualTreeHelper.GetChildrenCount(root);
+        for (var i = 0; i < count; i++)
+        {
+            var child = VisualTreeHelper.GetChild(root, i);
+            if (child is T match) return match;
+
+            var deeper = FindDescendant<T>(child);
+            if (deeper is not null) return deeper;
+        }
+
+        return null;
+    }
+
+    /// <summary>
+    /// 列宽布局自检：把每个列的实际宽度、表头文字宽度、DataGrid 视口宽度都打出来。
+    /// 光看截图只能判断"右边被切了"，看不出是哪一列吃掉太多宽度，
+    /// 也算不出"还要收多少才不出现横向滚动条"。
+    /// </summary>
+    /// <summary>
+    /// 找到当前真正显示着的 DataGrid。子视图叠放时隐藏的表格还在可视树里，
+    /// 用 FindDescendant 会拿到第一个（可能是隐藏的），量出来的列宽毫无意义。
+    /// </summary>
+    private static System.Windows.Controls.DataGrid? FindVisibleDataGrid(DependencyObject root)
+    {
+        var count = VisualTreeHelper.GetChildrenCount(root);
+        for (var i = 0; i < count; i++)
+        {
+            var child = VisualTreeHelper.GetChild(root, i);
+
+            if (child is System.Windows.Controls.DataGrid dg && dg.IsVisible && dg.ActualWidth > 1)
+                return dg;
+
+            var deeper = FindVisibleDataGrid(child);
+            if (deeper is not null) return deeper;
+        }
+
+        return null;
+    }
+
+    private static string ColumnLayoutCheck(DependencyObject root)
+    {
+        // 子视图是叠在一起的，隐藏的那些 DataGrid 仍然留在可视树里，
+        // 所以必须挑当前真正可见的那个，否则量到的是别的表。
+        var grid = FindVisibleDataGrid(root);
+        if (grid is null) return "  columns: FAILED 没找到可见的 DataGrid";
+
+        try
+        {
+            var parts = new List<string>();
+            var total = 0.0;
+            foreach (var col in grid.Columns)
+            {
+                var w = col.ActualWidth;
+                total += w;
+                var header = col.Header?.ToString() ?? "";
+                // 期望值与实际值都打出来：DataGrid 在空间不够时会挤压列，
+                // 只打实际值看不出"被挤掉了多少"。
+                var spec = col.Width.IsAbsolute ? ((int)col.Width.Value).ToString()
+                    : col.Width.IsStar ? $"{col.Width.Value:0.#}*"
+                    : "auto";
+                parts.Add($"{header}={spec}/{(int)Math.Round(w)}");
+            }
+
+            var viewer = FindDescendant(grid, typeof(System.Windows.Controls.ScrollViewer))
+                         as System.Windows.Controls.ScrollViewer;
+            var viewport = viewer?.ViewportWidth ?? 0;
+            var scrollable = viewer?.ScrollableWidth ?? 0;
+            var overflow = scrollable > 1;
+
+            return $"viewport={(int)Math.Round(viewport)} total={(int)Math.Round(total)} " +
+                   $"hscroll={(overflow ? "YES" : "no")} n={grid.Columns.Count} [{string.Join(" ", parts)}]";
+        }
+        catch (Exception ex)
+        {
+            return $"  columns: FAILED {ex.GetType().Name} {OneLine(ex.Message)}";
+        }
+    }
+
+    private static string DescribeView(DependencyObject root, Type type)
+    {
+        var found = FindDescendant(root, type);
+        if (found is not FrameworkElement fe) return "found=False";
+
+        return $"found=True visibility={fe.Visibility} visible={fe.IsVisible} " +
+               $"w={(int)fe.ActualWidth} h={(int)fe.ActualHeight}";
+    }
+
+    private static DependencyObject? FindDescendant(DependencyObject root, Type type)
+    {
+        var count = VisualTreeHelper.GetChildrenCount(root);
+        for (var i = 0; i < count; i++)
+        {
+            var child = VisualTreeHelper.GetChild(root, i);
+            if (type.IsInstanceOfType(child)) return child;
+
+            var deeper = FindDescendant(child, type);
+            if (deeper is not null) return deeper;
+        }
+
+        return null;
+    }
+
+    /// <summary>
+    /// 列宽拖拽自检：DataGridColumnHeader 的模板里必须有 PART_LeftHeaderGripper /
+    /// PART_RightHeaderGripper 两个 Thumb，否则用户根本拖不动列宽（连光标都不变）。
+    /// 这个只能查模板部件，截图看不出来。
+    /// </summary>
+    private static string ColumnResizeCheck(DependencyObject root)
+    {
+        var header = FindDescendant(root, typeof(System.Windows.Controls.Primitives.DataGridColumnHeader))
+                     as System.Windows.Controls.Primitives.DataGridColumnHeader;
+
+        if (header is null) return "  columnresize: FAILED 没找到列头";
+
+        try
+        {
+            header.ApplyTemplate();
+            var left = header.Template.FindName("PART_LeftHeaderGripper", header);
+            var right = header.Template.FindName("PART_RightHeaderGripper", header);
+
+            var grid = FindDescendant(root, typeof(System.Windows.Controls.DataGrid))
+                       as System.Windows.Controls.DataGrid;
+            var canResize = grid?.CanUserResizeColumns ?? false;
+
+            var ok = left is not null && right is not null && canResize;
+            return $"  columnresize: left={left is not null} right={right is not null} " +
+                   $"canResize={canResize} result={(ok ? "OK" : "FAILED")}";
+        }
+        catch (Exception ex)
+        {
+            return $"  columnresize: FAILED {ex.GetType().Name} {OneLine(ex.Message)}";
+        }
+    }
 
     /// <summary>
     /// 主题自检：分别切到浅色/深色，读取 Brush.Card 的实际颜色。

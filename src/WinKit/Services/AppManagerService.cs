@@ -705,15 +705,20 @@ public sealed class AppManagerService
             using var cts = new CancellationTokenSource(timeout);
             try
             {
-                await process.WaitForExitAsync(cts.Token);
+                // ConfigureAwait(false) 不是性能优化，是必须的：调用方常常是
+                // RunProcessAsync(...).GetAwaiter().GetResult() 这种同步等待（sc.exe、netsh
+                // 这类一次性查询比把整条调用链改成 async 更划算）。若续体回到 UI 线程，
+                // 而 UI 线程正在 GetResult() 上阻塞，就会互等成死锁——v1.6.0 的 --maintain
+                // 正是栽在这个模式上。
+                await process.WaitForExitAsync(cts.Token).ConfigureAwait(false);
             }
             catch (OperationCanceledException)
             {
                 try { process.Kill(true); } catch (Exception) { }
-                return (-1, await outTask, "命令执行超时");
+                return (-1, await outTask.ConfigureAwait(false), "命令执行超时");
             }
 
-            return (process.ExitCode, await outTask, await errTask);
+            return (process.ExitCode, await outTask.ConfigureAwait(false), await errTask.ConfigureAwait(false));
         }
         catch (Exception ex)
         {

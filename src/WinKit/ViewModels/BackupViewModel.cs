@@ -246,11 +246,7 @@ public sealed class BackupViewModel : ObservableObject, IModule
         try
         {
             Directory.CreateDirectory(ChangeJournal.BackupDirectory);
-            Process.Start(new ProcessStartInfo
-            {
-                FileName = ChangeJournal.BackupDirectory,
-                UseShellExecute = true
-            });
+            Native.OpenPath(ChangeJournal.BackupDirectory);
         }
         catch (Exception ex)
         {

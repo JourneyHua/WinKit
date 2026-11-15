@@ -241,11 +241,7 @@ public sealed class WindowsUpdateViewModel : ObservableObject, IModule
     {
         try
         {
-            System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo
-            {
-                FileName = target,
-                UseShellExecute = true
-            });
+            Native.OpenPath(target);
         }
         catch (Exception ex)
         {

@@ -338,21 +338,10 @@ public sealed class UninstallCenterViewModel : ObservableObject
         if (!Confirm($"这个卸载器没有登记在系统卸载列表里，请确认它属于「{TargetFolderName}」：\n\n{candidate.FilePath}"))
             return;
 
-        try
-        {
-            Process.Start(new ProcessStartInfo
-            {
-                FileName = candidate.FilePath,
-                WorkingDirectory = candidate.Folder,
-                UseShellExecute = true
-            });
-
+        if (Native.OpenPath(candidate.FilePath, workingDirectory: candidate.Folder))
             _status($"已调起候选卸载器：{candidate.Name}");
-        }
-        catch (Exception ex)
-        {
-            Warn($"启动卸载器失败：{ex.Message}");
-        }
+        else
+            Warn($"启动卸载器失败：{candidate.FilePath}");
     }
 
     // ---------- 残留扫描 ----------
@@ -912,14 +901,8 @@ public sealed class UninstallCenterViewModel : ObservableObject
     {
         if (!File.Exists(_archiveStatusFile)) return;
 
-        try
-        {
-            Process.Start(new ProcessStartInfo { FileName = _archiveStatusFile, UseShellExecute = true });
-        }
-        catch (Exception ex)
-        {
-            _status($"打开存档失败：{ex.Message}");
-        }
+        if (!Native.OpenPath(_archiveStatusFile))
+            _status("打开存档失败：文件可能已被移动或删除");
     }
 
     // ---------- 杂项 ----------
@@ -929,41 +912,29 @@ public sealed class UninstallCenterViewModel : ObservableObject
         var target = HasTargetFolder ? TargetFolder : TargetPath;
         if (string.IsNullOrWhiteSpace(target)) return;
 
-        try
-        {
-            Process.Start(new ProcessStartInfo { FileName = target, UseShellExecute = true });
-        }
-        catch (Exception ex)
-        {
-            _status($"打开失败：{ex.Message}");
-        }
+        if (!Native.OpenPath(target))
+            _status("打开失败：路径可能已被移动或删除");
     }
 
     private void OpenResidual(ResidualItem? item)
     {
         if (item is null) return;
 
-        try
+        var target = item.Kind switch
         {
-            var target = item.Kind switch
-            {
-                ResidualKind.Directory => item.Path,
-                ResidualKind.Shortcut or ResidualKind.ScheduledTask => Path.GetDirectoryName(item.Path) ?? "",
-                _ => null
-            };
+            ResidualKind.Directory => item.Path,
+            ResidualKind.Shortcut or ResidualKind.ScheduledTask => Path.GetDirectoryName(item.Path) ?? "",
+            _ => null
+        };
 
-            if (target is null || string.IsNullOrWhiteSpace(target))
-            {
-                _status("注册表项请在「注册表审查」里查看");
-                return;
-            }
-
-            Process.Start(new ProcessStartInfo { FileName = target, UseShellExecute = true });
-        }
-        catch (Exception ex)
+        if (target is null || string.IsNullOrWhiteSpace(target))
         {
-            _status($"打开失败：{ex.Message}");
+            _status("注册表项请在「注册表审查」里查看");
+            return;
         }
+
+        if (!Native.OpenPath(target))
+            _status("打开失败：路径可能已被移动或删除");
     }
 
     private void CopyTarget()
@@ -982,29 +953,21 @@ public sealed class UninstallCenterViewModel : ObservableObject
         }
     }
 
+    /// <summary>
+    /// 同步版控制台调用，只为「ChangeJournal 的 action 委托必须是同步 Action」这个约束而存在。
+    /// 实现直接复用 <see cref="AppManagerService.RunProcessAsync"/>：OEM 代码页解码、
+    /// 超时真的杀进程这些细节都在那边，不再各写一份。它内部用了 ConfigureAwait(false)，
+    /// 所以在 UI 线程上 GetResult() 也不会和等待 dispatcher 的续体互等死锁。
+    /// </summary>
     private static string RunProcess(string fileName, string arguments, out int exitCode)
     {
-        var info = new ProcessStartInfo
-        {
-            FileName = fileName,
-            Arguments = arguments,
-            UseShellExecute = false,
-            CreateNoWindow = true,
-            RedirectStandardOutput = true,
-            RedirectStandardError = true
-        };
+        var (code, stdout, _) = AppManagerService
+            .RunProcessAsync(fileName, arguments, TimeSpan.FromSeconds(30), AppManagerService.GetOemEncoding())
+            .GetAwaiter()
+            .GetResult();
 
-        using var process = Process.Start(info);
-        if (process is null)
-        {
-            exitCode = -1;
-            return "";
-        }
-
-        var output = process.StandardOutput.ReadToEnd();
-        process.WaitForExit(30_000);
-        exitCode = process.HasExited ? process.ExitCode : -1;
-        return output;
+        exitCode = code;
+        return stdout;
     }
 
     private static bool Confirm(string message) => MessageBox.Show(

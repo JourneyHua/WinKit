@@ -259,11 +259,7 @@ public sealed class NavPaneViewModel : ObservableObject, IModule
         if (item is null || string.IsNullOrWhiteSpace(item.Path)) return;
         try
         {
-            System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo
-            {
-                FileName = item.Path,
-                UseShellExecute = true
-            });
+            Native.OpenPath(item.Path);
         }
         catch (Exception ex)
         {

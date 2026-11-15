@@ -113,14 +113,14 @@
                                 </DataTemplate>
                             </DataGridTemplateColumn.CellTemplate>
                         </DataGridTemplateColumn>
-                        <DataGridTemplateColumn Header="标卷" Width="1.2*" SortMemberPath="Label">
+                        <DataGridTemplateColumn Header="标卷" Width="1.2*" MinWidth="100" SortMemberPath="Label">
                             <DataGridTemplateColumn.CellTemplate>
                                 <DataTemplate>
                                     <TextBlock Text="{Binding Label}" Style="{StaticResource CellMuted}" />
                                 </DataTemplate>
                             </DataGridTemplateColumn.CellTemplate>
                         </DataGridTemplateColumn>
-                        <DataGridTemplateColumn Header="占用" Width="2.4*" SortMemberPath="UsedPercent">
+                        <DataGridTemplateColumn Header="占用" Width="2.4*" MinWidth="200" SortMemberPath="UsedPercent">
                             <DataGridTemplateColumn.CellTemplate>
                                 <DataTemplate>
                                     <TextBlock Text="{Binding UsageText}" Style="{StaticResource CellMuted}" />

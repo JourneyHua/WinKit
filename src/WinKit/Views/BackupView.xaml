@@ -47,7 +47,7 @@
                                 </DataTemplate>
                             </DataGridTemplateColumn.CellTemplate>
                         </DataGridTemplateColumn>
-                        <DataGridTemplateColumn Header="操作摘要" Width="*" SortMemberPath="Title">
+                        <DataGridTemplateColumn Header="操作摘要" Width="*" MinWidth="160" SortMemberPath="Title">
                             <DataGridTemplateColumn.CellTemplate>
                                 <DataTemplate>
                                     <TextBlock Text="{Binding Title}" Style="{StaticResource CellText}"

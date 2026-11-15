@@ -130,7 +130,7 @@
                                     </DataTemplate>
                                 </DataGridTemplateColumn.CellTemplate>
                             </DataGridTemplateColumn>
-                            <DataGridTemplateColumn Header="详情" Width="3*" SortMemberPath="Detail">
+                            <DataGridTemplateColumn Header="详情" Width="3*" MinWidth="200" SortMemberPath="Detail">
                                 <DataGridTemplateColumn.CellTemplate>
                                     <DataTemplate>
                                         <TextBlock Text="{Binding Detail}" Style="{StaticResource CellMuted}"

@@ -548,11 +548,7 @@ public sealed class SystemToolCatalogService
 
         try
         {
-            Process.Start(new ProcessStartInfo
-            {
-                FileName = tool.ExecutablePath,
-                UseShellExecute = true
-            });
+            Native.OpenPath(tool.ExecutablePath);
             return (true, $"已启动：{tool.Name}");
         }
         catch (Exception ex)

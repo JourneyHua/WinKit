@@ -195,11 +195,7 @@ public sealed class ReportViewModel : ObservableObject, IModule
         try
         {
             Directory.CreateDirectory(HealthReportService.ReportDirectory);
-            Process.Start(new ProcessStartInfo
-            {
-                FileName = HealthReportService.ReportDirectory,
-                UseShellExecute = true
-            });
+            Native.OpenPath(HealthReportService.ReportDirectory);
         }
         catch (Exception ex)
         {

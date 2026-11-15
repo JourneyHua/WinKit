@@ -68,7 +68,7 @@
                                 </DataTemplate>
                             </DataGridTemplateColumn.CellTemplate>
                         </DataGridTemplateColumn>
-                        <DataGridTemplateColumn Header="调优项目" Width="1.7*" SortMemberPath="Title">
+                        <DataGridTemplateColumn Header="调优项目" Width="1.7*" MinWidth="160" SortMemberPath="Title">
                             <DataGridTemplateColumn.CellTemplate>
                                 <DataTemplate>
                                     <TextBlock Text="{Binding Title}" Style="{StaticResource CellText}"
@@ -76,7 +76,7 @@
                                 </DataTemplate>
                             </DataGridTemplateColumn.CellTemplate>
                         </DataGridTemplateColumn>
-                        <DataGridTemplateColumn Header="作用说明" Width="2.2*" SortMemberPath="Description">
+                        <DataGridTemplateColumn Header="作用说明" Width="2.2*" MinWidth="200" SortMemberPath="Description">
                             <DataGridTemplateColumn.CellTemplate>
                                 <DataTemplate>
                                     <TextBlock Text="{Binding Description}" Style="{StaticResource CellMuted}"
@@ -91,7 +91,8 @@
                                 </DataTemplate>
                             </DataGridTemplateColumn.CellTemplate>
                         </DataGridTemplateColumn>
-                        <DataGridTemplateColumn Header="操作" Width="105" CanUserSort="False">
+                        <!-- 定位注册表实测需要 106 -->
+                        <DataGridTemplateColumn Header="操作" Width="112" CanUserSort="False">
                             <DataGridTemplateColumn.CellTemplate>
                                 <DataTemplate>
                                     <Button Content="定位注册表" Style="{StaticResource BtnSmall}"
@@ -174,7 +175,7 @@
                                     </DataTemplate>
                                 </DataGridTemplateColumn.CellTemplate>
                             </DataGridTemplateColumn>
-                            <DataGridTemplateColumn Header="绑定地址" Width="135" SortMemberPath="LocalAddress">
+                            <DataGridTemplateColumn Header="绑定地址" Width="125" SortMemberPath="LocalAddress">
                                 <DataGridTemplateColumn.CellTemplate>
                                     <DataTemplate>
                                         <TextBlock Text="{Binding LocalAddress}" Style="{StaticResource CellMuted}" />
@@ -188,21 +189,21 @@
                                     </DataTemplate>
                                 </DataGridTemplateColumn.CellTemplate>
                             </DataGridTemplateColumn>
-                            <DataGridTemplateColumn Header="PID" Width="76" SortMemberPath="Pid">
+                            <DataGridTemplateColumn Header="PID" Width="70" SortMemberPath="Pid">
                                 <DataGridTemplateColumn.CellTemplate>
                                     <DataTemplate>
                                         <TextBlock Text="{Binding Pid}" Style="{StaticResource CellMuted}" />
                                     </DataTemplate>
                                 </DataGridTemplateColumn.CellTemplate>
                             </DataGridTemplateColumn>
-                            <DataGridTemplateColumn Header="占用进程" Width="1.2*" SortMemberPath="ProcessName">
+                            <DataGridTemplateColumn Header="占用进程" Width="1.2*" MinWidth="110" SortMemberPath="ProcessName">
                                 <DataGridTemplateColumn.CellTemplate>
                                     <DataTemplate>
                                         <TextBlock Text="{Binding ProcessName}" Style="{StaticResource CellText}" />
                                     </DataTemplate>
                                 </DataGridTemplateColumn.CellTemplate>
                             </DataGridTemplateColumn>
-                            <DataGridTemplateColumn Header="程序路径" Width="1.8*" SortMemberPath="ExecutablePath">
+                            <DataGridTemplateColumn Header="程序路径" Width="1.8*" MinWidth="185" SortMemberPath="ExecutablePath">
                                 <DataGridTemplateColumn.CellTemplate>
                                     <DataTemplate>
                                         <TextBlock Text="{Binding ExecutablePath}" Style="{StaticResource CellMuted}"

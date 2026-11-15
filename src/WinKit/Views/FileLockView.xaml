@@ -97,7 +97,8 @@
                                 </DataTemplate>
                             </DataGridTemplateColumn.CellTemplate>
                         </DataGridTemplateColumn>
-                        <DataGridTemplateColumn Header="操作" Width="190" CanUserSort="False">
+                        <!-- 三个按钮实测需要 198 -->
+                        <DataGridTemplateColumn Header="操作" Width="210" CanUserSort="False">
                             <DataGridTemplateColumn.CellTemplate>
                                 <DataTemplate>
                                     <StackPanel Orientation="Horizontal">

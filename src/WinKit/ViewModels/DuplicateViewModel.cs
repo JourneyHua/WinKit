@@ -299,12 +299,7 @@ public sealed class DuplicateViewModel : ObservableObject, IModule
 
         try
         {
-            Process.Start(new ProcessStartInfo
-            {
-                FileName = "explorer.exe",
-                Arguments = $"/select,\"{file.FullPath}\"",
-                UseShellExecute = true
-            });
+            Native.RevealInExplorer(file.FullPath);
         }
         catch (Exception ex)
         {

@@ -294,11 +294,7 @@ public sealed class EnvironmentViewModel : ObservableObject, IModule
 
         try
         {
-            System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo
-            {
-                FileName = entry.Expanded,
-                UseShellExecute = true
-            });
+            Native.OpenPath(entry.Expanded);
         }
         catch (Exception ex)
         {

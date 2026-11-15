@@ -110,6 +110,35 @@ jobs:
           # 所以「识别出 ≥1 个候选卸载器」在任何机器上都必然成立。
           Assert-Data 'uninstall: .*candidates=(\d+)' '卸载残留清理' 1
 
+          # 列宽必须能拖：DataGridColumnHeader 模板里少了 PART_*HeaderGripper 就完全拖不动，
+          # 而这一点截图看不出来，只能查模板部件。
+          if ($log -notmatch 'columnresize: left=True right=True canResize=True result=OK') {
+            $failures += "表格列宽无法拖动（模板缺少 PART_*HeaderGripper）"
+          }
+
+          # 子视图必须真的会隐藏：v1.8.0 的 bug 就是 Visibility 绑定写在同一元素的
+          # DataContext 之后，绑定失败 → 面板一直显示，叠在应用列表上面。
+          if ($log -notmatch 'uninstall-hidden: found=True .*visible=False') {
+            $failures += "卸载残留清理面板在未激活时仍然可见"
+          }
+          if ($log -notmatch 'uninstall-view-off: found=True .*visible=False') {
+            $failures += "卸载残留清理面板切走后没有隐藏"
+          }
+          if ($log -notmatch 'taskbar-view: found=True') {
+            $failures += "任务栏页没有渲染出来"
+          }
+
+          # 列宽必须在视口内铺满：总宽一旦超过视口，卡内就会出现横向滚动条，
+          # 最右边的操作列被推出可视区（按钮看起来"消失"了）。截图里那只是一条灰线，
+          # 很难肉眼看出来，所以直接拿 ScrollViewer 的 ScrollableWidth 断。
+          if ($log -notmatch 'columns-apps: viewport=\d+ total=\d+ hscroll=no') {
+            $failures += "已安装应用表出现横向滚动条（列宽之和超过视口）"
+          }
+          # 操作列被星号列挤扁时，ActualWidth 会明显小于声明值。
+          if ($log -notmatch '操作=274/2[6-9]\d') {
+            $failures += "已安装应用的操作列被挤压，按钮会显示不全"
+          }
+
           if ($failures.Count -gt 0) {
             Write-Host "---- smoke.log ----"
             Get-Content $logPath | Write-Host

@@ -283,16 +283,10 @@ public sealed class StartupServiceViewModel : ObservableObject, IModule
             return;
         }
 
-        try
-        {
-            Process.Start(new ProcessStartInfo
-            {
-                FileName = "explorer.exe",
-                Arguments = File.Exists(item.ExecutablePath) ? $"/select,\"{item.ExecutablePath}\"" : $"\"{dir}\"",
-                UseShellExecute = true
-            });
-        }
-        catch (Exception) { }
+        if (File.Exists(item.ExecutablePath))
+            Native.RevealInExplorer(item.ExecutablePath);
+        else
+            Native.OpenPath(dir);
     }
 
     private void OpenStartupRegedit(StartupEntryItem? item)
@@ -403,14 +397,7 @@ public sealed class StartupServiceViewModel : ObservableObject, IModule
             _status($"已在注册表编辑器中定位：{item.ServiceName}");
     }
 
-    private void OpenServicesMsc()
-    {
-        try
-        {
-            Process.Start(new ProcessStartInfo { FileName = "services.msc", UseShellExecute = true });
-        }
-        catch (Exception) { }
-    }
+    private void OpenServicesMsc() => Native.OpenPath("services.msc");
 
     private async Task ToggleTaskAsync(ScheduledTaskItem? item)
     {
@@ -449,14 +436,7 @@ public sealed class StartupServiceViewModel : ObservableObject, IModule
         }
     }
 
-    private void OpenTaskScheduler()
-    {
-        try
-        {
-            Process.Start(new ProcessStartInfo { FileName = "taskschd.msc", UseShellExecute = true });
-        }
-        catch (Exception) { }
-    }
+    private void OpenTaskScheduler() => Native.OpenPath("taskschd.msc");
 
     private string _errorText = "";
 

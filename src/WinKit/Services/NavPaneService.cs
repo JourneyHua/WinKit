@@ -234,25 +234,7 @@ public sealed class NavPaneService
         Native.NotifyAssociationsChanged();
     }
 
-    private static void RunVerb(string path, string verb)
-    {
-        var info = new SHELLEXECUTEINFO
-        {
-            cbSize = Marshal.SizeOf<SHELLEXECUTEINFO>(),
-            // pintohome / unpinfromhome 只注册了 CommandStateHandler，没有 command 子键，
-            // 必须让 ShellExecuteEx 走 IContextMenu 调用（SEE_MASK_INVOKEIDLIST = 0x0C）。
-            fMask = 0x0000000C,
-            lpVerb = verb,
-            lpFile = path,
-            nShow = 1
-        };
-
-        if (!ShellExecuteEx(ref info))
-        {
-            var code = Marshal.GetLastWin32Error();
-            throw new InvalidOperationException($"执行“{verb}”失败（错误码 {code}）");
-        }
-    }
+    private static void RunVerb(string path, string verb) => Native.RunShellVerb(path, verb);
 
     private static void ReleaseCom(object? comObject)
     {
@@ -266,28 +248,4 @@ public sealed class NavPaneService
             // 释放失败不影响功能
         }
     }
-
-    [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
-    private struct SHELLEXECUTEINFO
-    {
-        public int cbSize;
-        public int fMask;
-        public IntPtr hwnd;
-        [MarshalAs(UnmanagedType.LPWStr)] public string? lpVerb;
-        [MarshalAs(UnmanagedType.LPWStr)] public string? lpFile;
-        [MarshalAs(UnmanagedType.LPWStr)] public string? lpParameters;
-        [MarshalAs(UnmanagedType.LPWStr)] public string? lpDirectory;
-        public int nShow;
-        public IntPtr hInstApp;
-        public IntPtr lpIDList;
-        [MarshalAs(UnmanagedType.LPWStr)] public string? lpClass;
-        public IntPtr hkeyClass;
-        public int dwHotKey;
-        public IntPtr hIcon;
-        public IntPtr hProcess;
-    }
-
-    [DllImport("shell32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
-    [return: MarshalAs(UnmanagedType.Bool)]
-    private static extern bool ShellExecuteEx(ref SHELLEXECUTEINFO info);
 }

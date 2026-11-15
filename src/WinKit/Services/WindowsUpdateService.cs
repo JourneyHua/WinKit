@@ -429,32 +429,17 @@ public sealed class WindowsUpdateService
 
     public (bool Ok, string Message) RunService(string name, string verb)
     {
-        try
-        {
-            var psi = new ProcessStartInfo
-            {
-                FileName = "sc.exe",
-                RedirectStandardOutput = true,
-                RedirectStandardError = true,
-                UseShellExecute = false,
-                CreateNoWindow = true
-            };
-            psi.ArgumentList.Add(verb);
-            psi.ArgumentList.Add(name);
+        // 走统一的 RunProcessAsync：OEM 代码页解码、超时杀掉进程、避免
+        // ReadToEnd 阻塞在 WaitForExit 之后这些细节它都已经处理好了。
+        var (code, output, err) = AppManagerService
+            .RunProcessAsync("sc.exe", $"{verb} \"{name}\"", TimeSpan.FromSeconds(15), AppManagerService.GetOemEncoding())
+            .GetAwaiter()
+            .GetResult();
 
-            using var process = Process.Start(psi);
-            if (process is null) return (false, "无法调用 sc.exe");
+        if (code == 0) return (true, $"已{(verb == "stop" ? "停止" : "启动")} {name}");
 
-            process.WaitForExit(15000);
-            var output = process.StandardOutput.ReadToEnd() + process.StandardError.ReadToEnd();
-            return process.ExitCode == 0
-                ? (true, $"已{(verb == "stop" ? "停止" : "启动")} {name}")
-                : (false, output.Trim());
-        }
-        catch (Exception ex)
-        {
-            return (false, ex.Message);
-        }
+        var message = string.IsNullOrWhiteSpace(output) ? err : output;
+        return (false, string.IsNullOrWhiteSpace(message) ? $"sc.exe 退出码 {code}" : message.Trim());
     }
 
     /// <summary>是否存在被策略托管的更新配置（企业环境会覆盖暂停开关）。</summary>

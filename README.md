@@ -59,6 +59,8 @@ Windows 11 上的一站式轻量系统管家：**体检与维护（一键体检�
 - **记住窗口状态**：位置、大小、最大化、上次停留的模块都存 `%LOCALAPPDATA%\WinKit\ui.json`；多屏拔插导致窗口跑到屏幕外时自动回落到居中。
 - **空状态 / 加载态 / 错误条**：数据为空、正在扫描、扫描失败三种情况各有明确提示，不再是一片空白只靠底部一行灰字。
 - **布局规范**：标题栏、状态栏、页面内边距统一 24px；字号锁定 6 档（11/12/13/15/20/32）；操作列统一 3 档宽度（90/196/240）；长文本列全部带 `MinWidth`，窗口变窄时出横向滚动条而不是把列压成 20px。
+  横向滚动条本身不是目的，而是兜底：列宽之和一旦超过视口就会冒出横条并把最右的操作按钮推出可视区。所以能用固定宽度 + `*` 弹性列装下就用不着它；smoke 里 `columns-apps` 断言（见下文「可视树断言」）会卡这一条。
+- **拖动列宽**：所有表格都能把鼠标移到列头边界拖动改宽度（光标变成 ↔）。自定义 `DataGridColumnHeader` 模板时必须补 `PART_LeftHeaderGripper` / `PART_RightHeaderGripper` 两个固定名字的 `Thumb`，否则整张表连拖拽光标都不会出现——这是 WPF 的隐式契约，编译器不会提醒。
 
 ### 体检与维护
 
@@ -330,19 +332,40 @@ GitHub Actions 在打包前要过两关（`master` 与 `v*` 标签都跑）：
 2. **界面离屏自检**：发布一份 `asInvoker` 预览版跑 `--smoke`，断言
    `SMOKE OK` + 至少 23 个模块渲染成功 + **关键模块数据非零**（系统概览 4 张卡片、默认打开方式 ≥50 个扩展名、
    文件对比 ≥1 项、环境变量 ≥10 个、体检报告 5 个分区、磁盘健康 ≥1 个卷、网络 ≥1 个网卡、
-   卸载残留清理 ≥1 个候选卸载器）。
-   只判"渲染成功"挡不住"页面渲染了但一条数据都没有"这类回归，所以数据也要判。
+   卸载残留清理 ≥1 个候选卸载器）+ **列宽可拖动**（列头模板里两个 gripper 都在）+ **子视图切换真的隐藏**
+   （卸载残留清理面板在未激活、以及切走之后都必须 `visible=False`）。
+   只判"渲染成功"挡不住"页面渲染了但一条数据都没有"这类回归，所以数据也要判；
+   而"子视图叠在一起"这类 bug 连像素 diff 都不明显，只能靠读 `Visibility`/`IsVisible` 判断。
    阈值一律取「任何正常机器都必然满足」的下限——CI runner 只有 1 个网卡、3 条 PATH、78 个环境变量，
    和本地开发机差一个数量级，卡太死只会变成假失败。
+
+   另外三条**只能查可视树、截图看不出来**的断言（v1.8.1 加）：
+
+   - `columnresize: left=True right=True canResize=True` —— 列头模板里两个拖拽手柄都在，列宽能拖
+   - `uninstall-hidden: ... visible=False` —— 卸载清理面板在未激活时真的隐藏（v1.8.0 它一直叠在应用列表上）
+   - `uninstall-view-off: ... visible=False` —— 切走之后真的消失
+   - `columns-apps: viewport=W total=T hscroll=no` —— 已安装应用表的列宽之和没有超过视口。
+     超过视口时卡内会冒出横向滚动条，最右边的操作列被推出可视区，按钮看起来"消失"了；
+     截图里那只是一条灰线，肉眼极难察觉。顺带断言操作列 `ActualWidth`（声明 240），
+     被星号列挤扁到 <260 即失败。
+
+   实现方式是 `VisualTreeHelper` 递归找控件读 `Visibility` / `IsVisible` / `ActualWidth`，
+   以及 `header.ApplyTemplate()` 后 `Template.FindName("PART_RightHeaderGripper", header)`。
+   这类"绑定失败但界面照常渲染"的 bug 只有读可视树才抓得住。
 
 `smoke-out/smoke.log` 会作为 artifact 上传，失败时可直接下载看每一行。
 
 免提权调试界面：加 `-p:ApplicationManifest=app.preview.manifest` 编译（`app.preview.manifest` 把 `requireAdministrator` 换成 `asInvoker`）。
-注意：只改属性不会让已生成的 apphost 重新嵌入清单，必须加 `-t:Rebuild`，否则 exe 仍然要求提权：
+注意：只改属性不会让已生成的 apphost 重新嵌入清单，必须加 `-t:Rebuild`，否则 exe 仍然要求提权。
+如果 `bin/Release`、`obj/Release` 已经存在过，连 `-t:Rebuild` 也可能复用旧 apphost，最稳的做法是先删这两个目录再编译：
 
 ```bash
+rm -rf src/WinKit/bin/Release src/WinKit/obj/Release
 dotnet build src/WinKit/WinKit.csproj -c Release -t:Rebuild -p:ApplicationManifest=app.preview.manifest
 ```
+
+验证方式是把 exe 当二进制读出来找字符串：出现 `asInvoker` 才是对的，出现 `requireAdministrator` 说明清单没换进去。
+表现是启动时报 `This command cannot be run due to the error: The requested operation requires elevation.`
 
 ### 目录
 

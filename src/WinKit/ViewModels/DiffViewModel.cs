@@ -233,16 +233,7 @@ public sealed class DiffViewModel : ObservableObject, IModule
         {
             if (File.Exists(full))
             {
-                Process.Start(new ProcessStartInfo
-                {
-                    FileName = "explorer.exe",
-                    Arguments = $"/select,\"{full}\"",
-                    UseShellExecute = true
-                });
-            }
-            else if (Directory.Exists(full))
-            {
-                Process.Start(new ProcessStartInfo { FileName = full, UseShellExecute = true });
+                Native.RevealInExplorer(full);
             }
             else
             {

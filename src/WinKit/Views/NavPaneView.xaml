@@ -298,9 +298,11 @@
         </StackPanel>
         </Grid>
 
-        <!-- 子视图 2：任务栏（固定项 + 托盘图标） -->
-        <local:TaskbarView Grid.Row="1"
-                           Visibility="{Binding ShowTaskbar, Converter={StaticResource BoolToVis}}"
-                           DataContext="{Binding Taskbar}" />
+        <!-- 子视图 2：任务栏（固定项 + 托盘图标）
+             同 AppManagerView：Visibility 放在外层容器，DataContext 只给子视图本体，
+             否则 {Binding ShowTaskbar} 会去 TaskbarViewModel 上找而失败 → 永远可见。 -->
+        <Grid Grid.Row="1" Visibility="{Binding ShowTaskbar, Converter={StaticResource BoolToVis}}">
+            <local:TaskbarView DataContext="{Binding Taskbar}" />
+        </Grid>
     </Grid>
 </UserControl>

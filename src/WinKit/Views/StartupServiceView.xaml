@@ -81,7 +81,7 @@
                                 </DataTemplate>
                             </DataGridTemplateColumn.CellTemplate>
                         </DataGridTemplateColumn>
-                        <DataGridTemplateColumn Header="启动项名称" Width="1.4*" SortMemberPath="Name">
+                        <DataGridTemplateColumn Header="启动项名称" Width="1.4*" MinWidth="160" SortMemberPath="Name">
                             <DataGridTemplateColumn.CellTemplate>
                                 <DataTemplate>
                                     <TextBlock Text="{Binding Name}" Style="{StaticResource CellText}"
@@ -89,7 +89,7 @@
                                 </DataTemplate>
                             </DataGridTemplateColumn.CellTemplate>
                         </DataGridTemplateColumn>
-                        <DataGridTemplateColumn Header="发布者" Width="1*" SortMemberPath="Publisher">
+                        <DataGridTemplateColumn Header="发布者" Width="1*" MinWidth="110" SortMemberPath="Publisher">
                             <DataGridTemplateColumn.CellTemplate>
                                 <DataTemplate>
                                     <TextBlock Text="{Binding Publisher}" Style="{StaticResource CellMuted}" />
@@ -103,7 +103,7 @@
                                 </DataTemplate>
                             </DataGridTemplateColumn.CellTemplate>
                         </DataGridTemplateColumn>
-                        <DataGridTemplateColumn Header="启动命令" Width="2*" SortMemberPath="Command">
+                        <DataGridTemplateColumn Header="启动命令" Width="2*" MinWidth="200" SortMemberPath="Command">
                             <DataGridTemplateColumn.CellTemplate>
                                 <DataTemplate>
                                     <TextBlock Text="{Binding Command}" Style="{StaticResource CellMuted}"
@@ -144,7 +144,7 @@
                 <DataGrid Grid.Row="1" ItemsSource="{Binding Services}" Style="{StaticResource Grid}"
                           Visibility="{Binding ShowServices, Converter={StaticResource BoolToVis}}">
                     <DataGrid.Columns>
-                        <DataGridTemplateColumn Header="服务显示名" Width="1.6*" SortMemberPath="DisplayName">
+                        <DataGridTemplateColumn Header="服务显示名" Width="1.6*" MinWidth="160" SortMemberPath="DisplayName">
                             <DataGridTemplateColumn.CellTemplate>
                                 <DataTemplate>
                                     <TextBlock Text="{Binding DisplayName}" Style="{StaticResource CellText}"
@@ -152,14 +152,14 @@
                                 </DataTemplate>
                             </DataGridTemplateColumn.CellTemplate>
                         </DataGridTemplateColumn>
-                        <DataGridTemplateColumn Header="服务名" Width="1.1*" SortMemberPath="ServiceName">
+                        <DataGridTemplateColumn Header="服务名" Width="1.1*" MinWidth="110" SortMemberPath="ServiceName">
                             <DataGridTemplateColumn.CellTemplate>
                                 <DataTemplate>
                                     <TextBlock Text="{Binding ServiceName}" Style="{StaticResource CellMuted}" />
                                 </DataTemplate>
                             </DataGridTemplateColumn.CellTemplate>
                         </DataGridTemplateColumn>
-                        <DataGridTemplateColumn Header="发布者" Width="1*" SortMemberPath="Publisher">
+                        <DataGridTemplateColumn Header="发布者" Width="1*" MinWidth="110" SortMemberPath="Publisher">
                             <DataGridTemplateColumn.CellTemplate>
                                 <DataTemplate>
                                     <TextBlock Text="{Binding Publisher}" Style="{StaticResource CellMuted}" />
@@ -180,7 +180,7 @@
                                 </DataTemplate>
                             </DataGridTemplateColumn.CellTemplate>
                         </DataGridTemplateColumn>
-                        <DataGridTemplateColumn Header="程序路径" Width="1.6*" SortMemberPath="ImagePath">
+                        <DataGridTemplateColumn Header="程序路径" Width="1.6*" MinWidth="200" SortMemberPath="ImagePath">
                             <DataGridTemplateColumn.CellTemplate>
                                 <DataTemplate>
                                     <TextBlock Text="{Binding ImagePath}" Style="{StaticResource CellMuted}"
@@ -212,7 +212,7 @@
                 <DataGrid Grid.Row="1" ItemsSource="{Binding Tasks}" Style="{StaticResource Grid}"
                           Visibility="{Binding ShowTasks, Converter={StaticResource BoolToVis}}">
                     <DataGrid.Columns>
-                        <DataGridTemplateColumn Header="任务名称" Width="1.4*" SortMemberPath="TaskName">
+                        <DataGridTemplateColumn Header="任务名称" Width="1.4*" MinWidth="160" SortMemberPath="TaskName">
                             <DataGridTemplateColumn.CellTemplate>
                                 <DataTemplate>
                                     <TextBlock Text="{Binding TaskName}" Style="{StaticResource CellText}"
@@ -220,21 +220,21 @@
                                 </DataTemplate>
                             </DataGridTemplateColumn.CellTemplate>
                         </DataGridTemplateColumn>
-                        <DataGridTemplateColumn Header="任务目录" Width="1.1*" SortMemberPath="TaskPath">
+                        <DataGridTemplateColumn Header="任务目录" Width="1.1*" MinWidth="120" SortMemberPath="TaskPath">
                             <DataGridTemplateColumn.CellTemplate>
                                 <DataTemplate>
                                     <TextBlock Text="{Binding TaskPath}" Style="{StaticResource CellMuted}" />
                                 </DataTemplate>
                             </DataGridTemplateColumn.CellTemplate>
                         </DataGridTemplateColumn>
-                        <DataGridTemplateColumn Header="作者" Width="1*" SortMemberPath="Author">
+                        <DataGridTemplateColumn Header="作者" Width="1*" MinWidth="110" SortMemberPath="Author">
                             <DataGridTemplateColumn.CellTemplate>
                                 <DataTemplate>
                                     <TextBlock Text="{Binding Author}" Style="{StaticResource CellMuted}" />
                                 </DataTemplate>
                             </DataGridTemplateColumn.CellTemplate>
                         </DataGridTemplateColumn>
-                        <DataGridTemplateColumn Header="执行命令" Width="2*" SortMemberPath="Command">
+                        <DataGridTemplateColumn Header="执行命令" Width="2*" MinWidth="200" SortMemberPath="Command">
                             <DataGridTemplateColumn.CellTemplate>
                                 <DataTemplate>
                                     <TextBlock Text="{Binding Command}" Style="{StaticResource CellMuted}"

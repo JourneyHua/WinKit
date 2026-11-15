@@ -69,7 +69,7 @@
                                 </DataTemplate>
                             </DataGridTemplateColumn.CellTemplate>
                         </DataGridTemplateColumn>
-                        <DataGridTemplateColumn Header="清理项目" Width="1.5*" SortMemberPath="Title">
+                        <DataGridTemplateColumn Header="清理项目" Width="1.5*" MinWidth="160" SortMemberPath="Title">
                             <DataGridTemplateColumn.CellTemplate>
                                 <DataTemplate>
                                     <TextBlock Text="{Binding Title}" Style="{StaticResource CellText}"
@@ -77,7 +77,7 @@
                                 </DataTemplate>
                             </DataGridTemplateColumn.CellTemplate>
                         </DataGridTemplateColumn>
-                        <DataGridTemplateColumn Header="说明" Width="2.1*" SortMemberPath="Description">
+                        <DataGridTemplateColumn Header="说明" Width="2.1*" MinWidth="200" SortMemberPath="Description">
                             <DataGridTemplateColumn.CellTemplate>
                                 <DataTemplate>
                                     <TextBlock Text="{Binding Description}" Style="{StaticResource CellMuted}"
@@ -158,7 +158,7 @@
 
                     <DataGrid Grid.Row="1" ItemsSource="{Binding LargeFiles}" Style="{StaticResource Grid}">
                         <DataGrid.Columns>
-                            <DataGridTemplateColumn Header="文件名" Width="1.6*" SortMemberPath="FileName">
+                            <DataGridTemplateColumn Header="文件名" Width="1.6*" MinWidth="170" SortMemberPath="FileName">
                                 <DataGridTemplateColumn.CellTemplate>
                                     <DataTemplate>
                                         <TextBlock Text="{Binding FileName}" Style="{StaticResource CellText}"
@@ -187,7 +187,7 @@
                                     </DataTemplate>
                                 </DataGridTemplateColumn.CellTemplate>
                             </DataGridTemplateColumn>
-                            <DataGridTemplateColumn Header="所在目录" Width="2*" SortMemberPath="DirectoryPath">
+                            <DataGridTemplateColumn Header="所在目录" Width="2*" MinWidth="200" SortMemberPath="DirectoryPath">
                                 <DataGridTemplateColumn.CellTemplate>
                                     <DataTemplate>
                                         <TextBlock Text="{Binding DirectoryPath}" Style="{StaticResource CellMuted}"
@@ -195,7 +195,8 @@
                                     </DataTemplate>
                                 </DataGridTemplateColumn.CellTemplate>
                             </DataGridTemplateColumn>
-                            <DataGridTemplateColumn Header="操作" Width="220" CanUserSort="False">
+                            <!-- 三个按钮实测需要 258 -->
+                            <DataGridTemplateColumn Header="操作" Width="260" CanUserSort="False">
                                 <DataGridTemplateColumn.CellTemplate>
                                     <DataTemplate>
                                         <StackPanel Orientation="Horizontal" VerticalAlignment="Center">

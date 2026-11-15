@@ -174,11 +174,7 @@ public sealed class EventLogViewModel : ObservableObject, IModule
     {
         try
         {
-            System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo
-            {
-                FileName = "eventvwr.msc",
-                UseShellExecute = true
-            });
+            Native.OpenPath("eventvwr.msc");
         }
         catch (Exception ex)
         {

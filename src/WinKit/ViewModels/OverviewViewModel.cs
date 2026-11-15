@@ -113,7 +113,7 @@ public sealed class OverviewViewModel : ObservableObject, IModule
     {
         try
         {
-            Process.Start(new ProcessStartInfo { FileName = target, UseShellExecute = true });
+            Native.OpenPath(target);
         }
         catch (Exception ex)
         {

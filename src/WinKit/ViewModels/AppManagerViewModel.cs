@@ -714,11 +714,7 @@ public sealed class AppManagerViewModel : ObservableObject, IModule
             {
                 try
                 {
-                    Process.Start(new ProcessStartInfo
-                    {
-                        FileName = report.InstallLocation,
-                        UseShellExecute = true
-                    });
+                    Native.OpenPath(report.InstallLocation);
                 }
                 catch (Exception) { }
             }
@@ -742,11 +738,7 @@ public sealed class AppManagerViewModel : ObservableObject, IModule
 
         try
         {
-            Process.Start(new ProcessStartInfo
-            {
-                FileName = app.InstallLocation,
-                UseShellExecute = true
-            });
+            Native.OpenPath(app.InstallLocation);
         }
         catch (Exception ex)
         {
@@ -977,11 +969,7 @@ public sealed class AppManagerViewModel : ObservableObject, IModule
 
         try
         {
-            Process.Start(new ProcessStartInfo
-            {
-                FileName = tool.InstallLocation,
-                UseShellExecute = true
-            });
+            Native.OpenPath(tool.InstallLocation);
         }
         catch (Exception ex)
         {

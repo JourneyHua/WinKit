@@ -140,12 +140,7 @@ public sealed class UninstallService
         if (!File.Exists(fileName) && !fileName.Contains('\\'))
             throw new FileNotFoundException($"卸载程序不存在：{fileName}");
 
-        Process.Start(new ProcessStartInfo
-        {
-            FileName = fileName,
-            Arguments = arguments,
-            UseShellExecute = true
-        });
+        Native.OpenPath(fileName, arguments);
     }
 
     /// <summary>这些 CLSID 是否还登记在 PackagedCom 里（卸载是否尚未完成）。</summary>

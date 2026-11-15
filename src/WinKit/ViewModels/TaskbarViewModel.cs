@@ -222,11 +222,7 @@ public sealed class TaskbarViewModel : ObservableObject
         try
         {
             Directory.CreateDirectory(TaskbarService.PinnedFolder);
-            Process.Start(new ProcessStartInfo
-            {
-                FileName = TaskbarService.PinnedFolder,
-                UseShellExecute = true
-            });
+            Native.OpenPath(TaskbarService.PinnedFolder);
         }
         catch (Exception ex)
         {
@@ -240,12 +236,7 @@ public sealed class TaskbarViewModel : ObservableObject
 
         try
         {
-            Process.Start(new ProcessStartInfo
-            {
-                FileName = "explorer.exe",
-                Arguments = $"/select,\"{item.ShortcutPath}\"",
-                UseShellExecute = true
-            });
+            Native.RevealInExplorer(item.ShortcutPath);
         }
         catch (Exception ex)
         {
@@ -259,11 +250,7 @@ public sealed class TaskbarViewModel : ObservableObject
 
         try
         {
-            Process.Start(new ProcessStartInfo
-            {
-                FileName = item.TargetPath,
-                UseShellExecute = true
-            });
+            Native.OpenPath(item.TargetPath);
         }
         catch (Exception ex)
         {
@@ -327,12 +314,7 @@ public sealed class TaskbarViewModel : ObservableObject
         {
             if (File.Exists(path))
             {
-                Process.Start(new ProcessStartInfo
-                {
-                    FileName = "explorer.exe",
-                    Arguments = $"/select,\"{path}\"",
-                    UseShellExecute = true
-                });
+                Native.RevealInExplorer(path);
                 return;
             }
 

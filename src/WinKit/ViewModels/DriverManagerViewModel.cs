@@ -575,11 +575,7 @@ public sealed class DriverManagerViewModel : ObservableObject, IModule
         try
         {
             Directory.CreateDirectory(DriverManagerService.DriverBackupRoot);
-            Process.Start(new ProcessStartInfo
-            {
-                FileName = DriverManagerService.DriverBackupRoot,
-                UseShellExecute = true
-            });
+            Native.OpenPath(DriverManagerService.DriverBackupRoot);
         }
         catch (Exception ex)
         {
@@ -591,11 +587,7 @@ public sealed class DriverManagerViewModel : ObservableObject, IModule
     {
         try
         {
-            Process.Start(new ProcessStartInfo
-            {
-                FileName = "devmgmt.msc",
-                UseShellExecute = true
-            });
+            Native.OpenPath("devmgmt.msc");
             _status("已打开系统设备管理器 (devmgmt.msc)");
         }
         catch (Exception ex)

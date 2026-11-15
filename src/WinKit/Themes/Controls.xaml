@@ -288,6 +288,30 @@
         </Setter>
     </Style>
 
+    <!--
+        列宽拖拽手柄。自定义 DataGridColumnHeader 模板会整体替换默认模板，
+        而默认模板里的 PART_LeftHeaderGripper / PART_RightHeaderGripper 一旦缺失，
+        DataGrid 就完全拖不动列宽（鼠标移到列边界连光标都不变）。
+        两个 Thumb 必须用这两个固定名字，DataGrid 靠它们找手柄。
+    -->
+    <Style x:Key="ColumnHeaderGripper" TargetType="Thumb">
+        <Setter Property="Width" Value="8" />
+        <Setter Property="Background" Value="Transparent" />
+        <Setter Property="Cursor" Value="SizeWE" />
+        <Setter Property="Template">
+            <Setter.Value>
+                <ControlTemplate TargetType="Thumb">
+                    <Border x:Name="GripBd" Background="{TemplateBinding Background}" />
+                    <ControlTemplate.Triggers>
+                        <Trigger Property="IsMouseOver" Value="True">
+                            <Setter TargetName="GripBd" Property="Background" Value="{DynamicResource Brush.Accent}" />
+                        </Trigger>
+                    </ControlTemplate.Triggers>
+                </ControlTemplate>
+            </Setter.Value>
+        </Setter>
+    </Style>
+
     <Style x:Key="GridHeader" TargetType="DataGridColumnHeader">
         <Setter Property="Background" Value="Transparent" />
         <Setter Property="Foreground" Value="{DynamicResource Brush.TextMuted}" />
@@ -301,23 +325,33 @@
         <Setter Property="Template">
             <Setter.Value>
                 <ControlTemplate TargetType="DataGridColumnHeader">
-                    <Border x:Name="HdrBd" Background="{TemplateBinding Background}"
-                            BorderBrush="{TemplateBinding BorderBrush}"
-                            BorderThickness="{TemplateBinding BorderThickness}"
-                            Padding="{TemplateBinding Padding}">
-                        <Grid>
-                            <Grid.ColumnDefinitions>
-                                <ColumnDefinition Width="*" />
-                                <ColumnDefinition Width="Auto" />
-                            </Grid.ColumnDefinitions>
-                            <ContentPresenter Grid.Column="0" VerticalAlignment="Center"
-                                              HorizontalAlignment="{TemplateBinding HorizontalContentAlignment}" />
-                            <TextBlock x:Name="SortArrow" Grid.Column="1" Text="" FontSize="10"
-                                       Margin="6,0,0,0" VerticalAlignment="Center"
-                                       Foreground="{DynamicResource Brush.Accent}"
-                                       Visibility="Collapsed" />
-                        </Grid>
-                    </Border>
+                    <Grid>
+                        <Border x:Name="HdrBd" Background="{TemplateBinding Background}"
+                                BorderBrush="{TemplateBinding BorderBrush}"
+                                BorderThickness="{TemplateBinding BorderThickness}"
+                                Padding="{TemplateBinding Padding}">
+                            <Grid>
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="*" />
+                                    <ColumnDefinition Width="Auto" />
+                                </Grid.ColumnDefinitions>
+                                <ContentPresenter Grid.Column="0" VerticalAlignment="Center"
+                                                  HorizontalAlignment="{TemplateBinding HorizontalContentAlignment}" />
+                                <TextBlock x:Name="SortArrow" Grid.Column="1" Text="" FontSize="10"
+                                           Margin="6,0,0,0" VerticalAlignment="Center"
+                                           Foreground="{DynamicResource Brush.Accent}"
+                                           Visibility="Collapsed" />
+                            </Grid>
+                        </Border>
+                        <!--
+                            列宽拖拽手柄。名字必须是这两个固定名，DataGrid 靠名字找它们；
+                            少了任何一个，鼠标移到列边界连 SizeWE 光标都不会出现。
+                        -->
+                        <Thumb x:Name="PART_LeftHeaderGripper" HorizontalAlignment="Left"
+                               Style="{StaticResource ColumnHeaderGripper}" />
+                        <Thumb x:Name="PART_RightHeaderGripper" HorizontalAlignment="Right"
+                               Style="{StaticResource ColumnHeaderGripper}" />
+                    </Grid>
                     <ControlTemplate.Triggers>
                         <Trigger Property="IsMouseOver" Value="True">
                             <Setter TargetName="HdrBd" Property="Background" Value="{DynamicResource Brush.Hover}" />
@@ -389,6 +423,10 @@
         <Setter Property="CanUserAddRows" Value="False" />
         <Setter Property="CanUserDeleteRows" Value="False" />
         <Setter Property="CanUserSortColumns" Value="True" />
+        <!-- 允许拖动列边界改宽度：配合 GridHeader 模板里的两个 gripper 才真正生效 -->
+        <Setter Property="CanUserResizeColumns" Value="True" />
+        <Setter Property="CanUserResizeRows" Value="False" />
+        <Setter Property="MinColumnWidth" Value="40" />
         <Setter Property="EnableRowVirtualization" Value="True" />
         <Setter Property="EnableColumnVirtualization" Value="True" />
         <Setter Property="VirtualizingPanel.IsVirtualizing" Value="True" />

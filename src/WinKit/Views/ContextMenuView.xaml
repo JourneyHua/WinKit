@@ -162,7 +162,7 @@
                                                 </DataTemplate>
                                             </DataGridTemplateColumn.CellTemplate>
                                         </DataGridTemplateColumn>
-                                        <DataGridTemplateColumn Header="作用域" Width="1.2*" SortMemberPath="ScopeText">
+                                        <DataGridTemplateColumn Header="作用域" Width="1.2*" MinWidth="110" SortMemberPath="ScopeText">
                                             <DataGridTemplateColumn.CellTemplate>
                                                 <DataTemplate>
                                                     <TextBlock Text="{Binding ScopeText}" Style="{StaticResource CellMuted}"
@@ -314,7 +314,7 @@
                                             </DataTemplate>
                                         </DataGridTemplateColumn.CellTemplate>
                                     </DataGridTemplateColumn>
-                                    <DataGridTemplateColumn Header="名称" Width="2*" SortMemberPath="DisplayName">
+                                    <DataGridTemplateColumn Header="名称" Width="2*" MinWidth="170" SortMemberPath="DisplayName">
                                         <DataGridTemplateColumn.CellTemplate>
                                             <DataTemplate>
                                                 <TextBlock Text="{Binding DisplayName}" Style="{StaticResource CellText}"
@@ -322,7 +322,7 @@
                                             </DataTemplate>
                                         </DataGridTemplateColumn.CellTemplate>
                                     </DataGridTemplateColumn>
-                                    <DataGridTemplateColumn Header="发布者" Width="*" SortMemberPath="Publisher">
+                                    <DataGridTemplateColumn Header="发布者" Width="*" MinWidth="130" SortMemberPath="Publisher">
                                         <DataGridTemplateColumn.CellTemplate>
                                             <DataTemplate>
                                                 <TextBlock Text="{Binding Publisher}" Style="{StaticResource CellMuted}"
@@ -344,7 +344,8 @@
                                             </DataTemplate>
                                         </DataGridTemplateColumn.CellTemplate>
                                     </DataGridTemplateColumn>
-                                    <DataGridTemplateColumn Header="操作" Width="196" CanUserSort="False">
+                                    <!-- 三个按钮实测需要 198 -->
+                                    <DataGridTemplateColumn Header="操作" Width="210" CanUserSort="False">
                                         <DataGridTemplateColumn.CellTemplate>
                                             <DataTemplate>
                                                 <StackPanel Orientation="Horizontal" VerticalAlignment="Center">

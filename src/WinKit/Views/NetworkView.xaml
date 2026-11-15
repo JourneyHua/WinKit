@@ -145,14 +145,14 @@
                                     </DataTemplate>
                                 </DataGridTemplateColumn.CellTemplate>
                             </DataGridTemplateColumn>
-                            <DataGridTemplateColumn Header="IPv4" Width="1.2*" SortMemberPath="Ipv4Text">
+                            <DataGridTemplateColumn Header="IPv4" Width="1.2*" MinWidth="120" SortMemberPath="Ipv4Text">
                                 <DataGridTemplateColumn.CellTemplate>
                                     <DataTemplate>
                                         <TextBlock Text="{Binding Ipv4Text}" Style="{StaticResource CellMuted}" />
                                     </DataTemplate>
                                 </DataGridTemplateColumn.CellTemplate>
                             </DataGridTemplateColumn>
-                            <DataGridTemplateColumn Header="网关" Width="1.1*" SortMemberPath="GatewayText">
+                            <DataGridTemplateColumn Header="网关" Width="1.1*" MinWidth="110" SortMemberPath="GatewayText">
                                 <DataGridTemplateColumn.CellTemplate>
                                     <DataTemplate>
                                         <TextBlock Text="{Binding GatewayText}" Style="{StaticResource CellMuted}" />
@@ -188,14 +188,14 @@
                         <TextBlock Grid.Row="0" Text="延迟与丢包（ICMP）" Style="{StaticResource H2}" Margin="14,12,14,6" />
                         <DataGrid Grid.Row="1" ItemsSource="{Binding Pings}" Style="{StaticResource Grid}">
                             <DataGrid.Columns>
-                                <DataGridTemplateColumn Header="目标" Width="*" SortMemberPath="Label">
+                                <DataGridTemplateColumn Header="目标" Width="*" MinWidth="170" SortMemberPath="Label">
                                     <DataGridTemplateColumn.CellTemplate>
                                         <DataTemplate>
                                             <TextBlock Text="{Binding Label}" Style="{StaticResource CellText}" />
                                         </DataTemplate>
                                     </DataGridTemplateColumn.CellTemplate>
                                 </DataGridTemplateColumn>
-                                <DataGridTemplateColumn Header="延迟" Width="1.4*" SortMemberPath="AvgMs">
+                                <DataGridTemplateColumn Header="延迟" Width="1.4*" MinWidth="80" SortMemberPath="AvgMs">
                                     <DataGridTemplateColumn.CellTemplate>
                                         <DataTemplate>
                                             <TextBlock Text="{Binding LatencyText}" Style="{StaticResource CellMuted}" />
@@ -223,14 +223,14 @@
                         <TextBlock Grid.Row="0" Text="外网连通（TCP 443）" Style="{StaticResource H2}" Margin="14,12,14,6" />
                         <DataGrid Grid.Row="1" ItemsSource="{Binding TcpResults}" Style="{StaticResource Grid}">
                             <DataGrid.Columns>
-                                <DataGridTemplateColumn Header="站点" Width="*" SortMemberPath="Label">
+                                <DataGridTemplateColumn Header="站点" Width="*" MinWidth="170" SortMemberPath="Label">
                                     <DataGridTemplateColumn.CellTemplate>
                                         <DataTemplate>
                                             <TextBlock Text="{Binding Label}" Style="{StaticResource CellText}" />
                                         </DataTemplate>
                                     </DataGridTemplateColumn.CellTemplate>
                                 </DataGridTemplateColumn>
-                                <DataGridTemplateColumn Header="耗时" Width="1.2*" SortMemberPath="ElapsedMs">
+                                <DataGridTemplateColumn Header="耗时" Width="1.2*" MinWidth="80" SortMemberPath="ElapsedMs">
                                     <DataGridTemplateColumn.CellTemplate>
                                         <DataTemplate>
                                             <TextBlock Text="{Binding ResultText}" Style="{StaticResource CellMuted}" />
@@ -251,7 +251,7 @@
                         <TextBlock Grid.Row="0" Text="DNS 解析耗时" Style="{StaticResource H2}" Margin="14,12,14,6" />
                         <DataGrid Grid.Row="1" ItemsSource="{Binding DnsResults}" Style="{StaticResource Grid}">
                             <DataGrid.Columns>
-                                <DataGridTemplateColumn Header="域名" Width="*" SortMemberPath="Domain">
+                                <DataGridTemplateColumn Header="域名" Width="*" MinWidth="170" SortMemberPath="Domain">
                                     <DataGridTemplateColumn.CellTemplate>
                                         <DataTemplate>
                                             <TextBlock Text="{Binding Domain}" Style="{StaticResource CellText}" />

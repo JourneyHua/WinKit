@@ -189,11 +189,7 @@ public sealed class NetworkViewModel : ObservableObject, IModule
     {
         try
         {
-            System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo
-            {
-                FileName = @"C:\Windows\System32\drivers\etc\hosts",
-                UseShellExecute = true
-            });
+            Native.OpenPath(@"C:\Windows\System32\drivers\etc\hosts");
         }
         catch (Exception ex)
         {
@@ -224,11 +220,7 @@ public sealed class NetworkViewModel : ObservableObject, IModule
     {
         try
         {
-            System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo
-            {
-                FileName = target,
-                UseShellExecute = true
-            });
+            Native.OpenPath(target);
         }
         catch (Exception ex)
         {

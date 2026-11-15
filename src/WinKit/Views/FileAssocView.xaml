@@ -63,7 +63,7 @@
                             </DataTemplate>
                         </DataGridTemplateColumn.CellTemplate>
                     </DataGridTemplateColumn>
-                    <DataGridTemplateColumn Header="关联程序" Width="1.5*" MinWidth="160" SortMemberPath="FriendlyName">
+                    <DataGridTemplateColumn Header="关联程序" Width="1.5*" MinWidth="130" SortMemberPath="FriendlyName">
                         <DataGridTemplateColumn.CellTemplate>
                             <DataTemplate>
                                 <TextBlock Text="{Binding DisplayText}" Style="{StaticResource CellText}"
@@ -71,7 +71,7 @@
                             </DataTemplate>
                         </DataGridTemplateColumn.CellTemplate>
                     </DataGridTemplateColumn>
-                    <DataGridTemplateColumn Header="ProgID" Width="1.3*" MinWidth="150" SortMemberPath="ProgId">
+                    <DataGridTemplateColumn Header="ProgID" Width="1.3*" MinWidth="120" SortMemberPath="ProgId">
                         <DataGridTemplateColumn.CellTemplate>
                             <DataTemplate>
                                 <TextBlock Text="{Binding ProgId}" Style="{StaticResource CellMuted}"
@@ -79,7 +79,7 @@
                             </DataTemplate>
                         </DataGridTemplateColumn.CellTemplate>
                     </DataGridTemplateColumn>
-                    <DataGridTemplateColumn Header="打开命令" Width="2*" MinWidth="200" SortMemberPath="Command">
+                    <DataGridTemplateColumn Header="打开命令" Width="2*" MinWidth="170" SortMemberPath="Command">
                         <DataGridTemplateColumn.CellTemplate>
                             <DataTemplate>
                                 <TextBlock Text="{Binding Command}" Style="{StaticResource CellMuted}"
@@ -87,7 +87,8 @@
                             </DataTemplate>
                         </DataGridTemplateColumn.CellTemplate>
                     </DataGridTemplateColumn>
-                    <DataGridTemplateColumn Header="操作" Width="290" CanUserSort="False">
+                    <!-- 四个按钮实测需要 334 -->
+                    <DataGridTemplateColumn Header="操作" Width="340" CanUserSort="False">
                         <DataGridTemplateColumn.CellTemplate>
                             <DataTemplate>
                                 <StackPanel Orientation="Horizontal">

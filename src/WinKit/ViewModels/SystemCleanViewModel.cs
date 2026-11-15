@@ -254,23 +254,12 @@ public sealed class SystemCleanViewModel : ObservableObject, IModule
         }
     }
 
-    private void OpenStorageSense()
-    {
-        try
-        {
-            Process.Start(new ProcessStartInfo { FileName = "ms-settings:storagesense", UseShellExecute = true });
-        }
-        catch (Exception) { }
-    }
+    private void OpenStorageSense() => Native.OpenPath("ms-settings:storagesense");
 
     private void OpenTargetFolder(CleanupTargetItem? item)
     {
         if (item is null || string.IsNullOrWhiteSpace(item.PrimaryPath) || !Directory.Exists(item.PrimaryPath)) return;
-        try
-        {
-            Process.Start(new ProcessStartInfo { FileName = item.PrimaryPath, UseShellExecute = true });
-        }
-        catch (Exception) { }
+        Native.OpenPath(item.PrimaryPath);
     }
 
     private async Task ScanLargeFilesAsync()
@@ -312,16 +301,7 @@ public sealed class SystemCleanViewModel : ObservableObject, IModule
     private void OpenLargeFileFolder(LargeFileItem? item)
     {
         if (item is null || !File.Exists(item.FilePath)) return;
-        try
-        {
-            Process.Start(new ProcessStartInfo
-            {
-                FileName = "explorer.exe",
-                Arguments = $"/select,\"{item.FilePath}\"",
-                UseShellExecute = true
-            });
-        }
-        catch (Exception) { }
+        Native.RevealInExplorer(item.FilePath);
     }
 
     private void CopyLargeFilePath(LargeFileItem? item)

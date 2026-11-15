@@ -215,12 +215,7 @@ public sealed class FileLockViewModel : ObservableObject, IModule
 
         try
         {
-            Process.Start(new ProcessStartInfo
-            {
-                FileName = "explorer.exe",
-                Arguments = $"/select,\"{locker.ExecutablePath}\"",
-                UseShellExecute = true
-            });
+            Native.RevealInExplorer(locker.ExecutablePath);
         }
         catch (Exception ex)
         {

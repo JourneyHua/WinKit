@@ -62,7 +62,7 @@
                             </DataTemplate>
                         </DataGridTemplateColumn.CellTemplate>
                     </DataGridTemplateColumn>
-                    <DataGridTemplateColumn Header="来源" Width="1.5*" MinWidth="180" SortMemberPath="Provider">
+                    <DataGridTemplateColumn Header="来源" Width="1.5*" MinWidth="150" SortMemberPath="Provider">
                         <DataGridTemplateColumn.CellTemplate>
                             <DataTemplate>
                                 <TextBlock Text="{Binding Provider}" Style="{StaticResource CellText}" />
@@ -90,7 +90,7 @@
                             </DataTemplate>
                         </DataGridTemplateColumn.CellTemplate>
                     </DataGridTemplateColumn>
-                    <DataGridTemplateColumn Header="示例数据" Width="2.4*" MinWidth="220" SortMemberPath="Sample">
+                    <DataGridTemplateColumn Header="示例数据" Width="2.4*" MinWidth="200" SortMemberPath="Sample">
                         <DataGridTemplateColumn.CellTemplate>
                             <DataTemplate>
                                 <TextBlock Text="{Binding Sample}" Style="{StaticResource CellMuted}"
@@ -98,7 +98,8 @@
                             </DataTemplate>
                         </DataGridTemplateColumn.CellTemplate>
                     </DataGridTemplateColumn>
-                    <DataGridTemplateColumn Header="操作" Width="90" CanUserSort="False">
+                    <!-- 复制详情实测需要 94 -->
+                    <DataGridTemplateColumn Header="操作" Width="100" CanUserSort="False">
                         <DataGridTemplateColumn.CellTemplate>
                             <DataTemplate>
                                 <Button Content="复制详情" Style="{StaticResource BtnSmall}"

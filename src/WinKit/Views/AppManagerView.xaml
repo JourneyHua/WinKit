@@ -117,7 +117,7 @@
                             </ContextMenu>
                         </DataGrid.ContextMenu>
                         <DataGrid.Columns>
-                            <DataGridTemplateColumn Header="名称" Width="1.9*" MinWidth="180" SortMemberPath="Name">
+                            <DataGridTemplateColumn Header="名称" Width="1.9*" MinWidth="140" SortMemberPath="Name">
                                 <DataGridTemplateColumn.CellTemplate>
                                     <DataTemplate>
                                         <TextBlock Text="{Binding Name}" Style="{StaticResource CellText}"
@@ -125,14 +125,14 @@
                                     </DataTemplate>
                                 </DataGridTemplateColumn.CellTemplate>
                             </DataGridTemplateColumn>
-                            <DataGridTemplateColumn Header="发布者" Width="1.1*" SortMemberPath="Publisher">
+                            <DataGridTemplateColumn Header="发布者" Width="1.1*" MinWidth="84" SortMemberPath="Publisher">
                                 <DataGridTemplateColumn.CellTemplate>
                                     <DataTemplate>
                                         <TextBlock Text="{Binding Publisher}" Style="{StaticResource CellMuted}" />
                                     </DataTemplate>
                                 </DataGridTemplateColumn.CellTemplate>
                             </DataGridTemplateColumn>
-                            <DataGridTemplateColumn Header="版本" Width="1.2*" SortMemberPath="VersionText">
+                            <DataGridTemplateColumn Header="版本" Width="1.2*" MinWidth="80" SortMemberPath="VersionText">
                                 <DataGridTemplateColumn.CellTemplate>
                                     <DataTemplate>
                                         <TextBlock Text="{Binding VersionText}" Style="{StaticResource CellMuted}"
@@ -140,28 +140,28 @@
                                     </DataTemplate>
                                 </DataGridTemplateColumn.CellTemplate>
                             </DataGridTemplateColumn>
-                            <DataGridTemplateColumn Header="类型" Width="82" SortMemberPath="KindText">
+                            <DataGridTemplateColumn Header="类型" Width="70" SortMemberPath="KindText">
                                 <DataGridTemplateColumn.CellTemplate>
                                     <DataTemplate>
                                         <TextBlock Text="{Binding KindText}" Style="{StaticResource CellMuted}" />
                                     </DataTemplate>
                                 </DataGridTemplateColumn.CellTemplate>
                             </DataGridTemplateColumn>
-                            <DataGridTemplateColumn Header="大小" Width="82" SortMemberPath="SizeBytes">
+                            <DataGridTemplateColumn Header="大小" Width="70" SortMemberPath="SizeBytes">
                                 <DataGridTemplateColumn.CellTemplate>
                                     <DataTemplate>
                                         <TextBlock Text="{Binding SizeText}" Style="{StaticResource CellMuted}" />
                                     </DataTemplate>
                                 </DataGridTemplateColumn.CellTemplate>
                             </DataGridTemplateColumn>
-                            <DataGridTemplateColumn Header="安装日期" Width="96" SortMemberPath="InstallDateFormatted">
+                            <DataGridTemplateColumn Header="安装日期" Width="86" SortMemberPath="InstallDateFormatted">
                                 <DataGridTemplateColumn.CellTemplate>
                                     <DataTemplate>
                                         <TextBlock Text="{Binding InstallDateFormatted}" Style="{StaticResource CellMuted}" />
                                     </DataTemplate>
                                 </DataGridTemplateColumn.CellTemplate>
                             </DataGridTemplateColumn>
-                            <DataGridTemplateColumn Header="安装位置" Width="1.3*" MinWidth="160" SortMemberPath="InstallLocation">
+                            <DataGridTemplateColumn Header="安装位置" Width="1.3*" MinWidth="110" SortMemberPath="InstallLocation">
                                 <DataGridTemplateColumn.CellTemplate>
                                     <DataTemplate>
                                         <TextBlock Text="{Binding InstallLocation}" Style="{StaticResource CellMuted}"
@@ -169,7 +169,8 @@
                                     </DataTemplate>
                                 </DataGridTemplateColumn.CellTemplate>
                             </DataGridTemplateColumn>
-                            <DataGridTemplateColumn Header="操作" Width="235" CanUserSort="False">
+                            <!-- 原 235 装不下「更新 打开目录 复制路径 卸载」四个按钮（实测需要 265，留 9px 余量）-->
+                            <DataGridTemplateColumn Header="操作" Width="274" CanUserSort="False">
                                 <DataGridTemplateColumn.CellTemplate>
                                     <DataTemplate>
                                         <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
@@ -472,10 +473,13 @@
                 </Grid>
             </Border>
         </Grid>
-        <!-- 子视图 4：卸载残留清理（拖入文件夹 / 快捷方式 → 识别 → 扫残留 → 清理） -->
-        <local:UninstallCenterView Grid.Row="1"
-                                   Visibility="{Binding ShowUninstallCenter, Converter={StaticResource BoolToVis}}"
-                                   DataContext="{Binding UninstallCenter}" />
+        <!-- 子视图 4：卸载残留清理（拖入文件夹 / 快捷方式 → 识别 → 扫残留 → 清理）
+             Visibility 必须在外面这层容器上求值：一旦同一个元素上再写 DataContext，
+             {Binding ShowUninstallCenter} 就会跑去子 ViewModel 上找，属性不存在 →
+             绑定失败 → BoolToVis 拿到 UnsetValue → 子视图永远显示，叠在应用列表上面。 -->
+        <Grid Grid.Row="1" Visibility="{Binding ShowUninstallCenter, Converter={StaticResource BoolToVis}}">
+            <local:UninstallCenterView DataContext="{Binding UninstallCenter}" />
+        </Grid>
 
         <!-- 页面级错误条：失败时统一展示，替代原先只靠底部状态栏 -->
         <Border Style="{StaticResource ErrorBar}" VerticalAlignment="Top"

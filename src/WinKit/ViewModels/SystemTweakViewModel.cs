@@ -258,12 +258,7 @@ public sealed class SystemTweakViewModel : ObservableObject, IModule
         if (item is null || !item.HasExecutable) return;
         try
         {
-            Process.Start(new ProcessStartInfo
-            {
-                FileName = "explorer.exe",
-                Arguments = $"/select,\"{item.ExecutablePath}\"",
-                UseShellExecute = true
-            });
+            Native.RevealInExplorer(item.ExecutablePath);
         }
         catch (Exception) { }
     }
@@ -307,12 +302,7 @@ public sealed class SystemTweakViewModel : ObservableObject, IModule
 
         try
         {
-            Process.Start(new ProcessStartInfo
-            {
-                FileName = "notepad.exe",
-                Arguments = $"\"{hostsPath}\"",
-                UseShellExecute = true
-            });
+            Native.OpenPath("notepad.exe", $"\"{hostsPath}\"");
             _status($"已在记事本中打开：{hostsPath}");
         }
         catch (Exception ex)
@@ -326,12 +316,7 @@ public sealed class SystemTweakViewModel : ObservableObject, IModule
         if (shortcut is null) return;
         try
         {
-            Process.Start(new ProcessStartInfo
-            {
-                FileName = shortcut.FileName,
-                Arguments = shortcut.Arguments,
-                UseShellExecute = true
-            });
+            Native.OpenPath(shortcut.FileName, shortcut.Arguments);
             _status($"已打开：{shortcut.Title} ({shortcut.CommandLabel})");
         }
         catch (Exception ex)

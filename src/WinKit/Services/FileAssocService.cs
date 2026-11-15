@@ -127,11 +127,7 @@ public sealed class FileAssocService
                 ? "ms-settings:defaultapps"
                 : $"ms-settings:defaultapps?registeredAppUser={Uri.EscapeDataString(extension)}";
 
-            System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo
-            {
-                FileName = target,
-                UseShellExecute = true
-            });
+            Native.OpenPath(target);
 
             return (true, "已打开系统默认应用设置");
         }
