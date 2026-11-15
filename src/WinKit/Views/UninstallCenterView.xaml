@@ -3,6 +3,8 @@
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
              FontFamily="Microsoft YaHei UI, Segoe UI"
              AllowDrop="True"
+             PreviewDragOver="OnDragOver"
+             PreviewDrop="OnDrop"
              DragOver="OnDragOver"
              Drop="OnDrop">
 
@@ -40,6 +42,9 @@
                                     Command="{Binding PickFolderCommand}" />
                             <Button Content="选择快捷方式…" Style="{StaticResource BtnBase}" Margin="0,0,6,0"
                                     Command="{Binding PickShortcutCommand}" />
+                            <Button Content="粘贴路径" Style="{StaticResource BtnSmall}" Margin="0,0,6,0"
+                                    ToolTip="在资源管理器里 Ctrl+C 复制文件夹或快捷方式后点这里；拖放失效时的替代入口"
+                                    Command="{Binding PastePathCommand}" />
                             <Button Content="清除" Style="{StaticResource BtnSmall}"
                                     Visibility="{Binding HasTarget, Converter={StaticResource BoolToVis}}"
                                     Command="{Binding ClearCommand}" />

@@ -205,6 +205,23 @@ public partial class App : Application
                 Pump();
             }
 
+            // 提权进程要接住资源管理器的拖放，必须先放行 UIPI 的三个拖放消息。
+            // 这里在 smoke 窗口上真的调一次：返回非 0 就是放行失败（打的是 Win32
+            // 错误码，5=拒绝访问 / 87=句柄无效），用户那边会继续表现为「拖进来毫无反应」。
+            var dragDropFilterError = 0;
+            if (shown)
+            {
+                try
+                {
+                    dragDropFilterError = Core.Native.AllowDragDropFromLowerIntegrity(
+                        new System.Windows.Interop.WindowInteropHelper(window).Handle);
+                }
+                catch (Exception)
+                {
+                    dragDropFilterError = -1;
+                }
+            }
+
             var vm = (MainViewModel)window.DataContext;
             vm.Initialize();
             log.AppendLine($"  nav: groups={vm.NavGroups.Count} items={vm.NavItems.Count} expanded={vm.NavGroups.Count(g => g.IsExpanded)}");
@@ -400,14 +417,34 @@ public partial class App : Application
                     appVm.ShowTools = false;
 
                     // 卸载残留清理：喂一个真实安装目录，走完整的识别链路
+                    var smokeTarget = SmokeUninstallTarget(outputDir);
                     appVm.ShowUninstallCenter = true;
-                    appVm.UninstallCenter.AcceptPath(SmokeUninstallTarget(outputDir));
+                    appVm.UninstallCenter.AcceptPath(smokeTarget);
                     Pump(1500);
                     UpdateLayoutSafe(window);
                     Pump();
                     Capture(window, outputDir, "apps-uninstall", log);
                     log.AppendLine($"  uninstall: kind=\"{OneLine(appVm.UninstallCenter.TargetKindText)}\" matches={appVm.UninstallCenter.Matches.Count} candidates={appVm.UninstallCenter.Candidates.Count} residuals={appVm.UninstallCenter.Residuals.Count} summary=\"{OneLine(appVm.UninstallCenter.IdentifySummary)}\"");
                     log.AppendLine($"  uninstall-view: {DescribeView(window, typeof(Views.UninstallCenterView))}");
+
+                    // 拖放这条路没法在离屏自检里模拟（要跨进程从资源管理器拖进来），
+                    // 只能验证两件可查的事：视图确实允许放置；「粘贴路径」这条替代入口
+                    // 能从剪贴板识别出同一个目录。剪贴板在无交互会话里可能不可用，
+                    // 那就只打 WARN，不让它变成假失败。
+                    var uninstallView = FindDescendant(window, typeof(Views.UninstallCenterView)) as Views.UninstallCenterView;
+                    log.AppendLine($"  dragdrop: error={dragDropFilterError} viewAllowDrop={uninstallView?.AllowDrop}");
+                    try
+                    {
+                        Clipboard.SetText(smokeTarget);
+                        appVm.UninstallCenter.PastePathCommand.Execute(null);
+                        Pump();
+                        log.AppendLine($"  paste: ok=True target=\"{OneLine(appVm.UninstallCenter.TargetPath)}\" kind=\"{OneLine(appVm.UninstallCenter.TargetKindText)}\" same={string.Equals(appVm.UninstallCenter.TargetPath, smokeTarget, StringComparison.OrdinalIgnoreCase)}");
+                    }
+                    catch (Exception ex)
+                    {
+                        log.AppendLine($"WARN 剪贴板不可用，跳过「粘贴路径」验证：{ex.GetType().Name} {OneLine(ex.Message)}");
+                    }
+
                     appVm.ShowUninstallCenter = false;
 
                     // 关掉之后必须真的消失，否则就是子视图叠在应用列表上（v1.8.0 的 bug）

@@ -268,6 +268,50 @@ public static class Native
         }
     }
 
+    // ---------- 提权后接收拖放 ----------
+
+    private const int WM_DROPFILES = 0x0233;
+    private const int WM_COPYDATA = 0x004A;
+    private const int WM_COPYGLOBALDATA = 0x0049;
+    private const int MSGFLT_ALLOW = 1;
+
+    [DllImport("user32.dll", SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool ChangeWindowMessageFilterEx(
+        IntPtr hwnd, int message, int action, IntPtr changeFilterStruct);
+
+    /// <summary>
+    /// 允许低完整性级别的进程（资源管理器、桌面）把文件拖进本窗口。
+    ///
+    /// WinKit 的发布清单是 requireAdministrator，进程以高完整性级别运行；而资源管理器
+    /// 是普通权限。UIPI 会直接丢掉跨完整性级别的拖放消息，表现就是「拖进去毫无反应、
+    /// 连禁止光标都不出现」，没有任何异常可抓。只有拖放这一个通道受影响，
+    /// 所以只放行拖放必需的三个消息，不是整体降低窗口的消息过滤级别。
+    ///
+    /// 必须在窗口创建之后（有 HWND 之后）调用；调用失败不影响其它功能。
+    /// 返回 Win32 错误码，0 表示三个消息都放行成功——失败时把码打出来，
+    /// 否则「拖放没反应」这种问题在日志里查不到任何线索。
+    /// </summary>
+    public static int AllowDragDropFromLowerIntegrity(IntPtr hwnd)
+    {
+        if (hwnd == IntPtr.Zero) return 87;
+
+        try
+        {
+            if (!ChangeWindowMessageFilterEx(hwnd, WM_DROPFILES, MSGFLT_ALLOW, IntPtr.Zero))
+                return Marshal.GetLastWin32Error();
+            if (!ChangeWindowMessageFilterEx(hwnd, WM_COPYDATA, MSGFLT_ALLOW, IntPtr.Zero))
+                return Marshal.GetLastWin32Error();
+            if (!ChangeWindowMessageFilterEx(hwnd, WM_COPYGLOBALDATA, MSGFLT_ALLOW, IntPtr.Zero))
+                return Marshal.GetLastWin32Error();
+            return 0;
+        }
+        catch (Exception)
+        {
+            return Marshal.GetLastWin32Error();
+        }
+    }
+
     public static bool RestartAsAdmin()
     {
         var exe = Environment.ProcessPath;

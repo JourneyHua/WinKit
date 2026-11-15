@@ -744,6 +744,11 @@ internal static class Program
                         IncludeDirectories = false
                     })
                     .Items.All(i => i.Kind != ResidualKind.Directory || i.CanClean));
+
+            // 拖放放行：提权进程靠它接收资源管理器的拖放。这里没有窗口，
+            // 只能验证「空句柄返回 ERROR_INVALID_PARAMETER 而不是崩溃」这一层；
+            // 真正放行成功与否由 smoke 的 dragdrop 断言覆盖。
+            Check("拖放放行对空句柄返回错误码", Native.AllowDragDropFromLowerIntegrity(IntPtr.Zero) == 87);
         }
         finally
         {

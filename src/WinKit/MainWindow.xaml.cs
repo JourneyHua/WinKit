@@ -19,8 +19,18 @@ public partial class MainWindow : Window
 
         Loaded += OnLoaded;
         Closing += OnClosing;
+        SourceInitialized += OnSourceInitialized;
 
         _vm.ShowSettingsRequested += ShowSettingsPopup;
+    }
+
+    private void OnSourceInitialized(object? sender, EventArgs e)
+    {
+        // WinKit 的清单是 requireAdministrator，进程跑在高完整性级别；资源管理器是普通权限。
+        // UIPI 会直接丢掉跨完整性级别的拖放消息，表现就是「拖进来毫无反应」，也没有异常可抓。
+        // 这里只放行拖放必需的消息，不整体降低窗口的消息过滤级别。
+        var hwnd = new System.Windows.Interop.WindowInteropHelper(this).Handle;
+        Core.Native.AllowDragDropFromLowerIntegrity(hwnd);
     }
 
     private void OnLoaded(object sender, RoutedEventArgs e)

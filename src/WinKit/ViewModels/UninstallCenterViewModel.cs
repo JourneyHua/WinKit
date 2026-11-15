@@ -63,6 +63,7 @@ public sealed class UninstallCenterViewModel : ObservableObject
         OpenResidualCommand = new RelayCommand(p => OpenResidual(p as ResidualItem));
         OpenArchiveCommand = new RelayCommand(OpenArchive, () => File.Exists(_archiveStatusFile));
         CopyTargetCommand = new RelayCommand(CopyTarget);
+        PastePathCommand = new RelayCommand(PastePath);
     }
 
     // ---------- 集合 ----------
@@ -90,6 +91,7 @@ public sealed class UninstallCenterViewModel : ObservableObject
     public RelayCommand OpenResidualCommand { get; }
     public RelayCommand OpenArchiveCommand { get; }
     public RelayCommand CopyTargetCommand { get; }
+    public RelayCommand PastePathCommand { get; }
 
     // ---------- 状态 ----------
 
@@ -935,6 +937,39 @@ public sealed class UninstallCenterViewModel : ObservableObject
 
         if (!Native.OpenPath(target))
             _status("打开失败：路径可能已被移动或删除");
+    }
+
+    /// <summary>
+    /// 从剪贴板取路径来识别。存在的意义：拖放在「WinKit 提权、资源管理器不提权」的组合下
+    /// 依赖 UIPI 放行，一旦被安全软件或系统策略拦掉，用户至少还有一条不用翻对话框的快路
+    /// ——在资源管理器里 Ctrl+C，回到这里点一下即可。
+    /// </summary>
+    private void PastePath()
+    {
+        string text;
+        try
+        {
+            text = Clipboard.ContainsText() ? Clipboard.GetText() : "";
+        }
+        catch (Exception)
+        {
+            _status("读不到剪贴板内容");
+            return;
+        }
+
+        // 资源管理器复制文件时是「一行一个、带引号」的列表，取第一条可用路径
+        var candidate = text
+            .Split('\n', StringSplitOptions.RemoveEmptyEntries)
+            .Select(line => line.Trim().Trim('"').Trim())
+            .FirstOrDefault(line => line.Length > 0);
+
+        if (string.IsNullOrWhiteSpace(candidate))
+        {
+            _status("剪贴板里没有可用的路径");
+            return;
+        }
+
+        AcceptPath(candidate);
     }
 
     private void CopyTarget()
