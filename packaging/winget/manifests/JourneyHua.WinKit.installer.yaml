@@ -1,7 +1,7 @@
 # yaml-language-server: $schema=https://aka.ms/winget-manifest.installer.1.12.0.schema.json
 
 PackageIdentifier: JourneyHua.WinKit
-PackageVersion: 1.9.0
+PackageVersion: 1.9.1
 InstallerLocale: zh-CN
 InstallerType: zip
 NestedInstallerType: portable
@@ -15,9 +15,9 @@ ElevationRequirement: elevationRequired
 ArchiveBinariesDependOnPath: true
 Installers:
   - Architecture: x64
-    InstallerUrl: https://github.com/JourneyHua/WinKit/releases/download/v1.9.0/WinKit-v1.9.0-framework-dependent.zip
+    InstallerUrl: https://github.com/JourneyHua/WinKit/releases/download/v1.9.1/WinKit-v1.9.1-framework-dependent.zip
     # 发版后必须用 update.ps1 换成真实哈希，占位值提交上去会被仓库校验打回
-    InstallerSha256: 281EC166DB333AB29DE1064CF23DEE55896495E5F3CDB139F77AE8575DAB4362
+    InstallerSha256: 802A0019C10FEE4EFCBC63E8D6A3D9B7A732171F3D00B7DBC1F87908E88405F1
 # 这是 framework-dependent 包（不打包 .NET 运行时），装上运行时才跑得起来。
 # 写进依赖，winget 会自己把它一起装掉。
 # 注意字段层级：三份清单里只有 installer 有 Dependencies，而包依赖挂在
