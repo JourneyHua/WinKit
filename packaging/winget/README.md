@@ -32,18 +32,29 @@ winget install  --id BurntSushi.ripgrep.MSVC --silent    → 解出来的文件�
 1. 从 Release 下载 `WinKit-v<版本>-framework-dependent.zip`，算出 SHA256：
 
    ```powershell
-   (Get-FileHash .\WinKit-v1.9.0-framework-dependent.zip -Algorithm SHA256).Hash
+   (Get-FileHash .\WinKit-v1.10.1-framework-dependent.zip -Algorithm SHA256).Hash
    ```
 
 2. 用脚本把版本号和哈希写进清单（比手改靠谱，两处必须一致）：
 
    ```powershell
-   .\update.ps1 -Version 1.9.0 -Zip ..\..\dist\WinKit-v1.9.0-framework-dependent.zip
+   .\update.ps1 -Version 1.10.1 -Zip ..\..\dist\WinKit-v1.10.1-framework-dependent.zip
    ```
 
-然后提 PR 到 `microsoft/winget-pkgs`，路径是
-`manifests/j/JourneyHua/WinKit/<版本>/`。首次提交必须用真实的 GitHub 账号（`JourneyHua`），
-因为清单里的 `Publisher` 要和提交者身份对得上。
+   脚本按 UTF-8 无 BOM 写回，跑完会把新的 `InstallerSha256` 打印出来。
+
+3. 铺出提 PR 用的目录结构（`manifests/j/JourneyHua/WinKit/<版本>/`）：
+
+   ```powershell
+   .\prepare-pr.ps1            # 默认输出到 .\pr-out（已在 .gitignore 里）
+   .\prepare-pr.ps1 -Out D:\tmp\wk-pr
+   ```
+
+   它会从 version 清单里读 `PackageVersion` 当目录名（不手写，免得版本对不上），
+   复制三份 yaml 进去，并打印完整的 fork / 提交 / 开 PR 命令。
+
+提 PR 到 `microsoft/winget-pkgs` 的路径是 `manifests/j/JourneyHua/WinKit/<版本>/`。
+首次提交必须用真实的 GitHub 账号（`JourneyHua`），因为清单里的 `Publisher` 要和提交者身份对得上。
 
 ## 本地校验
 
