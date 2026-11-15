@@ -160,6 +160,16 @@ public sealed class SystemTweakViewModel : ObservableObject, IModule
 
     private void OnTweakToggled(TweakSwitchItem item, bool isOn)
     {
+        if (Native.RequireAdmin("修改系统设置") is { } adminNeeded)
+        {
+            // 开关已经被界面拨过去了，这里要拨回来，并且必须摘掉回调再写，否则会又触发一次
+            item.ToggleRequested = null;
+            item.IsOn = !isOn;
+            item.ToggleRequested = OnTweakToggled;
+            SetError(adminNeeded);
+            return;
+        }
+
         try
         {
             _service.SetTweak(item, isOn);

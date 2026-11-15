@@ -189,6 +189,12 @@ public sealed class SystemCleanViewModel : ObservableObject, IModule
 
     private async Task CleanSelectedAsync()
     {
+        if (Native.RequireAdmin("清理垃圾文件") is { } adminNeeded)
+        {
+            SetError(adminNeeded);
+            return;
+        }
+
         var selected = Targets.Where(t => t.IsSelected && t.SizeBytes > 0).ToList();
         if (IsBusy)
         {

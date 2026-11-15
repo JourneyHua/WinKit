@@ -340,6 +340,11 @@ public partial class App : Application
 
             var vm = (MainViewModel)window.DataContext;
             vm.Initialize();
+
+            // 无人值守：切到需要管理员的模块时不能弹「是否提权」的模态框，否则整个自检会卡在那里
+            vm.ElevationPromptsEnabled = false;
+
+            log.AppendLine($"  elevation: elevated={vm.IsElevated} banner={vm.ShowElevationBanner} prompts={vm.ElevationPromptsEnabled}");
             log.AppendLine($"  nav: groups={vm.NavGroups.Count} items={vm.NavItems.Count} expanded={vm.NavGroups.Count(g => g.IsExpanded)}");
 
             foreach (var nav in vm.NavItems)

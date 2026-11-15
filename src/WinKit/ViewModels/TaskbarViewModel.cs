@@ -198,6 +198,11 @@ public sealed class TaskbarViewModel : ObservableObject
     private async void Unpin(TaskbarPinnedItem? item)
     {
         if (item is null) return;
+        if (Native.RequireAdmin("取消固定") is { } adminNeeded)
+        {
+            Error = adminNeeded;
+            return;
+        }
 
         try
         {
@@ -284,6 +289,12 @@ public sealed class TaskbarViewModel : ObservableObject
 
     private void DeleteMissingRecords()
     {
+        if (Native.RequireAdmin("删除失效托盘记录") is { } adminNeeded)
+        {
+            Error = adminNeeded;
+            return;
+        }
+
         var missing = _allTray.Where(i => i.IsMissingFile).ToList();
         if (missing.Count == 0) return;
 

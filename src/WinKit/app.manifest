@@ -5,7 +5,15 @@
   <trustInfo xmlns="urn:schemas-microsoft-com:asm.v2">
     <security>
       <requestedPrivileges xmlns="urn:schemas-microsoft-com:asm.v3">
-        <requestedExecutionLevel level="requireAdministrator" uiAccess="false" />
+        <!--
+          asInvoker 而不是 requireAdministrator：
+          未签名的 exe 一旦声明 requireAdministrator，双击时 Windows 会先弹
+          「Windows 已保护你的电脑」（SmartScreen），要点「更多信息 → 仍要运行」才继续，
+          而且这个拦截跟「来自 Internet」标记无关——解除锁定也去不掉，加签名才能去掉。
+          改成普通权限启动后这个拦截消失；需要管理员的模块由界面上的
+          「以管理员身份重新启动」按需提权（只弹一次正常的 UAC）。
+        -->
+        <requestedExecutionLevel level="asInvoker" uiAccess="false" />
       </requestedPrivileges>
     </security>
   </trustInfo>

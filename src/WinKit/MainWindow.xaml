@@ -169,12 +169,33 @@
             <Grid Grid.Row="1">
                 <Grid.RowDefinitions>
                     <RowDefinition Height="Auto" />
+                    <RowDefinition Height="Auto" />
                     <RowDefinition Height="*" />
                 </Grid.RowDefinitions>
-                <ProgressBar Grid.Row="0" Height="3" IsIndeterminate="True" BorderThickness="0"
+
+                <!-- 权限提示条：主清单是 asInvoker，未提权时写入类操作会被系统拒绝，
+                     与其让用户点完只看一句「拒绝访问」，不如在这里给出提权入口。 -->
+                <Border Grid.Row="0" Margin="16,8,16,0" Padding="14,8" CornerRadius="6"
+                        Background="{DynamicResource Brush.Card}"
+                        BorderBrush="{DynamicResource Brush.Accent}" BorderThickness="3,0,0,0"
+                        Visibility="{Binding ShowElevationBanner, Converter={StaticResource BoolToVis}}">
+                    <Grid>
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="Auto" />
+                        </Grid.ColumnDefinitions>
+                        <TextBlock Grid.Column="0" Text="{Binding ElevationBannerText}" Style="{StaticResource Muted}"
+                                   VerticalAlignment="Center" TextWrapping="Wrap" />
+                        <Button Grid.Column="1" Content="以管理员身份重新启动" Style="{StaticResource BtnPrimary}"
+                                Command="{Binding ElevateCommand}" Margin="12,0,0,0"
+                                VerticalAlignment="Center" />
+                    </Grid>
+                </Border>
+
+                <ProgressBar Grid.Row="1" Height="3" IsIndeterminate="True" BorderThickness="0"
                              Background="Transparent" Foreground="{DynamicResource Brush.Accent}"
                              Visibility="{Binding IsGlobalBusy, Converter={StaticResource BoolToVis}}" />
-                <ContentControl Grid.Row="1" Content="{Binding CurrentViewModel}" Margin="0" />
+                <ContentControl Grid.Row="2" Content="{Binding CurrentViewModel}" Margin="0" />
             </Grid>
 
             <Border Grid.Row="2" Padding="24,8" Background="{DynamicResource Brush.Card}"

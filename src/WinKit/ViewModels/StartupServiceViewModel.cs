@@ -258,6 +258,15 @@ public sealed class StartupServiceViewModel : ObservableObject, IModule
 
     private void OnStartupToggled(StartupEntryItem item, bool enabled)
     {
+        if (Native.RequireAdmin("修改开机启动项") is { } adminNeeded)
+        {
+            item.ToggleRequested = null;
+            item.IsEnabled = !enabled;
+            item.ToggleRequested = OnStartupToggled;
+            SetError(adminNeeded);
+            return;
+        }
+
         try
         {
             _service.SetStartupEnabled(item, enabled);
@@ -306,6 +315,11 @@ public sealed class StartupServiceViewModel : ObservableObject, IModule
     private void DeleteStartup(StartupEntryItem? item)
     {
         if (item is null) return;
+        if (Native.RequireAdmin("删除开机启动项") is { } adminNeeded)
+        {
+            SetError(adminNeeded);
+            return;
+        }
 
         var confirm = MessageBox.Show(
             $"确定删除启动项「{item.Name}」吗？\n\n位置：{item.LocationTitle}\n命令：{item.Command}\n\n删除前会自动保存快照，随时可通过顶部「撤销上一步」恢复。",
@@ -330,6 +344,11 @@ public sealed class StartupServiceViewModel : ObservableObject, IModule
     private async Task ToggleServiceRunAsync(WinServiceItem? item)
     {
         if (item is null || IsBusy) return;
+        if (Native.RequireAdmin("启动或停止服务") is { } adminNeeded)
+        {
+            SetError(adminNeeded);
+            return;
+        }
         var targetRun = !item.IsRunning;
 
         if (!targetRun && item.IsMicrosoft)
@@ -360,6 +379,11 @@ public sealed class StartupServiceViewModel : ObservableObject, IModule
     private void ChangeServiceStartType(WinServiceItem? item)
     {
         if (item is null) return;
+        if (Native.RequireAdmin("修改服务启动类型") is { } adminNeeded)
+        {
+            SetError(adminNeeded);
+            return;
+        }
 
         var options = new[]
         {
@@ -402,6 +426,11 @@ public sealed class StartupServiceViewModel : ObservableObject, IModule
     private async Task ToggleTaskAsync(ScheduledTaskItem? item)
     {
         if (item is null || IsBusy) return;
+        if (Native.RequireAdmin("启用或禁用计划任务") is { } adminNeeded)
+        {
+            SetError(adminNeeded);
+            return;
+        }
         IsBusy = true;
 
         try

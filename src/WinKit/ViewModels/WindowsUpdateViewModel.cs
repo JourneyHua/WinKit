@@ -119,6 +119,12 @@ public sealed class WindowsUpdateViewModel : ObservableObject, IModule
 
     private void Pause(int days)
     {
+        if (Native.RequireAdmin("暂停系统更新") is { } adminNeeded)
+        {
+            SetError(adminNeeded);
+            return;
+        }
+
         var confirm = MessageBox.Show(
             $"将暂停 Windows 更新 {days} 天（系统允许的上限是 35 天）。\n\n" +
             "暂停期间不会下载或安装功能更新，安全补丁也会一并暂停。确定继续吗？",
@@ -140,6 +146,12 @@ public sealed class WindowsUpdateViewModel : ObservableObject, IModule
 
     private void Resume()
     {
+        if (Native.RequireAdmin("恢复系统更新") is { } adminNeeded)
+        {
+            SetError(adminNeeded);
+            return;
+        }
+
         try
         {
             _service.Resume();
@@ -154,6 +166,12 @@ public sealed class WindowsUpdateViewModel : ObservableObject, IModule
 
     private async Task CleanCacheAsync()
     {
+        if (Native.RequireAdmin("清理更新缓存") is { } adminNeeded)
+        {
+            SetError(adminNeeded);
+            return;
+        }
+
         if (IsBusy) return;
 
         var confirm = MessageBox.Show(
@@ -196,6 +214,12 @@ public sealed class WindowsUpdateViewModel : ObservableObject, IModule
 
     private async Task RestartServiceAsync()
     {
+        if (Native.RequireAdmin("重启更新服务") is { } adminNeeded)
+        {
+            SetError(adminNeeded);
+            return;
+        }
+
         if (IsBusy) return;
 
         IsBusy = true;

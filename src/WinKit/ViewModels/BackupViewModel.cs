@@ -190,6 +190,11 @@ public sealed class BackupViewModel : ObservableObject, IModule
     private void Restore(BackupRow? row)
     {
         if (row is null) return;
+        if (Native.RequireAdmin("恢复备份") is { } adminNeeded)
+        {
+            _status(adminNeeded);
+            return;
+        }
 
         var result = MessageBox.Show(
             $"将把注册表恢复到「{row.Title}」这次操作之前的状态。\n\n当前与该操作相关的改动会被覆盖。确定继续吗？",

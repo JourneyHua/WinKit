@@ -32,14 +32,24 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw "Selftest failed with exit code $LASTEXITCODE" }
 
       # ---- 质量门槛 2：界面离屏渲染 + 每个模块的数据断言 ----
-      - name: Publish preview (asInvoker)
+      # 主清单本身就是 asInvoker（见 src/WinKit/app.manifest 的注释），
+      # 所以界面自检和发布用的是同一份权限模型，不再需要为 smoke 单独换清单。
+      - name: Publish for smoke (asInvoker)
         shell: pwsh
         run: |
           dotnet publish src/WinKit/WinKit.csproj -c Release -m:1 `
             -t:Rebuild `
-            -p:ApplicationManifest="$((Resolve-Path src/WinKit/app.preview.manifest).Path)" `
             -o publish/preview --nologo
-          if ($LASTEXITCODE -ne 0) { throw "Preview publish failed" }
+          if ($LASTEXITCODE -ne 0) { throw "Publish for smoke failed" }
+
+          # 清单必须是 asInvoker：未签名的 exe 声明 requireAdministrator 时双击会先被
+          # SmartScreen 拦（「Windows 已保护你的电脑」），而清单只有嵌进 apphost 才生效，
+          # 属性改了不算数——直接读 exe 字节找字符串。注意 app.manifest 的注释里也写着
+          # requireAdministrator 这个词，所以只能按属性形态判，不能按裸词判。
+          $exePath = Join-Path $PWD "publish/preview/WinKit.exe"
+          $exeText = [System.Text.Encoding]::UTF8.GetString([System.IO.File]::ReadAllBytes($exePath))
+          if ($exeText -notmatch 'level="asInvoker"') { throw "清单没有嵌入 asInvoker，双击仍会被 SmartScreen 拦" }
+          if ($exeText -match 'level="requireAdministrator"') { throw "exe 的清单仍然要求提权" }
 
       - name: UI smoke with assertions
         shell: pwsh
@@ -166,6 +176,12 @@ jobs:
             $failures += "SMART 属性页既没读到属性，也没说明原因"
           }
 
+          # 主清单是 asInvoker（未签名 + 要提权会被 SmartScreen 拦），
+          # 而无人值守时绝对不能弹「是否提权」的模态框，否则自检会卡死在那里。
+          if ($log -notmatch 'elevation: elevated=\w+ banner=\w+ prompts=False') {
+            $failures += "自检没有关闭提权提示（无人值守会卡在模态框上），或者没有打印权限状态"
+          }
+
           if ($failures.Count -gt 0) {
             Write-Host "---- smoke.log ----"
             Get-Content $logPath | Write-Host
@@ -223,6 +239,6 @@ jobs:
             - 也可以用 winget 安装（winget 解包不会带那个标记）：`winget install JourneyHua.WinKit`
             - 双击 `WinKit.exe`，接受 UAC 提权即可使用。
             - 包含：**体检与维护**、**系统概览**、**磁盘健康**、**系统还原点**、**进程管理**、**SMART 属性**、**环境变量**、**右键菜单管理**、**此电脑管理**、**导航栏管理**、**任务栏与通知区域**（固定项与托盘图标）、**应用管理（卸载/残留清理/winget+scoop 更新）**、**驱动管理（自动备份/卸载/官方与本地更新）**、**启动与服务**、**系统清理**、**系统调优与百宝箱**、**文件占用解锁**、**文件与文件夹对比**、**重复文件检测**、**默认打开方式**、**事件日志诊断**、**Windows 更新管理**、**网络诊断**、**注册表体检**与**快照备份还原**。
-            - 本版本 CI 增加两道质量门槛：服务层自测（130 项）与界面离屏自检（24 个页面 + 关键模块数据断言）。
+            - 本版本 CI 增加两道质量门槛：服务层自测（131 项）与界面离屏自检（24 个页面 + 关键模块数据断言），发布前还会直接读 exe 字节确认清单是 `asInvoker`（否则双击会被 SmartScreen 拦）。
           files: |
             WinKit-${{ github.ref_name }}-framework-dependent.zip

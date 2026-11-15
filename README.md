@@ -361,7 +361,7 @@ dist\WinKit.exe --smoke C:\temp\smoke
 # 只读探测：枚举全部菜单项/节点/驱动器/快速访问，落一份报告
 dotnet run --project tools/Probe -- report.txt
 
-# 自测：快照/撤销/还原保真/32-64 视图 + 解析器与分类器 + 全部模块（约 130 项）
+# 自测：快照/撤销/还原保真/32-64 视图 + 解析器与分类器 + 全部模块（约 131 项）
 dotnet run --project tools/Probe -- --selftest
 
 # 无人值守维护（计划任务用的就是这条命令）：清理 + 体检报告 + 写日志
@@ -411,17 +411,34 @@ GitHub Actions 在打包前要过两关（`master` 与 `v*` 标签都跑）：
 
 `smoke-out/smoke.log` 会作为 artifact 上传，失败时可直接下载看每一行。
 
-免提权调试界面：加 `-p:ApplicationManifest=app.preview.manifest` 编译（`app.preview.manifest` 把 `requireAdministrator` 换成 `asInvoker`）。
-注意：只改属性不会让已生成的 apphost 重新嵌入清单，必须加 `-t:Rebuild`，否则 exe 仍然要求提权。
-如果 `bin/Release`、`obj/Release` 已经存在过，连 `-t:Rebuild` 也可能复用旧 apphost，最稳的做法是先删这两个目录再编译：
+### 权限模型（asInvoker + 按需提权）
+
+主清单 `src/WinKit/app.manifest` 声明的是 `asInvoker`，程序以普通权限启动。原因是：
+**未签名的 exe 一旦声明 `requireAdministrator`，双击时 Windows 会先弹「Windows 已保护你的电脑」**
+（SmartScreen），必须点「更多信息 → 仍要运行」才继续——而且这个拦截跟「来自 Internet」标记无关，
+跑 `解除锁定.cmd` 也去不掉，只有加代码签名才能去掉。
+
+代价是写操作没有管理员权限，所以：
+
+- 进入**需要写入**的模块（清理、服务与启动、驱动、补丁、还原点、右键菜单、此电脑、导航栏、
+  应用卸载、环境变量、注册表体检、备份）时，会提示一次「以管理员身份重新启动」，点「是」才重新
+  拉起自己（一次正常 UAC）；每个模块每次运行只问一次，不想提权也可以只读。
+- 窗口顶部常驻提示条与「以管理员身份重新启动」按钮，随时可以提权。
+- 每处写操作的入口都有 `Native.RequireAdmin("动作名")` 闸门：未提权时给出可执行的下一步提示，
+  而不是让 `UnauthorizedAccessException` 冒出来变成一句「拒绝访问」。
+- `--smoke` / `--maintain` 会把 `MainViewModel.ElevationPromptsEnabled` 置为 `false`，绝不弹模态框
+  （否则无人值守会卡死）；自检日志里有 `elevation: elevated=False banner=True prompts=False` 一行可断言。
+
+清单改动后必须删旧产物再编译，否则会复用旧 apphost（清单不会重新嵌入）：
 
 ```bash
 rm -rf src/WinKit/bin/Release src/WinKit/obj/Release
-dotnet build src/WinKit/WinKit.csproj -c Release -t:Rebuild -p:ApplicationManifest=app.preview.manifest
+dotnet build src/WinKit/WinKit.csproj -c Release -t:Rebuild
 ```
 
-验证方式是把 exe 当二进制读出来找字符串：出现 `asInvoker` 才是对的，出现 `requireAdministrator` 说明清单没换进去。
-表现是启动时报 `This command cannot be run due to the error: The requested operation requires elevation.`
+验证方式是把 exe 当二进制读出来找字符串：出现 `level="asInvoker"` 才是对的，出现
+`level="requireAdministrator"` 说明清单没换进去。注意按属性形态找——`app.manifest` 的注释里也写着
+`requireAdministrator` 这个词，按裸词判会误报。
 
 ### 目录
 
@@ -458,3 +475,6 @@ tools/Probe/   只读探测 + 写入自测
 15. 系统还原点管理只调用 `SRClient`/`WMI` 的公开接口：创建、列出、删除、恢复到本机已有还原点。**不能跨机器、不能恢复单个文件**，且必须开着「系统保护」才有还原点可用
 16. 进程管理只做「看 + 结束」：线程、句柄、模块级细节不做；结束系统进程会被拒绝或导致界面短暂卡顿，属正常
 17. SMART 属性依赖硬盘控制器透传：USB 外置盘、部分 RAID/虚拟盘读不到，只能在基准里显示「不支持」
+18. 程序以普通权限启动（`asInvoker`，见上一节「权限模型」）：写入类操作要先从顶部提示条或模块提示里
+    「以管理员身份重新启动」，会弹一次 UAC 并重开窗口；未提权时这些按钮只会提示需要管理员权限，
+    不会静默失败

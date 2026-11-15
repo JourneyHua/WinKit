@@ -165,6 +165,12 @@ public sealed class SystemRestoreViewModel : ObservableObject, IModule
 
     private async Task CreateAsync()
     {
+        if (Native.RequireAdmin("创建还原点") is { } adminNeeded)
+        {
+            SetError(adminNeeded);
+            return;
+        }
+
         if (IsBusy) return;
 
         if (!_protectionEnabled)
@@ -206,6 +212,11 @@ public sealed class SystemRestoreViewModel : ObservableObject, IModule
     private async Task DeleteAsync(RestorePointItem? point)
     {
         if (point is null || IsBusy) return;
+        if (Native.RequireAdmin("删除还原点") is { } adminNeeded)
+        {
+            SetError(adminNeeded);
+            return;
+        }
 
         var confirm = MessageBox.Show(
             $"确定删除这个还原点吗？\n\n#{point.SequenceNumber} · {point.CreatedAt}\n{point.Description}\n\n" +
@@ -243,6 +254,11 @@ public sealed class SystemRestoreViewModel : ObservableObject, IModule
     private async Task RestoreToAsync(RestorePointItem? point)
     {
         if (point is null || IsBusy) return;
+        if (Native.RequireAdmin("恢复系统到还原点") is { } adminNeeded)
+        {
+            SetError(adminNeeded);
+            return;
+        }
 
         var confirm = MessageBox.Show(
             $"要把系统恢复到下面这个还原点吗？\n\n#{point.SequenceNumber} · {point.CreatedAt}\n{point.Description}\n\n" +
@@ -281,6 +297,12 @@ public sealed class SystemRestoreViewModel : ObservableObject, IModule
 
     private async Task SetProtectionAsync(bool enable)
     {
+        if (Native.RequireAdmin(enable ? "开启系统保护" : "关闭系统保护") is { } adminNeeded)
+        {
+            SetError(adminNeeded);
+            return;
+        }
+
         if (IsBusy) return;
 
         if (!enable)

@@ -24,6 +24,20 @@ public sealed class NavItem
     public bool WarmedUp { get; set; }
 
     public object ViewModel => Instance ??= Factory();
+
+    /// <summary>
+    /// 这个模块的写入操作是否必须有管理员权限。
+    /// 主程序以 asInvoker 启动（未签名 + 要提权会被 SmartScreen 拦），所以进入这些模块
+    /// 时要主动提示提权，否则用户点了按钮只会拿到「拒绝访问」。
+    /// 只读也能有意义的模块（总览、文件占用、事件日志、磁盘健康、进程、SMART…）不在表里。
+    /// </summary>
+    public bool RequiresElevation => ElevationKeys.Contains(Key);
+
+    private static readonly HashSet<string> ElevationKeys = new(StringComparer.OrdinalIgnoreCase)
+    {
+        "menu", "thispc", "nav", "apps", "drivers", "startup", "clean", "tweaks",
+        "wupdate", "network", "assoc", "restore", "env", "registry", "backup"
+    };
 }
 
 /// <summary>导航分组：默认只展开当前模块所在的组，避免 21 项把侧栏撑出滚动。</summary>
@@ -55,6 +69,8 @@ public sealed class MainViewModel : ObservableObject
     private object? _currentViewModel;
     private string _statusText = "就绪";
     private int _busyCount;
+    /// <summary>本次运行里已经提示过提权的模块 key，避免每切一次页就问一遍。</summary>
+    private readonly HashSet<string> _elevationPrompted = new(StringComparer.OrdinalIgnoreCase);
 
     public MainViewModel() : this(UiSettingsService.Load())
     {
@@ -410,6 +426,7 @@ public sealed class MainViewModel : ObservableObject
             CurrentViewModel = value.ViewModel;
             OnPropertyChanged(nameof(CurrentTitle));
             OnPropertyChanged(nameof(CurrentSubtitle));
+            OnPropertyChanged(nameof(ElevationBannerText));
 
             // 记住上次停留的模块
             _settings.LastModuleKey = value.Key;
@@ -425,8 +442,38 @@ public sealed class MainViewModel : ObservableObject
                 value.WarmedUp = true;
                 if (value.ViewModel is IModule module) module.Refresh();
             }
+
+            AskElevationIfNeeded(value);
         }
     }
+
+    /// <summary>
+    /// 只在「未提权 + 进入需要管理员的模块」时问一次，每个模块本次运行只问一次。
+    /// 不自动提权：用户可能只是想看看数据，弹一次 UAC 就打断了。
+    /// </summary>
+    private void AskElevationIfNeeded(NavItem nav)
+    {
+        if (IsElevated || !nav.RequiresElevation) return;
+        if (!_elevationPrompted.Add(nav.Key)) return;
+
+        StatusText = $"「{nav.Title}」需要管理员权限才能写入，当前只能查看";
+
+        // --smoke / --maintain 没有人在屏幕前点「是」，绝不能弹模态框
+        if (!ElevationPromptsEnabled) return;
+
+        var result = MessageBox.Show(
+            $"「{nav.Title}」的写入操作需要管理员权限。当前是以普通权限运行的，点这些按钮只会被系统拒绝。\n\n" +
+            "现在以管理员身份重新启动 WinKit 吗？（会弹一次 UAC；也可以先只看看数据，稍后从顶部提示条提权）",
+            "需要管理员权限",
+            MessageBoxButton.YesNo,
+            MessageBoxImage.Question);
+
+        if (result == MessageBoxResult.Yes && Native.RestartAsAdmin())
+            Application.Current.Shutdown();
+    }
+
+    /// <summary>无人值守场景（--smoke、--maintain）把它设为 false，避免模态框卡住进程。</summary>
+    public bool ElevationPromptsEnabled { get; set; } = true;
 
     public object? CurrentViewModel
     {
@@ -446,9 +493,29 @@ public sealed class MainViewModel : ObservableObject
 
     public string BackupHint => ChangeJournal.BackupDirectory;
 
-    public string ElevationText => Native.IsElevated() ? "已以管理员身份运行" : "未提权（部分功能不可用）";
+    /// <summary>
+    /// 当前进程是否已提权。主清单是 asInvoker，所以「没提权」是常态而不是异常。
+    /// </summary>
+    public bool IsElevated => Native.IsElevated();
 
-    public bool ShowElevateButton => !Native.IsElevated();
+    public string ElevationText => IsElevated ? "已以管理员身份运行" : "普通权限运行";
+
+    public bool ShowElevateButton => !IsElevated;
+
+    /// <summary>顶部提示条：只在未提权时出现。</summary>
+    public bool ShowElevationBanner => !IsElevated;
+
+    /// <summary>提示条文案：区分「这个模块确实需要管理员」和「只是普通权限运行」。</summary>
+    public string ElevationBannerText
+    {
+        get
+        {
+            if (IsElevated) return "";
+            if (SelectedNav is { RequiresElevation: true } nav)
+                return $"「{nav.Title}」的写入操作需要管理员权限，当前只能查看。点右边按钮重新以管理员身份启动，一次 UAC 就好。";
+            return "当前以普通权限运行：清理、服务、驱动、补丁、还原点等写入操作需要管理员权限。";
+        }
+    }
 
     public bool IsGlobalBusy => _busyCount > 0;
 

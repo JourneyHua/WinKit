@@ -312,6 +312,16 @@ public static class Native
         }
     }
 
+    /// <summary>
+    /// 写入类操作前的权限闸门。返回 null 表示可以继续；否则返回给用户看的说明。
+    /// 主程序以 asInvoker 启动，所以「没权限」是正常状态，必须给出可执行的下一步，
+    /// 而不是让 UnauthorizedAccessException 冒到界面上变成一句「拒绝访问」。
+    /// </summary>
+    public static string? RequireAdmin(string action)
+        => IsElevated()
+            ? null
+            : $"「{action}」需要管理员权限。请先点窗口顶部的「以管理员身份重新启动」，再执行一次。";
+
     public static bool RestartAsAdmin()
     {
         var exe = Environment.ProcessPath;

@@ -555,6 +555,13 @@ public sealed class ContextMenuViewModel : ObservableObject, IModule
 
     private void OnToggleEntry(MenuEntry entry, bool enabled)
     {
+        if (Native.RequireAdmin("修改右键菜单") is { } adminNeeded)
+        {
+            Rollback(entry, enabled);
+            SetError(adminNeeded);
+            return;
+        }
+
         try
         {
             _service.SetEnabled(entry, enabled);
@@ -570,6 +577,13 @@ public sealed class ContextMenuViewModel : ObservableObject, IModule
 
     private void OnToggleNewMenuItem(NewMenuItem item, bool blocked)
     {
+        if (Native.RequireAdmin("修改「新建」菜单") is { } adminNeeded)
+        {
+            Rollback(item, blocked);
+            SetError(adminNeeded);
+            return;
+        }
+
         try
         {
             _newService.SetBlocked(item, blocked);

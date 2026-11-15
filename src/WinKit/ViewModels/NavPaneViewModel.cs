@@ -349,6 +349,12 @@ public sealed class NavPaneViewModel : ObservableObject, IModule
 
     private async Task ApplyOrderAsync()
     {
+        if (Native.RequireAdmin("重排快速访问") is { } adminNeeded)
+        {
+            LoadError = adminNeeded;
+            return;
+        }
+
         var paths = Pinned.Where(i => i.IsFolder && Directory.Exists(i.Path))
             .Select(i => i.Path)
             .ToList();

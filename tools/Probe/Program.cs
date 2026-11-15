@@ -750,6 +750,19 @@ internal static class Program
             // 真正放行成功与否由 smoke 的 dragdrop 断言覆盖。
             Check("拖放放行对空句柄返回错误码", Native.AllowDragDropFromLowerIntegrity(IntPtr.Zero) == 87);
 
+            // 权限闸门：主清单是 asInvoker，未提权是常态。闸门必须给出可执行的下一步，
+            // 而不是返回一句空话让调用方自己想办法。
+            if (Native.IsElevated())
+            {
+                Skip("未提权时权限闸门给出提权指引", "当前进程已是管理员");
+            }
+            else
+            {
+                var gate = Native.RequireAdmin("测试动作");
+                Check("未提权时权限闸门给出提权指引",
+                    gate is not null && gate.Contains("以管理员身份重新启动", StringComparison.Ordinal));
+            }
+
             // SMART 属性块解析：这里造一段 512 字节的假数据，按 ATA 的格式塞两条属性，
             // 验证偏移计算、原始值小端还原、阈值合并与「原始值不为 0 就提示」的启发式都在位。
             // 真机上这块数据只有管理员能读（而且 USB/RAID 盘根本读不到），所以必须能脱离真机测。

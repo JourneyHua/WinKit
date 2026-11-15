@@ -496,6 +496,12 @@ public sealed class UninstallCenterViewModel : ObservableObject
 
     private async void CleanSelected()
     {
+        if (Native.RequireAdmin("清理残留") is { } adminNeeded)
+        {
+            Warn(adminNeeded);
+            return;
+        }
+
         var selected = Residuals.Where(i => i.IsSelected && i.CanClean).ToList();
         if (selected.Count == 0)
         {
@@ -732,6 +738,12 @@ public sealed class UninstallCenterViewModel : ObservableObject
 
     private void ForceDeleteFolder()
     {
+        if (Native.RequireAdmin("强制删除文件夹") is { } adminNeeded)
+        {
+            Warn(adminNeeded);
+            return;
+        }
+
         if (!HasTargetFolder)
         {
             Warn("没有可删除的文件夹。");
