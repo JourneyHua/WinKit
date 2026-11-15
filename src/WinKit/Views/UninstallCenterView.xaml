@@ -1,0 +1,282 @@
+<UserControl x:Class="WinKit.Views.UninstallCenterView"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             FontFamily="Microsoft YaHei UI, Segoe UI"
+             AllowDrop="True"
+             DragOver="OnDragOver"
+             Drop="OnDrop">
+
+    <Grid>
+        <Grid.ColumnDefinitions>
+            <ColumnDefinition Width="320" />
+            <ColumnDefinition Width="*" />
+        </Grid.ColumnDefinitions>
+
+        <!-- 左列：识别目标 + 卸载入口 + 强制删除 -->
+        <ScrollViewer Grid.Column="0" VerticalScrollBarVisibility="Auto" Margin="0,0,12,0">
+            <StackPanel>
+
+                <Border Style="{StaticResource Card}" Padding="14,12">
+                    <StackPanel>
+                        <TextBlock Text="① 指定要清理的软件" Style="{StaticResource H2}" />
+                        <TextBlock Text="把软件的安装文件夹或桌面/开始菜单的快捷方式拖到本页面任意位置，也可以点下面的按钮选择。"
+                                   Style="{StaticResource Muted}" TextWrapping="Wrap" Margin="0,4,0,10" />
+
+                        <Border Background="{DynamicResource Brush.Window}"
+                                BorderBrush="{DynamicResource Brush.Border}" BorderThickness="1"
+                                CornerRadius="8" Padding="14,16" Margin="0,0,0,10">
+                            <StackPanel>
+                                <TextBlock Text="拖入文件夹或快捷方式" HorizontalAlignment="Center"
+                                           FontSize="13" Foreground="{DynamicResource Brush.TextMuted}" />
+                                <TextBlock Text="{Binding TargetKindText, StringFormat=已识别：{0}}"
+                                           HorizontalAlignment="Center" Margin="0,6,0,0" FontSize="12"
+                                           Foreground="{DynamicResource Brush.Accent}"
+                                           Visibility="{Binding HasTarget, Converter={StaticResource BoolToVis}}" />
+                            </StackPanel>
+                        </Border>
+
+                        <StackPanel Orientation="Horizontal" Margin="0,0,0,10">
+                            <Button Content="选择文件夹…" Style="{StaticResource BtnBase}" Margin="0,0,6,0"
+                                    Command="{Binding PickFolderCommand}" />
+                            <Button Content="选择快捷方式…" Style="{StaticResource BtnBase}" Margin="0,0,6,0"
+                                    Command="{Binding PickShortcutCommand}" />
+                            <Button Content="清除" Style="{StaticResource BtnSmall}"
+                                    Visibility="{Binding HasTarget, Converter={StaticResource BoolToVis}}"
+                                    Command="{Binding ClearCommand}" />
+                        </StackPanel>
+
+                        <TextBlock Text="{Binding TargetPath}" Style="{StaticResource CellSub}"
+                                   TextWrapping="Wrap" ToolTip="{Binding TargetPath}"
+                                   Visibility="{Binding HasTarget, Converter={StaticResource BoolToVis}}" />
+
+                        <Border Style="{StaticResource HintCard}" Margin="0,10,0,0" Padding="10,8"
+                                Visibility="{Binding HasTarget, Converter={StaticResource BoolToVis}}">
+                            <StackPanel>
+                                <TextBlock Text="{Binding IdentifySummary}" Style="{StaticResource HintText}"
+                                           TextWrapping="Wrap" />
+                                <StackPanel Orientation="Horizontal" Margin="0,8,0,0"
+                                            Visibility="{Binding HasTargetFolder, Converter={StaticResource BoolToVis}}">
+                                    <Button Content="打开所在目录" Style="{StaticResource BtnSmall}" Margin="0,0,6,0"
+                                            Command="{Binding OpenTargetCommand}" />
+                                    <Button Content="复制路径" Style="{StaticResource BtnSmall}"
+                                            Command="{Binding CopyTargetCommand}" />
+                                </StackPanel>
+                            </StackPanel>
+                        </Border>
+                    </StackPanel>
+                </Border>
+
+                <!-- ② 卸载入口 -->
+                <Border Style="{StaticResource Card}" Padding="14,12" Margin="0,10,0,0"
+                        Visibility="{Binding HasTarget, Converter={StaticResource BoolToVis}}">
+                    <StackPanel>
+                        <TextBlock Text="② 卸载入口" Style="{StaticResource H2}" />
+                        <TextBlock Text="优先调用软件自己登记的系统卸载程序，其次是文件夹里找到的卸载器。"
+                                   Style="{StaticResource Muted}" TextWrapping="Wrap" Margin="0,4,0,8" />
+
+                        <ItemsControl ItemsSource="{Binding Matches}">
+                            <ItemsControl.ItemTemplate>
+                                <DataTemplate>
+                                    <Border Background="{DynamicResource Brush.Window}" CornerRadius="6"
+                                            Padding="10,8" Margin="0,0,0,6">
+                                        <StackPanel>
+                                            <TextBlock Text="{Binding Name}" Style="{StaticResource CellText}" />
+                                            <TextBlock Text="{Binding UninstallString}" Style="{StaticResource CellSub}"
+                                                       TextTrimming="CharacterEllipsis"
+                                                       ToolTip="{Binding UninstallString}" Margin="0,2,0,0" />
+                                            <Button Content="运行卸载程序" Style="{StaticResource BtnSmall}"
+                                                    HorizontalAlignment="Left" Margin="0,6,0,0"
+                                                    Command="{Binding DataContext.RunMatchedCommand,
+                                                              RelativeSource={RelativeSource AncestorType=ItemsControl}}"
+                                                    CommandParameter="{Binding}" />
+                                        </StackPanel>
+                                    </Border>
+                                </DataTemplate>
+                            </ItemsControl.ItemTemplate>
+                        </ItemsControl>
+
+                        <TextBlock Text="文件夹里找到的卸载器" Style="{StaticResource Muted}" Margin="0,6,0,6"
+                                   Visibility="{Binding HasCandidates, Converter={StaticResource BoolToVis}}" />
+                        <ItemsControl ItemsSource="{Binding Candidates}">
+                            <ItemsControl.ItemTemplate>
+                                <DataTemplate>
+                                    <Border Background="{DynamicResource Brush.Window}" CornerRadius="6"
+                                            Padding="10,8" Margin="0,0,0,6">
+                                        <StackPanel>
+                                            <TextBlock Text="{Binding Name}" Style="{StaticResource CellText}" />
+                                            <TextBlock Style="{StaticResource CellSub}" TextTrimming="CharacterEllipsis"
+                                                       ToolTip="{Binding FilePath}" Margin="0,2,0,0">
+                                                <Run Text="{Binding Company, Mode=OneWay}" />
+                                                <Run Text="·" />
+                                                <Run Text="{Binding SizeText, Mode=OneWay}" />
+                                            </TextBlock>
+                                            <Button Content="运行" Style="{StaticResource BtnSmall}"
+                                                    HorizontalAlignment="Left" Margin="0,6,0,0"
+                                                    Command="{Binding DataContext.RunCandidateCommand,
+                                                              RelativeSource={RelativeSource AncestorType=ItemsControl}}"
+                                                    CommandParameter="{Binding}" />
+                                        </StackPanel>
+                                    </Border>
+                                </DataTemplate>
+                            </ItemsControl.ItemTemplate>
+                        </ItemsControl>
+                    </StackPanel>
+                </Border>
+
+                <!-- ③ 强制删除 -->
+                <Border Style="{StaticResource HintCard.Danger}" Padding="14,12" Margin="0,10,0,0"
+                        Visibility="{Binding HasTargetFolder, Converter={StaticResource BoolToVis}}">
+                    <StackPanel>
+                        <TextBlock Text="③ 强制删除整个文件夹" Style="{StaticResource H2}"
+                                   Foreground="{DynamicResource Brush.Danger}" />
+                        <TextBlock Text="卸载程序跑完、残留也清完了，但文件夹还在时用这个。整目录进回收站，删除前自动写一份存档。"
+                                   Style="{StaticResource HintText.Danger}" TextWrapping="Wrap" Margin="0,4,0,8" />
+                        <StackPanel Orientation="Horizontal">
+                            <Button Content="计算大小" Style="{StaticResource BtnSmall}" Margin="0,0,6,0"
+                                    Command="{Binding MeasureCommand}" />
+                            <Button Content="强制删除文件夹" Style="{StaticResource BtnDanger}"
+                                    Command="{Binding ForceDeleteCommand}" />
+                        </StackPanel>
+                    </StackPanel>
+                </Border>
+
+                <Border Style="{StaticResource Card}" Padding="14,10" Margin="0,10,0,0"
+                        Visibility="{Binding ArchivePath, Converter={StaticResource EmptyToVis}, ConverterParameter=invert}" >
+                    <StackPanel>
+                        <TextBlock Text="清理存档" Style="{StaticResource Muted}" />
+                        <TextBlock Text="{Binding ArchivePath}" Style="{StaticResource CellSub}"
+                                   TextTrimming="CharacterEllipsis" ToolTip="{Binding ArchivePath}" />
+                        <Button Content="打开存档" Style="{StaticResource BtnSmall}" HorizontalAlignment="Left"
+                                Margin="0,6,0,0" Command="{Binding OpenArchiveCommand}" />
+                    </StackPanel>
+                </Border>
+
+            </StackPanel>
+        </ScrollViewer>
+
+        <!-- 右列：残留扫描结果 -->
+        <Grid Grid.Column="1">
+            <Grid.RowDefinitions>
+                <RowDefinition Height="Auto" />
+                <RowDefinition Height="Auto" />
+                <RowDefinition Height="*" />
+            </Grid.RowDefinitions>
+
+            <WrapPanel Grid.Row="0" Margin="0,0,0,8">
+                <Button Content="扫描残留" Style="{StaticResource BtnPrimary}" Margin="0,0,6,6"
+                        Command="{Binding ScanCommand}" />
+                <Button Content="深度扫描" Style="{StaticResource BtnBase}" Margin="0,0,6,6"
+                        ToolTip="递归扫到 64 层，慢但更全；装得很深的软件（如 scoop 的 persist 目录）只有深度扫描才找得到"
+                        Command="{Binding DeepScanCommand}" />
+                <Button Content="停止扫描" Style="{StaticResource BtnBase}" Margin="0,0,6,6"
+                        Visibility="{Binding IsScanning, Converter={StaticResource BoolToVis}}"
+                        Command="{Binding CancelScanCommand}" />
+                <Button Content="计算大小" Style="{StaticResource BtnSmall}" Margin="0,0,6,6"
+                        Command="{Binding MeasureCommand}" />
+                <Button Content="全选确定项" Style="{StaticResource BtnSmall}" Margin="0,0,6,6"
+                        Command="{Binding SelectConfirmedCommand}" />
+                <Button Content="清空选择" Style="{StaticResource BtnSmall}" Margin="0,0,6,6"
+                        Command="{Binding ClearSelectionCommand}" />
+                <Button Content="清理选中" Style="{StaticResource BtnDanger}" Margin="0,0,6,6"
+                        Command="{Binding CleanSelectedCommand}" />
+            </WrapPanel>
+
+            <StackPanel Grid.Row="1" Margin="0,0,0,8">
+                <TextBlock Text="{Binding ScanStatus}" Style="{StaticResource Muted}" TextWrapping="Wrap" />
+                <TextBlock Text="{Binding ScanSummary}" Style="{StaticResource Muted}" TextWrapping="Wrap" />
+                <TextBlock Text="{Binding SelectedSummary}" Style="{StaticResource Muted}" TextWrapping="Wrap" />
+            </StackPanel>
+
+            <Border Grid.Row="2" Style="{StaticResource Card}" Padding="0">
+                <Grid>
+                    <DataGrid ItemsSource="{Binding Residuals}" Style="{StaticResource Grid}">
+                        <DataGrid.Columns>
+                            <DataGridTemplateColumn Header="选" Width="48" SortMemberPath="IsSelected">
+                                <DataGridTemplateColumn.CellTemplate>
+                                    <DataTemplate>
+                                        <CheckBox IsChecked="{Binding IsSelected, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
+                                                  IsEnabled="{Binding CanClean}"
+                                                  HorizontalAlignment="Center" VerticalAlignment="Center" Cursor="Hand" />
+                                    </DataTemplate>
+                                </DataGridTemplateColumn.CellTemplate>
+                            </DataGridTemplateColumn>
+                            <DataGridTemplateColumn Header="类型" Width="90" SortMemberPath="Kind">
+                                <DataGridTemplateColumn.CellTemplate>
+                                    <DataTemplate>
+                                        <TextBlock Text="{Binding KindText}" Style="{StaticResource CellMuted}" />
+                                    </DataTemplate>
+                                </DataGridTemplateColumn.CellTemplate>
+                            </DataGridTemplateColumn>
+                            <DataGridTemplateColumn Header="判定" Width="62" SortMemberPath="Confidence">
+                                <DataGridTemplateColumn.CellTemplate>
+                                    <DataTemplate>
+                                        <TextBlock Text="{Binding ConfidenceText}" FontSize="12"
+                                                   VerticalAlignment="Center">
+                                            <TextBlock.Style>
+                                                <Style TargetType="TextBlock">
+                                                    <Setter Property="Foreground" Value="{DynamicResource Brush.TextMuted}" />
+                                                    <Style.Triggers>
+                                                        <DataTrigger Binding="{Binding IsConfirmed}" Value="True">
+                                                            <Setter Property="Foreground" Value="{DynamicResource Brush.Success}" />
+                                                        </DataTrigger>
+                                                    </Style.Triggers>
+                                                </Style>
+                                            </TextBlock.Style>
+                                        </TextBlock>
+                                    </DataTemplate>
+                                </DataGridTemplateColumn.CellTemplate>
+                            </DataGridTemplateColumn>
+                            <DataGridTemplateColumn Header="位置" Width="1.3*" MinWidth="170" SortMemberPath="Path">
+                                <DataGridTemplateColumn.CellTemplate>
+                                    <DataTemplate>
+                                        <TextBlock Text="{Binding Path}" Style="{StaticResource CellText}"
+                                                   TextTrimming="CharacterEllipsis" ToolTip="{Binding Path}" />
+                                    </DataTemplate>
+                                </DataGridTemplateColumn.CellTemplate>
+                            </DataGridTemplateColumn>
+                            <DataGridTemplateColumn Header="说明" Width="1*" MinWidth="130" SortMemberPath="Detail">
+                                <DataGridTemplateColumn.CellTemplate>
+                                    <DataTemplate>
+                                        <TextBlock Text="{Binding Detail}" Style="{StaticResource CellMuted}"
+                                                   TextTrimming="CharacterEllipsis" ToolTip="{Binding Detail}" />
+                                    </DataTemplate>
+                                </DataGridTemplateColumn.CellTemplate>
+                            </DataGridTemplateColumn>
+                            <DataGridTemplateColumn Header="大小" Width="88" SortMemberPath="SizeBytes">
+                                <DataGridTemplateColumn.CellTemplate>
+                                    <DataTemplate>
+                                        <TextBlock Text="{Binding SizeText}" Style="{StaticResource CellMuted}" />
+                                    </DataTemplate>
+                                </DataGridTemplateColumn.CellTemplate>
+                            </DataGridTemplateColumn>
+                            <DataGridTemplateColumn Header="操作" Width="{StaticResource OpCol.Narrow}" CanUserSort="False">
+                                <DataGridTemplateColumn.CellTemplate>
+                                    <DataTemplate>
+                                        <Button Content="查看" Style="{StaticResource BtnSmall}"
+                                                ToolTip="在资源管理器里打开这一项所在的位置"
+                                                Command="{Binding DataContext.OpenResidualCommand,
+                                                          RelativeSource={RelativeSource AncestorType=DataGrid}}"
+                                                CommandParameter="{Binding}" />
+                                    </DataTemplate>
+                                </DataGridTemplateColumn.CellTemplate>
+                            </DataGridTemplateColumn>
+                        </DataGrid.Columns>
+                    </DataGrid>
+
+                    <TextBlock Style="{StaticResource EmptyState}"
+                               Visibility="{Binding HasResiduals, Converter={StaticResource BoolToVis}, ConverterParameter=invert}">
+                        左边拖入软件的安装文件夹或快捷方式。<LineBreak />
+                        点「扫描残留」后，这里会列出卸载后没清干净的目录、快捷方式、服务、计划任务、启动项与文件关联。
+                    </TextBlock>
+                </Grid>
+            </Border>
+
+            <Border Grid.Row="2" Style="{StaticResource BusyOverlay}"
+                    Visibility="{Binding IsScanning, Converter={StaticResource BoolToVis}}">
+                <StackPanel HorizontalAlignment="Center" VerticalAlignment="Center">
+                    <TextBlock Text="{Binding ScanHint}" Style="{StaticResource BusyText}" />
+                </StackPanel>
+            </Border>
+        </Grid>
+    </Grid>
+</UserControl>

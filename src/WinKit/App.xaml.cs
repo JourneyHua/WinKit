@@ -372,6 +372,27 @@ public partial class App : Application
                     Pump();
                     Capture(window, outputDir, "apps-tools", log);
                     appVm.ShowTools = false;
+
+                    // 卸载残留清理：喂一个真实安装目录，走完整的识别链路
+                    appVm.ShowUninstallCenter = true;
+                    appVm.UninstallCenter.AcceptPath(SmokeUninstallTarget(outputDir));
+                    Pump(1500);
+                    UpdateLayoutSafe(window);
+                    Pump();
+                    Capture(window, outputDir, "apps-uninstall", log);
+                    log.AppendLine($"  uninstall: kind=\"{OneLine(appVm.UninstallCenter.TargetKindText)}\" matches={appVm.UninstallCenter.Matches.Count} candidates={appVm.UninstallCenter.Candidates.Count} residuals={appVm.UninstallCenter.Residuals.Count} summary=\"{OneLine(appVm.UninstallCenter.IdentifySummary)}\"");
+                    appVm.ShowUninstallCenter = false;
+                }
+
+                if (vm.CurrentViewModel is NavPaneViewModel navPaneVm)
+                {
+                    navPaneVm.ShowTaskbar = true;
+                    Pump(1500);
+                    UpdateLayoutSafe(window);
+                    Pump();
+                    Capture(window, outputDir, "navpane-taskbar", log);
+                    log.AppendLine($"  taskbar: pinned={navPaneVm.Taskbar.Pinned.Count} tray={navPaneVm.Taskbar.TrayIcons.Count} pinnedSummary=\"{OneLine(navPaneVm.Taskbar.PinnedSummary)}\" traySummary=\"{OneLine(navPaneVm.Taskbar.TraySummary)}\" error=\"{OneLine(navPaneVm.Taskbar.Error)}\"");
+                    navPaneVm.ShowTaskbar = false;
                 }
 
                 if (vm.CurrentViewModel is SystemTweakViewModel tweakVm)
@@ -404,6 +425,32 @@ public partial class App : Application
         }
 
         File.WriteAllText(logPath, log.ToString(), new UTF8Encoding(true));
+    }
+
+    /// <summary>
+    /// 给卸载残留清理面板造一个可预期的识别目标：一个名字像卸载器的 exe 放在独立子目录里。
+    /// 不用机器上真实装的软件——那在不同机器上结果完全不同，CI 没法断言。
+    ///
+    /// 必须建在输出目录下：--smoke 进程是低完整性级别，写 %TEMP% 会被拒绝
+    /// （UnauthorizedAccessException: Access to the path ... is denied），
+    /// 而输出目录是它自己刚建出来写截图的，一定可写。
+    /// </summary>
+    private static string SmokeUninstallTarget(string outputDir)
+    {
+        var root = Path.Combine(outputDir, "WinKit-SmokeApp");
+        try
+        {
+            Directory.CreateDirectory(root);
+            var exe = Path.Combine(root, "uninstall.exe");
+            if (!File.Exists(exe)) File.WriteAllBytes(exe, Array.Empty<byte>());
+        }
+        catch (Exception)
+        {
+            // 建不出来就退回程序目录，识别链路照样能跑完
+            return AppContext.BaseDirectory;
+        }
+
+        return root;
     }
 
     private static void UpdateLayoutSafe(Window window)

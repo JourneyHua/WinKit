@@ -19,6 +19,7 @@
     <Compile Include="..\..\src\WinKit\Core\Snapshots.cs" Link="Core\Snapshots.cs" />
     <Compile Include="..\..\src\WinKit\Core\Native.cs" Link="Core\Native.cs" />
     <Compile Include="..\..\src\WinKit\Core\Mvvm.cs" Link="Core\Mvvm.cs" />
+    <Compile Include="..\..\src\WinKit\Core\Shortcuts.cs" Link="Core\Shortcuts.cs" />
     <Compile Include="..\..\src\WinKit\Services\MenuModels.cs" Link="Services\MenuModels.cs" />
     <Compile Include="..\..\src\WinKit\Services\AppxManifest.cs" Link="Services\AppxManifest.cs" />
     <Compile Include="..\..\src\WinKit\Services\ContextMenuService.cs" Link="Services\ContextMenuService.cs" />
@@ -26,6 +27,8 @@
     <Compile Include="..\..\src\WinKit\Services\ThisPcService.cs" Link="Services\ThisPcService.cs" />
     <Compile Include="..\..\src\WinKit\Services\NavPaneService.cs" Link="Services\NavPaneService.cs" />
     <Compile Include="..\..\src\WinKit\Services\UninstallService.cs" Link="Services\UninstallService.cs" />
+    <Compile Include="..\..\src\WinKit\Services\ResidualScanService.cs" Link="Services\ResidualScanService.cs" />
+    <Compile Include="..\..\src\WinKit\Services\TaskbarService.cs" Link="Services\TaskbarService.cs" />
     <Compile Include="..\..\src\WinKit\Services\AppManagerService.cs" Link="Services\AppManagerService.cs" />
     <Compile Include="..\..\src\WinKit\Services\ScoopService.cs" Link="Services\ScoopService.cs" />
     <Compile Include="..\..\src\WinKit\Services\FileAssocService.cs" Link="Services\FileAssocService.cs" />

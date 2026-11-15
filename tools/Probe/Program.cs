@@ -621,6 +621,129 @@ internal static class Program
             Check("Markdown 导出可用", markdown.Contains("# WinKit 体检报告") && markdown.Contains("评分"));
             Check("JSON 导出可解析",
                 System.Text.Json.JsonDocument.Parse(json).RootElement.TryGetProperty("Sections", out _));
+
+            // ---------- KnownFolder GUID 解析（托盘记录里 37 条是这种形式） ----------
+            var programFiles = Shortcuts.GetKnownFolderPath(
+                new Guid("6D809377-6AF0-444B-8957-A3773F02200E"));
+            Check("KnownFolder 解析 Program Files", !string.IsNullOrWhiteSpace(programFiles),
+                $"实际 {programFiles}");
+            Check("KnownFolder 解析带尾路径",
+                Shortcuts.ResolveKnownFolderPath("{6D809377-6AF0-444B-8957-A3773F02200E}\\Notepad.exe")
+                    == Path.Combine(programFiles ?? "", "Notepad.exe"));
+            Check("非 GUID 路径原样返回",
+                Shortcuts.ResolveKnownFolderPath(@"C:\Windows\notepad.exe") == @"C:\Windows\notepad.exe");
+            Check("未知 GUID 不抛异常",
+                Shortcuts.ResolveKnownFolderPath("{00000000-0000-0000-0000-000000000000}\\x.exe")
+                    == "{00000000-0000-0000-0000-000000000000}\\x.exe");
+
+            // ---------- 三态存在性判断：这是「别把好图标判成僵尸」的关键 ----------
+            var realFile = Path.Combine(workDir, "exists.txt");
+            File.WriteAllText(realFile, "x");
+            Check("存在的文件判为未失效", Shortcuts.IsTargetMissing(realFile) == false);
+            Check("不存在的文件判为失效", Shortcuts.IsTargetMissing(Path.Combine(workDir, "nope.txt")) == true);
+            Check("空路径判为未知（不是失效）", Shortcuts.IsTargetMissing("") is null);
+            // WindowsApps 非管理员不可枚举：必须判「未知」而不是「失效」，
+            // 否则「折叠失效项」会把 Copilot / Outlook 这些正常图标一起藏掉。
+            // 注意只能拿 WindowsApps 根下的路径来测：包目录本身若真被卸载了，
+            // 父目录不存在 → 判失效才是对的，不能和「没权限」混为一谈。
+            const string guardedRoot = @"C:\Program Files\WindowsApps";
+            var rootLocked = false;
+            try
+            {
+                using var entries = Directory.EnumerateFileSystemEntries(guardedRoot).GetEnumerator();
+                entries.MoveNext();
+            }
+            catch (UnauthorizedAccessException)
+            {
+                rootLocked = true;
+            }
+            catch (Exception)
+            {
+                rootLocked = false;
+            }
+
+            if (rootLocked)
+            {
+                var guarded = Shortcuts.IsTargetMissing(Path.Combine(guardedRoot, "__winkit_probe_absent__.exe"));
+                Check("无权限枚举的目录判为未知而非失效", guarded is null, $"实际 {guarded}");
+            }
+            else
+            {
+                Skip("无权限枚举的目录判为未知而非失效", "当前会话能枚举 WindowsApps");
+            }
+
+            // ---------- 任务栏固定项：读取不依赖管理员 ----------
+            var taskbar = new TaskbarService(journal);
+            var pinned = taskbar.LoadPinned();
+            Check("任务栏固定项可读取", pinned.Count > 0, $"实际 {pinned.Count} 个");
+            Check("固定项都有快捷方式路径", pinned.All(p => File.Exists(p.ShortcutPath)));
+            Check("CLSID 链接不算失效",
+                pinned.Where(p => p.IsShellItem).All(p => p.IsTargetMissing is null),
+                "空目标路径必须返回未知");
+
+            // ---------- 托盘图标记录 ----------
+            var tray = taskbar.LoadTrayIcons();
+            Check("托盘记录可读取", tray.Count > 0, $"实际 {tray.Count} 条");
+            Check("托盘路径都已解析 KnownFolder",
+                tray.All(t => string.IsNullOrWhiteSpace(t.ResolvedPath) || !t.ResolvedPath.Contains('{')),
+                "解析后不该残留 GUID 前缀");
+            Check("托盘记录的失效判定为三态",
+                tray.All(t => t.IsMissing is not null || string.IsNullOrWhiteSpace(t.ResolvedPath)));
+
+            // ---------- 卸载器候选扫描 ----------
+            var fakeApp = Path.Combine(workDir, "FakeApp");
+            Directory.CreateDirectory(fakeApp);
+            File.WriteAllText(Path.Combine(fakeApp, "SUPUninstall.exe"), "");
+            File.WriteAllText(Path.Combine(fakeApp, "uninstall.dat"), "");   // 名字像卸载器但不是 exe
+            File.WriteAllText(Path.Combine(fakeApp, "readme.txt"), "");
+
+            var uninstall = new UninstallService();
+            var candidates = uninstall.FindCandidateUninstallers(fakeApp);
+            Check("扫到候选卸载器", candidates.Count == 1, $"实际 {candidates.Count} 个");
+            Check("只认 exe，排除 uninstall.dat",
+                candidates.All(c => c.FilePath.EndsWith(".exe", StringComparison.OrdinalIgnoreCase)));
+            Check("候选卸载器带所在目录", candidates.All(c => c.Folder == fakeApp));
+            Check("不存在的目录返回空列表",
+                uninstall.FindCandidateUninstallers(Path.Combine(workDir, "NoSuchDir")).Count == 0);
+
+            // ---------- 残留扫描：靠夹具目录，不依赖本机装了什么 ----------
+            var residualRoot = Path.Combine(workDir, "residual-root");
+            var residualApp = Path.Combine(residualRoot, "WinKitProbeGhostApp");
+            Directory.CreateDirectory(residualApp);
+            File.WriteAllText(Path.Combine(residualApp, "data.bin"), "0123456789");
+            // 同名但不同大小写的目录也应命中
+            Directory.CreateDirectory(Path.Combine(residualRoot, "winkitprobeghostapp2"));
+
+            var scanResult = new ResidualScanService().Scan(new ResidualScanRequest
+            {
+                ExactNames = new[] { "WinKitProbeGhostApp", "WinKitProbeGhostApp2" },
+                ExtraRoots = new[] { residualRoot },
+                MaxDepth = 2,
+                IncludeDirectories = true,
+                IncludeShortcuts = false,
+                IncludeServices = false,
+                IncludeTasks = false,
+                IncludeStartup = false,
+                IncludeAssociations = false
+            });
+
+            Check("残留扫描命中夹具目录", scanResult.Items.Count >= 2, $"实际 {scanResult.Items.Count} 项");
+            Check("精确同名的残留判为确定项", scanResult.ConfirmedCount >= 2, $"确定 {scanResult.ConfirmedCount} 项");
+            Check("残留项带类型与大小字段",
+                scanResult.Items.All(i => !string.IsNullOrWhiteSpace(i.KindText) && !string.IsNullOrWhiteSpace(i.ConfidenceText)));
+            Check("扫描统计了目录数", scanResult.ScannedDirectories > 0);
+            Check("文件关联类残留不可清理（UserChoice 有哈希签名）",
+                scanResult.Items.Where(i => i.Kind == ResidualKind.FileAssociation).All(i => !i.CanClean));
+            Check("清理动作不碰文件关联",
+                new ResidualScanService()
+                    .Scan(new ResidualScanRequest
+                    {
+                        PathFragments = new[] { "WinKitProbeNoSuchFragment" },
+                        ExtraRoots = new[] { residualRoot },
+                        MaxDepth = 1,
+                        IncludeDirectories = false
+                    })
+                    .Items.All(i => i.Kind != ResidualKind.Directory || i.CanClean));
         }
         finally
         {

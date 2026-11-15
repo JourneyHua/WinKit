@@ -1,6 +1,6 @@
 using System.Diagnostics;
 using System.IO;
-using WinKit.Core;
+using WinKit.Core; // Shortcuts / RegPath / ChangeJournal
 
 namespace WinKit.Services;
 
@@ -13,6 +13,20 @@ public sealed class UninstallEntry
     public string Version { get; init; } = "";
 
     public string DisplayText => string.IsNullOrWhiteSpace(Version) ? Name : $"{Name}  {Version}";
+}
+
+/// <summary>扫描到的候选卸载器（未登记在卸载列表里的软件只能靠它）。</summary>
+public sealed class CandidateUninstaller
+{
+    public string Name { get; init; } = "";
+    public string FilePath { get; init; } = "";
+    public string Folder { get; init; } = "";
+    public string Company { get; init; } = "";
+    public string Description { get; init; } = "";
+    public string SizeText { get; init; } = "";
+    public bool IsSelected { get; set; }
+
+    public string Detail => string.IsNullOrWhiteSpace(Company) ? Description : $"{Company} · {Description}";
 }
 
 /// <summary>
@@ -161,6 +175,103 @@ public sealed class UninstallService
         }
 
         return stillRegistered;
+    }
+
+    /// <summary>
+    /// 在指定文件夹里找候选卸载器。卸载器命名极不统一，实测有
+    /// SUPUninstall.exe / PPUninstallerUi.exe / netbird_uninstall.exe / Uninstall Notion.exe，
+    /// 所以只能按「名字带 uninst / 卸载」模糊匹配。
+    ///
+    /// 必须限定 .exe：uninstall.dat、Uninstall.lst 这类名字像卸载器的非可执行文件
+    /// 在真实装机环境里很常见，误当成卸载器会让用户点下去毫无反应。
+    /// </summary>
+    public List<CandidateUninstaller> FindCandidateUninstallers(string folder, int maxDepth = 2)
+    {
+        var result = new List<CandidateUninstaller>();
+        if (string.IsNullOrWhiteSpace(folder)) return result;
+
+        var root = folder.Trim().Trim('"').TrimEnd('\\');
+        if (!Directory.Exists(root)) return result;
+
+        var options = new EnumerationOptions
+        {
+            IgnoreInaccessible = true,
+            RecurseSubdirectories = maxDepth > 1,
+            MatchCasing = MatchCasing.CaseInsensitive,
+            AttributesToSkip = FileAttributes.ReparsePoint
+        };
+
+        IEnumerable<string> files;
+        try
+        {
+            files = Directory.EnumerateFiles(root, "*.exe", options);
+        }
+        catch (Exception)
+        {
+            return result;
+        }
+
+        var rootDepth = root.Count(c => c == '\\');
+
+        foreach (var file in files)
+        {
+            var name = Path.GetFileNameWithoutExtension(file);
+            if (!LooksLikeUninstaller(name)) continue;
+
+            // 枚举是全递归的，深度要自己卡
+            if (file.Count(c => c == '\\') - rootDepth > Math.Max(1, maxDepth)) continue;
+
+            var info = DescribeFile(file);
+
+            result.Add(new CandidateUninstaller
+            {
+                Name = name,
+                FilePath = file,
+                Folder = Path.GetDirectoryName(file) ?? root,
+                Company = info.Company,
+                Description = info.Description,
+                SizeText = info.Size
+            });
+        }
+
+        return result
+            .OrderBy(i => i.FilePath.Count(c => c == '\\'))
+            .ThenBy(i => i.Name, StringComparer.OrdinalIgnoreCase)
+            .ToList();
+    }
+
+    private static bool LooksLikeUninstaller(string fileName)
+    {
+        var lower = fileName.ToLowerInvariant();
+
+        return lower.Contains("uninst") || lower.Contains("卸载") || lower.Contains("unwise")
+               || lower.Contains("remove") || lower.Contains("setup_helper");
+    }
+
+    private static (string Company, string Description, string Size) DescribeFile(string path)
+    {
+        try
+        {
+            var vi = FileVersionInfo.GetVersionInfo(path);
+            var size = ThisPcService.FormatSize(new FileInfo(path).Length);
+            return ((vi.CompanyName ?? "").Trim(), (vi.FileDescription ?? "").Trim(), size);
+        }
+        catch (Exception)
+        {
+            return ("", "", "");
+        }
+    }
+
+    /// <summary>把 .lnk 解析成它指向的目录；目标不是目录时返回其所在目录。</summary>
+    public static (string Folder, string FilePath) ResolveShortcut(string shortcutPath)
+    {
+        var target = Shortcuts.ResolveLinkTarget(shortcutPath);
+        if (string.IsNullOrWhiteSpace(target)) return ("", "");
+
+        target = Shortcuts.Expand(target);
+
+        if (Directory.Exists(target)) return (target.TrimEnd('\\'), "");
+        return (Path.GetDirectoryName(target) ?? "", File.Exists(target) ? target : "");
     }
 
     /// <summary>卸载后复查：返回发现的问题，空数组表示干净。</summary>

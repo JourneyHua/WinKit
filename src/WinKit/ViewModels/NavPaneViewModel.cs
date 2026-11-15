@@ -15,6 +15,7 @@ public sealed class NavPaneViewModel : ObservableObject, IModule
     private readonly Action<string> _status;
     private string _loadError = "";
     private bool _isLoading;
+    private string _subView = "navpane"; // navpane | taskbar
 
     public NavPaneViewModel(ChangeJournal journal, Action<string> status)
     {
@@ -27,7 +28,10 @@ public sealed class NavPaneViewModel : ObservableObject, IModule
         PinnedFolders = new ObservableCollection<PinnedFolderItem>();
         StubbornGroups = new ObservableCollection<StubbornGroup>();
         Toggles = new ObservableCollection<NavToggleItem>();
+        Taskbar = new TaskbarViewModel(journal, status);
 
+        ShowNavPaneCommand = new RelayCommand(() => SubView = "navpane");
+        ShowTaskbarCommand = new RelayCommand(() => SubView = "taskbar");
         RefreshCommand = new RelayCommand(Refresh);
         PinCommand = new RelayCommand(PinFolder);
         UnpinCommand = new RelayCommand(p => Unpin(p as QuickAccessItem));
@@ -46,6 +50,36 @@ public sealed class NavPaneViewModel : ObservableObject, IModule
     public ObservableCollection<PinnedFolderItem> PinnedFolders { get; }
     public ObservableCollection<StubbornGroup> StubbornGroups { get; }
     public ObservableCollection<NavToggleItem> Toggles { get; }
+
+    /// <summary>任务栏子视图（固定项 + 托盘图标）。</summary>
+    public TaskbarViewModel Taskbar { get; }
+
+    public RelayCommand ShowNavPaneCommand { get; }
+    public RelayCommand ShowTaskbarCommand { get; }
+
+    public string SubView
+    {
+        get => _subView;
+        set
+        {
+            if (!Set(ref _subView, value)) return;
+            OnPropertyChanged(nameof(ShowNavPane));
+            OnPropertyChanged(nameof(ShowTaskbar));
+            if (value == "taskbar") Taskbar.Refresh();
+        }
+    }
+
+    public bool ShowNavPane
+    {
+        get => _subView == "navpane";
+        set => SubView = value ? "navpane" : "taskbar";
+    }
+
+    public bool ShowTaskbar
+    {
+        get => _subView == "taskbar";
+        set => SubView = value ? "taskbar" : "navpane";
+    }
 
     public RelayCommand RefreshCommand { get; }
     public RelayCommand PinCommand { get; }

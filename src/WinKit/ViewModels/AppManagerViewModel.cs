@@ -24,7 +24,7 @@ public sealed class AppManagerViewModel : ObservableObject, IModule
     private string _runtimeSearchText = "";
     private string _toolSearchText = "";
     private string _sourceFilter = "all"; // all | desktop | store
-    private string _subView = "apps"; // apps | runtimes | tools
+    private string _subView = "apps"; // apps | runtimes | tools | uninstall
     private bool _onlyUpdatable;
     private bool _onlyMissingRuntimes;
     private bool _onlyUninstalledTools;
@@ -47,6 +47,7 @@ public sealed class AppManagerViewModel : ObservableObject, IModule
         Apps = new ObservableCollection<InstalledAppItem>();
         Runtimes = new ObservableCollection<RuntimeComponentItem>();
         Tools = new ObservableCollection<SystemToolItem>();
+        UninstallCenter = new UninstallCenterViewModel(journal, status);
 
         RefreshCommand = new RelayCommand(ManualRefresh);
         CheckUpdatesCommand = new RelayCommand(() => _ = CheckUpdatesAsync());
@@ -67,6 +68,7 @@ public sealed class AppManagerViewModel : ObservableObject, IModule
         ShowAppsViewCommand = new RelayCommand(() => SubView = "apps");
         ShowRuntimesViewCommand = new RelayCommand(() => SubView = "runtimes");
         ShowToolsViewCommand = new RelayCommand(() => SubView = "tools");
+        ShowUninstallCenterCommand = new RelayCommand(() => SubView = "uninstall");
         CheckRuntimesCommand = new RelayCommand(RefreshRuntimes);
         InstallRuntimeCommand = new RelayCommand(p => _ = InstallRuntimeAsync(p as RuntimeComponentItem));
         InstallAllMissingRuntimesCommand = new RelayCommand(() => _ = InstallAllMissingRuntimesAsync());
@@ -102,6 +104,7 @@ public sealed class AppManagerViewModel : ObservableObject, IModule
     public RelayCommand ShowAppsViewCommand { get; }
     public RelayCommand ShowRuntimesViewCommand { get; }
     public RelayCommand ShowToolsViewCommand { get; }
+    public RelayCommand ShowUninstallCenterCommand { get; }
     public RelayCommand CheckRuntimesCommand { get; }
     public RelayCommand InstallRuntimeCommand { get; }
     public RelayCommand InstallAllMissingRuntimesCommand { get; }
@@ -122,6 +125,7 @@ public sealed class AppManagerViewModel : ObservableObject, IModule
             OnPropertyChanged(nameof(ShowInstalledApps));
             OnPropertyChanged(nameof(ShowRuntimes));
             OnPropertyChanged(nameof(ShowTools));
+            OnPropertyChanged(nameof(ShowUninstallCenter));
             if (value == "runtimes" && _allRuntimes.Count == 0)
                 RefreshRuntimes();
             if (value == "tools" && _allTools.Count == 0)
@@ -140,6 +144,14 @@ public sealed class AppManagerViewModel : ObservableObject, IModule
         get => _subView == "tools";
         set => SubView = value ? "tools" : "apps";
     }
+    public bool ShowUninstallCenter
+    {
+        get => _subView == "uninstall";
+        set => SubView = value ? "uninstall" : "apps";
+    }
+
+    /// <summary>卸载残留清理面板（拖入文件夹 / 快捷方式 → 识别 → 扫残留 → 清理）。</summary>
+    public UninstallCenterViewModel UninstallCenter { get; }
 
     public string ToolSearchText
     {
@@ -632,7 +644,29 @@ public sealed class AppManagerViewModel : ObservableObject, IModule
     private void ScanItemResidual(InstalledAppItem? app)
     {
         if (app is null) return;
+
+        // 用户在列表上点「扫描残留」是想清干净的，直接把他带到能清干净的地方，
+        // 而不是弹一串「这个目录 WinKit 不代删」的提示
+        var folder = GetInstallPath(app);
+        if (!string.IsNullOrWhiteSpace(folder) && Directory.Exists(folder))
+        {
+            SubView = "uninstall";
+            UninstallCenter.AcceptPath(folder);
+            return;
+        }
+
         HandleResidualCheck(app);
+    }
+
+    private static string GetInstallPath(InstalledAppItem app)
+    {
+        var path = app.InstallLocation;
+        if (string.IsNullOrWhiteSpace(path)) return "";
+        path = path.Trim().Trim('"');
+
+        if (Directory.Exists(path)) return path;
+        if (File.Exists(path)) return Path.GetDirectoryName(path) ?? "";
+        return "";
     }
 
     private void HandleResidualCheck(InstalledAppItem app)

@@ -1,0 +1,212 @@
+<UserControl x:Class="WinKit.Views.TaskbarView"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             FontFamily="Microsoft YaHei UI, Segoe UI">
+
+    <Grid>
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto" MaxHeight="300" />
+            <RowDefinition Height="*" />
+        </Grid.RowDefinitions>
+
+        <!-- 任务栏固定项 -->
+        <Border Grid.Row="0" Style="{StaticResource Card}" Padding="0" Margin="0,0,0,12">
+            <Grid>
+                <Grid.RowDefinitions>
+                    <RowDefinition Height="Auto" />
+                    <RowDefinition Height="Auto" />
+                    <RowDefinition Height="*" />
+                </Grid.RowDefinitions>
+
+                <Grid Grid.Row="0" Margin="16,14,16,6">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="*" />
+                        <ColumnDefinition Width="Auto" />
+                    </Grid.ColumnDefinitions>
+
+                    <StackPanel Grid.Column="0">
+                        <TextBlock Text="任务栏固定项" Style="{StaticResource H2}" />
+                        <TextBlock Style="{StaticResource Muted}" Margin="0,4,8,0" TextWrapping="Wrap"
+                                   Text="列出任务栏上钉的图标，可以取消固定。Win11 已经取消「固定到任务栏」的公开入口，所以这里不提供添加与排序——排序需要先能固定。" />
+                    </StackPanel>
+
+                    <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Top">
+                        <Button Content="打开固定项目录" Style="{StaticResource BtnSmall}" Margin="0,0,6,0"
+                                ToolTip="{Binding PinnedFolder}"
+                                Command="{Binding OpenPinnedFolderCommand}" />
+                        <Button Content="刷新" Style="{StaticResource BtnSmall}"
+                                Command="{Binding RefreshCommand}" />
+                    </StackPanel>
+                </Grid>
+
+                <TextBlock Grid.Row="1" Text="{Binding PinnedSummary}" Style="{StaticResource Muted}"
+                           Margin="16,0,16,6" TextWrapping="Wrap" />
+
+                <Grid Grid.Row="2">
+                    <DataGrid ItemsSource="{Binding Pinned}" Style="{StaticResource Grid}">
+                        <DataGrid.Columns>
+                            <DataGridTemplateColumn Header="名称" Width="1.3*" MinWidth="170" SortMemberPath="Name">
+                                <DataGridTemplateColumn.CellTemplate>
+                                    <DataTemplate>
+                                        <TextBlock Text="{Binding Name}" Style="{StaticResource CellText}"
+                                                   ToolTip="{Binding ShortcutPath}" />
+                                    </DataTemplate>
+                                </DataGridTemplateColumn.CellTemplate>
+                            </DataGridTemplateColumn>
+                            <DataGridTemplateColumn Header="目标" Width="2*" MinWidth="200" SortMemberPath="TargetPath">
+                                <DataGridTemplateColumn.CellTemplate>
+                                    <DataTemplate>
+                                        <TextBlock Text="{Binding TargetText}" Style="{StaticResource CellMuted}"
+                                                   TextTrimming="CharacterEllipsis" ToolTip="{Binding TargetText}" />
+                                    </DataTemplate>
+                                </DataGridTemplateColumn.CellTemplate>
+                            </DataGridTemplateColumn>
+                            <DataGridTemplateColumn Header="状态" Width="92" SortMemberPath="StatusText">
+                                <DataGridTemplateColumn.CellTemplate>
+                                    <DataTemplate>
+                                        <TextBlock Text="{Binding StatusText}" FontSize="12" VerticalAlignment="Center">
+                                            <TextBlock.Style>
+                                                <Style TargetType="TextBlock">
+                                                    <Setter Property="Foreground" Value="{DynamicResource Brush.TextMuted}" />
+                                                    <Style.Triggers>
+                                                        <DataTrigger Binding="{Binding IsMissing}" Value="True">
+                                                            <Setter Property="Foreground" Value="{DynamicResource Brush.Danger}" />
+                                                        </DataTrigger>
+                                                    </Style.Triggers>
+                                                </Style>
+                                            </TextBlock.Style>
+                                        </TextBlock>
+                                    </DataTemplate>
+                                </DataGridTemplateColumn.CellTemplate>
+                            </DataGridTemplateColumn>
+                            <DataGridTemplateColumn Header="操作" Width="{StaticResource OpCol.Wide}" CanUserSort="False">
+                                <DataGridTemplateColumn.CellTemplate>
+                                    <DataTemplate>
+                                        <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
+                                            <Button Content="启动" Style="{StaticResource BtnSmall}" Margin="0,0,6,0"
+                                                    Visibility="{Binding IsShellItem, Converter={StaticResource BoolToVis}, ConverterParameter=invert}"
+                                                    Command="{Binding DataContext.OpenPinnedTargetCommand,
+                                                              RelativeSource={RelativeSource AncestorType=DataGrid}}"
+                                                    CommandParameter="{Binding}" />
+                                            <Button Content="所在位置" Style="{StaticResource BtnSmall}" Margin="0,0,6,0"
+                                                    ToolTip="在资源管理器里定位这个快捷方式文件"
+                                                    Command="{Binding DataContext.OpenPinnedLocationCommand,
+                                                              RelativeSource={RelativeSource AncestorType=DataGrid}}"
+                                                    CommandParameter="{Binding}" />
+                                            <Button Content="取消固定" Style="{StaticResource BtnSmall}"
+                                                    Foreground="{DynamicResource Brush.Danger}"
+                                                    Command="{Binding DataContext.UnpinCommand,
+                                                              RelativeSource={RelativeSource AncestorType=DataGrid}}"
+                                                    CommandParameter="{Binding}" />
+                                        </StackPanel>
+                                    </DataTemplate>
+                                </DataGridTemplateColumn.CellTemplate>
+                            </DataGridTemplateColumn>
+                        </DataGrid.Columns>
+                    </DataGrid>
+
+                    <TextBlock Text="任务栏上没有固定项" Style="{StaticResource Muted}"
+                               HorizontalAlignment="Center" VerticalAlignment="Center"
+                               Visibility="{Binding Pinned.Count, Converter={StaticResource EmptyToVis}}" />
+                </Grid>
+            </Grid>
+        </Border>
+
+        <!-- 通知区域图标 -->
+        <Border Grid.Row="1" Style="{StaticResource Card}" Padding="0">
+            <Grid>
+                <Grid.RowDefinitions>
+                    <RowDefinition Height="Auto" />
+                    <RowDefinition Height="Auto" />
+                    <RowDefinition Height="*" />
+                </Grid.RowDefinitions>
+
+                <StackPanel Grid.Row="0" Margin="16,14,16,8">
+                    <TextBlock Text="通知区域（托盘）图标" Style="{StaticResource H2}" />
+                    <TextBlock Style="{StaticResource Muted}" Margin="0,4,0,0" TextWrapping="Wrap"
+                               Text="勾选即显示在托盘，取消即收进折叠区。列表包含历史残留记录，指向已删除程序的记录可以折叠或删除。scoop 这类每次升级换目录的软件会持续攒下这类记录。" />
+                </StackPanel>
+
+                <WrapPanel Grid.Row="1" Margin="16,0,16,8">
+                    <CheckBox Content="只看失效项" IsChecked="{Binding OnlyMissing, Mode=TwoWay}"
+                              VerticalAlignment="Center" Margin="0,0,12,6" Cursor="Hand" />
+                    <Button Content="折叠全部失效项" Style="{StaticResource BtnBase}" Margin="0,0,6,6"
+                            ToolTip="把指向已不存在文件的记录设为折叠（不删记录，随时可撤销）"
+                            Command="{Binding CollapseMissingCommand}" />
+                    <Button Content="删除失效记录" Style="{StaticResource BtnSmall}" Margin="0,0,6,6"
+                            Foreground="{DynamicResource Brush.Danger}"
+                            ToolTip="整键删除这些历史记录，带注册表快照"
+                            Command="{Binding DeleteMissingRecordsCommand}" />
+                    <Button Content="刷新" Style="{StaticResource BtnSmall}" Margin="0,0,6,6"
+                            Command="{Binding RefreshTrayCommand}" />
+                    <TextBlock Text="{Binding TraySummary}" Style="{StaticResource Muted}"
+                               VerticalAlignment="Center" Margin="0,0,0,6" TextWrapping="Wrap" />
+                </WrapPanel>
+
+                <Grid Grid.Row="2">
+                    <DataGrid ItemsSource="{Binding TrayIcons}" Style="{StaticResource Grid}">
+                        <DataGrid.Columns>
+                            <DataGridTemplateColumn Header="显示" Width="56" SortMemberPath="IsPromoted">
+                                <DataGridTemplateColumn.CellTemplate>
+                                    <DataTemplate>
+                                        <CheckBox IsChecked="{Binding IsPromoted, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
+                                                  HorizontalAlignment="Center" VerticalAlignment="Center" Cursor="Hand"
+                                                  ToolTip="{Binding VisibilityText}" />
+                                    </DataTemplate>
+                                </DataGridTemplateColumn.CellTemplate>
+                            </DataGridTemplateColumn>
+                            <DataGridTemplateColumn Header="名称" Width="1.2*" MinWidth="150" SortMemberPath="DisplayName">
+                                <DataGridTemplateColumn.CellTemplate>
+                                    <DataTemplate>
+                                        <TextBlock Text="{Binding DisplayName}" Style="{StaticResource CellText}"
+                                                   ToolTip="{Binding Tooltip}" />
+                                    </DataTemplate>
+                                </DataGridTemplateColumn.CellTemplate>
+                            </DataGridTemplateColumn>
+                            <DataGridTemplateColumn Header="程序路径" Width="2*" MinWidth="220" SortMemberPath="ResolvedPath">
+                                <DataGridTemplateColumn.CellTemplate>
+                                    <DataTemplate>
+                                        <TextBlock Text="{Binding ResolvedPath}" Style="{StaticResource CellMuted}"
+                                                   TextTrimming="CharacterEllipsis" ToolTip="{Binding RawPath}" />
+                                    </DataTemplate>
+                                </DataGridTemplateColumn.CellTemplate>
+                            </DataGridTemplateColumn>
+                            <DataGridTemplateColumn Header="状态" Width="96" SortMemberPath="StatusText">
+                                <DataGridTemplateColumn.CellTemplate>
+                                    <DataTemplate>
+                                        <TextBlock Text="{Binding StatusText}" FontSize="12" VerticalAlignment="Center">
+                                            <TextBlock.Style>
+                                                <Style TargetType="TextBlock">
+                                                    <Setter Property="Foreground" Value="{DynamicResource Brush.TextMuted}" />
+                                                    <Style.Triggers>
+                                                        <DataTrigger Binding="{Binding IsMissingFile}" Value="True">
+                                                            <Setter Property="Foreground" Value="{DynamicResource Brush.Danger}" />
+                                                        </DataTrigger>
+                                                    </Style.Triggers>
+                                                </Style>
+                                            </TextBlock.Style>
+                                        </TextBlock>
+                                    </DataTemplate>
+                                </DataGridTemplateColumn.CellTemplate>
+                            </DataGridTemplateColumn>
+                            <DataGridTemplateColumn Header="操作" Width="{StaticResource OpCol.Narrow}" CanUserSort="False">
+                                <DataGridTemplateColumn.CellTemplate>
+                                    <DataTemplate>
+                                        <Button Content="查看" Style="{StaticResource BtnSmall}"
+                                                ToolTip="程序还在就定位到文件，已删除则打开它的注册表记录"
+                                                Command="{Binding DataContext.OpenTrayLocationCommand,
+                                                          RelativeSource={RelativeSource AncestorType=DataGrid}}"
+                                                CommandParameter="{Binding}" />
+                                    </DataTemplate>
+                                </DataGridTemplateColumn.CellTemplate>
+                            </DataGridTemplateColumn>
+                        </DataGrid.Columns>
+                    </DataGrid>
+
+                    <TextBlock Text="没有读到通知区域记录" Style="{StaticResource EmptyState}"
+                               Visibility="{Binding TrayIcons.Count, Converter={StaticResource EmptyToVis}}" />
+                </Grid>
+            </Grid>
+        </Border>
+    </Grid>
+</UserControl>
