@@ -1,7 +1,7 @@
 # yaml-language-server: $schema=https://aka.ms/winget-manifest.installer.1.12.0.schema.json
 
 PackageIdentifier: JourneyHua.WinKit
-PackageVersion: 1.10.2
+PackageVersion: 1.11.0
 InstallerLocale: zh-CN
 InstallerType: zip
 NestedInstallerType: portable
@@ -9,16 +9,16 @@ NestedInstallerFiles:
   - RelativeFilePath: WinKit.exe
     PortableCommandAlias: winkit
 UpgradeBehavior: install
-# 从 1.10.0 起 app 清单是 asInvoker（未签名 + 要提权会被 SmartScreen 拦），
+# 从 1.10.0 起 app 清单是 asInvoker，浏览页面不主动请求管理员权限；
 # 安装本身只是解压，不需要提权；需要管理员的模块由程序内部按需提权。
 # 所以这里显式声明「不要提权」，写 elevationRequired 会让 winget 白弹一次 UAC。
 ElevationRequirement: elevationProhibited
 ArchiveBinariesDependOnPath: true
 Installers:
   - Architecture: x64
-    InstallerUrl: https://github.com/JourneyHua/WinKit/releases/download/v1.10.2/WinKit-v1.10.2-framework-dependent.zip
+    InstallerUrl: https://github.com/JourneyHua/WinKit/releases/download/v1.11.0/WinKit-v1.11.0-framework-dependent.zip
     # 发版后必须用 update.ps1 换成真实哈希，占位值提交上去会被仓库校验打回
-    InstallerSha256: 059BFC356C8CB915AF0ED4A790E1946E3BCFE21A43AE6E3A98AF000F85BB2BCE
+    InstallerSha256: D4BFE4850384DD276C44E740EB2B8823F78146C829B6C2A4295ABBB5434EAB18
 # 这是 framework-dependent 包（不打包 .NET 运行时），装上运行时才跑得起来。
 # 写进依赖，winget 会自己把它一起装掉。
 # 注意字段层级：三份清单里只有 installer 有 Dependencies，而包依赖挂在
