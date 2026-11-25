@@ -252,7 +252,7 @@ jobs:
             ### 运行要求与下载说明
 
             - **框架依赖包**（`framework-dependent`）不附带运行时，需 Windows 11 与 [.NET 10 Desktop Runtime](https://dotnet.microsoft.com/download/dotnet/10.0)。
-            - 双击默认以普通权限启动；需要管理员时可点击「以管理员身份重新启动」。也可使用 `winget install JourneyHua.WinKit`，版本以已发布清单为准。
+            - 双击默认以普通权限启动；需要管理员时可点击「以管理员身份重新启动」。下载请使用本页发布包；winget 社区源收录后方可通过其安装。
             - SmartScreen 提示受文件声誉、下载标记和本机策略影响。核实来源后，可在文件属性提供该选项时「解除锁定」；不保证解除标记或 winget 安装后不再出现安全提示。详见 README。
             - 仓库配置 Probe 服务层自测与界面离屏自检门禁；本次结果以对应 Actions 日志为准，用例数随版本变化。
           files: |
