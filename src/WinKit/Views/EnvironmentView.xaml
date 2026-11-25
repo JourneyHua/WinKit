@@ -4,7 +4,17 @@
              FontFamily="Microsoft YaHei UI, Segoe UI">
 
 
-    <Grid Margin="24,16,24,16">
+    <Grid>
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="*" />
+        </Grid.RowDefinitions>
+        <Border Grid.Row="0" Style="{StaticResource ErrorBar}" Margin="24,16,24,0"
+                AutomationProperties.LiveSetting="Polite"
+                Visibility="{Binding HasError, Converter={StaticResource BoolToVis}}">
+            <TextBlock Text="{Binding ErrorText}" Style="{StaticResource ErrorText}" />
+        </Border>
+        <Grid Grid.Row="1" Margin="24,16,24,16">
         <Grid.RowDefinitions>
             <RowDefinition Height="Auto" />
             <RowDefinition Height="*" />
@@ -95,13 +105,8 @@
                         <RowDefinition Height="Auto" />
                     </Grid.RowDefinitions>
 
-                    <Grid Grid.Row="0" Margin="0,0,0,8">
-                        <Grid.ColumnDefinitions>
-                            <ColumnDefinition Width="*" />
-                            <ColumnDefinition Width="Auto" />
-                        </Grid.ColumnDefinitions>
-
-                        <StackPanel Grid.Column="0" Orientation="Horizontal" VerticalAlignment="Center">
+                    <StackPanel Grid.Row="0" Margin="0,0,0,8">
+                        <WrapPanel VerticalAlignment="Center" Margin="0,0,0,10">
                             <TextBlock Text="PATH" Style="{StaticResource H2}" VerticalAlignment="Center"
                                        Margin="0,0,10,0" />
                             <ToggleButton Content="当前用户" Style="{StaticResource Chip}" Margin="0,0,6,0"
@@ -110,18 +115,26 @@
                             <ToggleButton Content="系统" Style="{StaticResource Chip}"
                                           IsChecked="{Binding IsMachinePath, Mode=OneWay}"
                                           Command="{Binding ShowMachinePathCommand}" />
-                        </StackPanel>
+                        </WrapPanel>
 
-                        <StackPanel Grid.Column="1" Orientation="Horizontal">
-                            <Button Content="添加目录" Style="{StaticResource BtnSmall}" Margin="0,0,6,0"
+                        <WrapPanel>
+                            <Button Content="添加目录" Style="{StaticResource BtnSmall}" Margin="0,0,6,6"
                                     Command="{Binding AddPathEntryCommand}" />
-                            <Button Content="应用顺序" Style="{StaticResource BtnPrimary}"
+                            <Button Content="放弃草稿" Style="{StaticResource BtnSmall}" Margin="0,0,6,6"
+                                    ToolTip="放弃当前作用域的草稿，并读取最新 PATH；其它作用域草稿保留"
+                                    Command="{Binding DiscardPathCommand}" />
+                            <Button Content="应用 PATH 更改" Style="{StaticResource BtnPrimary}" Margin="0,0,0,6"
+                                    ToolTip="应用当前作用域的目录增删及排序；写入前保存快照，可撤销"
                                     Command="{Binding ApplyPathCommand}" />
-                        </StackPanel>
-                    </Grid>
+                        </WrapPanel>
+                    </StackPanel>
 
-                    <TextBlock Grid.Row="1" Style="{StaticResource Muted}" Margin="0,0,0,8"
-                               Text="顺序即生效顺序（靠前优先）。只改 PATH 字符串，不删除任何目录；写入前会存快照。" />
+                    <StackPanel Grid.Row="1" Margin="0,0,0,8">
+                        <TextBlock Text="{Binding PathDraftStatus}" Style="{StaticResource Muted}" TextWrapping="Wrap" />
+                        <TextBlock Text="{Binding PendingPathDraftText}" Style="{StaticResource Muted}"
+                                   FontWeight="SemiBold" TextWrapping="Wrap" Margin="0,4,0,0"
+                                   Visibility="{Binding HasPendingPathDrafts, Converter={StaticResource BoolToVis}}" />
+                    </StackPanel>
 
                     <ScrollViewer Grid.Row="2" VerticalScrollBarVisibility="Auto">
                         <ItemsControl ItemsSource="{Binding PathEntries}">
@@ -164,16 +177,11 @@
                         </ItemsControl>
                     </ScrollViewer>
 
-                    <TextBlock Grid.Row="3" Style="{StaticResource Muted}" Margin="0,8,0,0"
-                               Text="提示：改完 PATH 后新开的程序立即生效；已经打开的程序（含资源管理器启动的）需要重启才会读到新值。" />
+                    <TextBlock Grid.Row="3" Style="{StaticResource Muted}" Margin="0,8,0,0" TextWrapping="Wrap"
+                               Text="靠前的目录优先；更改仅在应用后写入，不删除目录。已打开的程序需重启以读取新值；写入前会保存可撤销的快照。" />
                 </Grid>
             </Border>
         </Grid>
-        <!-- 页面级错误条：失败时统一展示，替代原先只靠底部状态栏 -->
-        <Border Style="{StaticResource ErrorBar}" VerticalAlignment="Top"
-                Panel.ZIndex="99" Margin="24,8,24,0"
-                Visibility="{Binding HasError, Converter={StaticResource BoolToVis}}">
-            <TextBlock Text="{Binding ErrorText}" Style="{StaticResource ErrorText}" />
-        </Border>
+        </Grid>
     </Grid>
 </UserControl>

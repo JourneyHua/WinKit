@@ -325,7 +325,7 @@ public sealed class DriverManagerViewModel : ObservableObject, IModule
             "卸载前会自动调用 pnputil 将该驱动包完整导出备份至本地，随时可一键还原。确定继续吗？",
             driver.IsCritical ? "确认卸载核心驱动" : "确认卸载驱动包",
             MessageBoxButton.OKCancel,
-            driver.IsCritical ? MessageBoxImage.Error : MessageBoxImage.Warning);
+            driver.IsCritical ? MessageBoxImage.Error : MessageBoxImage.Warning, MessageBoxResult.Cancel);
 
         if (confirm != MessageBoxResult.OK) return;
 
@@ -338,7 +338,7 @@ public sealed class DriverManagerViewModel : ObservableObject, IModule
             {
                 var proceedWithoutBackup = MessageBox.Show(
                     $"自动导出驱动备份失败（{backupErr}）。\n\n为安全起见建议取消操作；是否仍要在无备份的情况下继续卸载？",
-                    "备份未成功", MessageBoxButton.YesNo, MessageBoxImage.Warning);
+                    "备份未成功", MessageBoxButton.YesNo, MessageBoxImage.Warning, MessageBoxResult.No);
                 if (proceedWithoutBackup != MessageBoxResult.Yes) return;
             }
             else
@@ -352,7 +352,7 @@ public sealed class DriverManagerViewModel : ObservableObject, IModule
             {
                 var askForce = MessageBox.Show(
                     $"该驱动当前正被设备使用：\n\n{msg}\n\n是否强制卸载（/force）？强制卸载后对应设备可能立即停止工作或回退为系统基础驱动。",
-                    "驱动正在使用中", MessageBoxButton.YesNo, MessageBoxImage.Warning);
+                    "驱动正在使用中", MessageBoxButton.YesNo, MessageBoxImage.Warning, MessageBoxResult.No);
 
                 if (askForce == MessageBoxResult.Yes)
                 {
@@ -447,7 +447,7 @@ public sealed class DriverManagerViewModel : ObservableObject, IModule
 
         var confirm = MessageBox.Show(
             $"将从微软 Windows Update 官方通道下载并安装以下驱动：\n\n• {names}\n\n确定继续吗？",
-            "安装官方驱动更新", MessageBoxButton.OKCancel, MessageBoxImage.Information);
+            "安装官方驱动更新", MessageBoxButton.OKCancel, MessageBoxImage.Information, MessageBoxResult.Cancel);
 
         if (confirm != MessageBoxResult.OK) return;
 

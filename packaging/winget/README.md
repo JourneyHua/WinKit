@@ -1,10 +1,11 @@
 # WinKit 的 winget 清单
 
-这个目录存放提交到 [microsoft/winget-pkgs](https://github.com/microsoft/winget-pkgs) 的三份清单。
-走 winget 分发的目的很实在：**winget 解包时不传播「来自 Internet」标记（MOTW）**，
-用户 `winget install JourneyHua.WinKit` 装完双击 `WinKit.exe` 不会再弹 SmartScreen 拦截。
+这个目录存放用于提交到 [microsoft/winget-pkgs](https://github.com/microsoft/winget-pkgs) 的三份清单。
+本仓清单更新不代表社区源已收录；只有 `winget show --id JourneyHua.WinKit --exact` 能查询到版本后，才可通过 `winget install --id JourneyHua.WinKit --exact` 安装。发布包始终以本仓库 Releases 为准。
+此前本机测试观察到 winget 解包没有向内部文件传播「来自 Internet」标记（MOTW）；
+这只是该环境的测试结果，SmartScreen 仍受文件声誉、下载标记和本机策略影响，不保证安装后没有安全提示。
 
-这一点是实测出来的，不是推测：
+此前测试记录：
 
 ```
 winget download --id BurntSushi.ripgrep.MSVC -d <目录>   → 下载到的 zip 带 MOTW
@@ -27,18 +28,18 @@ winget install  --id BurntSushi.ripgrep.MSVC --silent    → 解出来的文件�
 （社区仓库里 MSIX 必须签名，zip+portable 不必），代价是**不会出现在「设置 → 应用和功能」里**，
 也没有桌面快捷方式，升级与卸载都只能用 `winget upgrade` / `winget uninstall`。
 
-## 发版后要做的两步
+## 发版后更新分发清单
 
 1. 从 Release 下载 `WinKit-v<版本>-framework-dependent.zip`，算出 SHA256：
 
    ```powershell
-   (Get-FileHash .\WinKit-v1.10.1-framework-dependent.zip -Algorithm SHA256).Hash
+   (Get-FileHash .\WinKit-v1.11.0-framework-dependent.zip -Algorithm SHA256).Hash
    ```
 
 2. 用脚本把版本号和哈希写进清单（比手改靠谱，两处必须一致）：
 
    ```powershell
-   .\update.ps1 -Version 1.10.1 -Zip ..\..\dist\WinKit-v1.10.1-framework-dependent.zip
+   .\update.ps1 -Version 1.11.0 -Zip ..\..\dist\WinKit-v1.11.0-framework-dependent.zip
    ```
 
    脚本按 UTF-8 无 BOM 写回，跑完会把新的 `InstallerSha256` 打印出来。

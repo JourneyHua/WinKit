@@ -323,7 +323,7 @@ public sealed class StartupServiceViewModel : ObservableObject, IModule
 
         var confirm = MessageBox.Show(
             $"确定删除启动项「{item.Name}」吗？\n\n位置：{item.LocationTitle}\n命令：{item.Command}\n\n删除前会自动保存快照，随时可通过顶部「撤销上一步」恢复。",
-            "删除启动项", MessageBoxButton.OKCancel, MessageBoxImage.Warning);
+            "删除启动项", MessageBoxButton.OKCancel, MessageBoxImage.Warning, MessageBoxResult.Cancel);
 
         if (confirm != MessageBoxResult.OK) return;
 
@@ -355,7 +355,7 @@ public sealed class StartupServiceViewModel : ObservableObject, IModule
         {
             var confirm = MessageBox.Show(
                 $"「{item.DisplayName}」是微软系统组件服务，停止它可能影响相关系统功能。确定继续吗？",
-                "停止系统服务", MessageBoxButton.OKCancel, MessageBoxImage.Warning);
+                "停止系统服务", MessageBoxButton.OKCancel, MessageBoxImage.Warning, MessageBoxResult.Cancel);
             if (confirm != MessageBoxResult.OK) return;
         }
 

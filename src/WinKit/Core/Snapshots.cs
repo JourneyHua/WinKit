@@ -1,4 +1,5 @@
 using System.IO;
+using System.Security.Cryptography;
 using System.Text.Json;
 using System.Text.Json.Nodes;
 using System.Text.Json.Serialization;
@@ -168,32 +169,53 @@ public static class SnapshotEngine
     private static RegViewKind ParseView(string? view)
     {
         if (string.IsNullOrWhiteSpace(view)) return RegViewKind.Default;
-        if (!Enum.TryParse<RegViewKind>(view, true, out var parsed))
+        if (!Enum.TryParse<RegViewKind>(view, true, out var parsed) || !Enum.IsDefined(parsed))
             throw new InvalidOperationException($"快照里的注册表视图无效：'{view}'，已拒绝还原");
 
         return parsed;
     }
 
+    internal static void Validate(SnapshotKey node)
+    {
+        if (node.CaptureFailed || node.Truncated)
+            throw new InvalidOperationException($"快照不完整，已拒绝还原 {node.Hive}\\{node.SubKey}");
+        ParseHive(node.Hive);
+        ParseView(node.View);
+        if (string.IsNullOrWhiteSpace(node.SubKey?.Trim('\\')) || node.Values is null || node.Children is null)
+            throw new InvalidOperationException("快照中的注册表路径或内容无效");
+
+        // 在任何删除/写入之前检查整棵树，不能改完父键才发现子快照不完整。
+        foreach (var value in node.Values)
+        {
+            if (!Enum.TryParse<RegistryValueKind>(value.Kind, out var kind) || !Enum.IsDefined(kind))
+                throw new InvalidOperationException($"快照中的注册表值类型无效：{value.Kind}");
+            _ = FromJson(kind, value.Data);
+        }
+        foreach (var child in node.Children)
+        {
+            if (!string.Equals(child.Hive, node.Hive, StringComparison.OrdinalIgnoreCase)
+                || ParseView(child.View) != ParseView(node.View)
+                || !string.Equals(child.SubKey[..Math.Max(0, child.SubKey.LastIndexOf('\\'))],
+                    node.SubKey.TrimEnd('\\'), StringComparison.OrdinalIgnoreCase))
+                throw new InvalidOperationException("快照中的子键位置与父键不一致");
+            Validate(child);
+        }
+    }
+
     public static void Restore(SnapshotKey node)
     {
-        // 读取被拒的键，我们并不知道它原本长什么样，任何写入/删除都可能造成丢失
-        if (node.CaptureFailed) return;
+        Validate(node);
+        RestoreCore(node);
+    }
 
-        var hive = ParseHive(node.Hive);
-        // 必须写回捕获时的视图：32 位登记被写到 64 位侧等于没还原
-        var path = new RegPath(hive, node.SubKey, ParseView(node.View));
-
+    private static void RestoreCore(SnapshotKey node)
+    {
+        var path = new RegPath(ParseHive(node.Hive), node.SubKey, ParseView(node.View));
         if (!node.Existed)
         {
-            Reg.DeleteTree(path);
+            if (!Reg.DeleteTree(path))
+                throw new IOException($"无法删除注册表键以还原：{path.DisplayPath}");
             return;
-        }
-
-        if (node.Truncated)
-        {
-            // 截断的快照只记了部分子键，整树还原会把没记下来的子树删掉
-            throw new InvalidOperationException(
-                $"快照不完整（子键超过上限），已拒绝还原 {node.Hive}\\{node.SubKey}，请手工核对");
         }
 
         using var key = Reg.Create(path);
@@ -226,23 +248,30 @@ public static class SnapshotEngine
         }
 
         foreach (var child in node.Children)
-            Restore(child);
+            RestoreCore(child);
     }
 
     private static object FromJson(RegistryValueKind kind, JsonNode? node)
     {
-        if (node is null) return Array.Empty<byte>();
+        if (node is null)
+        {
+            if (kind == RegistryValueKind.None) return Array.Empty<byte>();
+            throw new InvalidOperationException("快照缺少注册表值内容");
+        }
 
         switch (kind)
         {
+            case RegistryValueKind.String:
+            case RegistryValueKind.ExpandString:
+                return node.GetValue<string>();
             case RegistryValueKind.DWord:
                 return node.GetValue<int>();
             case RegistryValueKind.QWord:
                 return node.GetValue<long>();
             case RegistryValueKind.MultiString:
-                return node is JsonArray array
-                    ? array.Select(v => v?.GetValue<string>() ?? "").ToArray()
-                    : Array.Empty<string>();
+                if (node is not JsonArray array || array.Any(v => v is null))
+                    throw new InvalidOperationException("快照中的多字符串内容无效");
+                return array.Select(v => v!.GetValue<string>()).ToArray();
             case RegistryValueKind.Binary:
                 var b64 = node.GetValue<string>();
                 return string.IsNullOrEmpty(b64) ? Array.Empty<byte>() : Convert.FromBase64String(b64);
@@ -266,7 +295,17 @@ public static class SnapshotEngine
 
     public static SnapshotFile CaptureFile(string path)
     {
-        var existed = File.Exists(path);
+        path = Path.GetFullPath(path);
+        bool existed;
+        try
+        {
+            if ((File.GetAttributes(path) & FileAttributes.Directory) != 0)
+                throw new IOException($"跟踪的文件路径实际是目录：{path}");
+            existed = true;
+        }
+        catch (FileNotFoundException) { existed = false; }
+        catch (DirectoryNotFoundException) { existed = false; }
+
         return new SnapshotFile
         {
             Path = path,
@@ -275,31 +314,49 @@ public static class SnapshotEngine
         };
     }
 
+    internal static void Validate(SnapshotFile file)
+    {
+        if (string.IsNullOrWhiteSpace(file.Path) || !Path.IsPathFullyQualified(file.Path))
+            throw new InvalidOperationException("快照中的文件路径必须是完整路径");
+        if (string.Equals(Path.GetFullPath(file.Path).TrimEnd('\\'),
+            Path.GetPathRoot(file.Path)?.TrimEnd('\\'), StringComparison.OrdinalIgnoreCase))
+            throw new InvalidOperationException("快照不能以磁盘根目录作为文件目标");
+        if (file.Existed)
+            _ = Convert.FromBase64String(file.Base64Data
+                ?? throw new InvalidOperationException($"快照缺少文件内容：{file.Path}"));
+    }
+
     public static void RestoreFile(SnapshotFile file)
     {
-        if (string.IsNullOrWhiteSpace(file.Path)) return;
-
-        try
+        Validate(file);
+        if (!file.Existed)
         {
-            if (!file.Existed)
-            {
-                if (File.Exists(file.Path)) File.Delete(file.Path);
-                return;
-            }
+            // File.Exists 会把拒绝访问也当作不存在；直接删除才能可靠报告失败。
+            try { File.Delete(file.Path); }
+            catch (DirectoryNotFoundException) { } // 父目录也不存在时，目标已经是快照要求的状态。
+            return;
+        }
 
-            var dir = Path.GetDirectoryName(file.Path);
-            if (!string.IsNullOrWhiteSpace(dir)) Directory.CreateDirectory(dir);
-            var bytes = string.IsNullOrEmpty(file.Base64Data)
-                ? Array.Empty<byte>()
-                : Convert.FromBase64String(file.Base64Data);
-            File.WriteAllBytes(file.Path, bytes);
-        }
-        catch (Exception)
-        {
-            // 单个文件写回失败不应阻断整体还原
-        }
+        var bytes = Convert.FromBase64String(file.Base64Data!);
+        var dir = Path.GetDirectoryName(file.Path);
+        if (!string.IsNullOrWhiteSpace(dir)) Directory.CreateDirectory(dir);
+        File.WriteAllBytes(file.Path, bytes);
     }
 }
+
+public sealed record JournalRestoreResult(
+    bool Succeeded,
+    bool HasChanges,
+    string Message,
+    string? Title = null,
+    int RestoredCount = 0,
+    IReadOnlyList<string>? Failures = null);
+
+public sealed record BackupPreview(
+    string Title,
+    string TargetsText,
+    string ContentHash,
+    bool RequiresElevation);
 
 public sealed class ChangeJournal
 {
@@ -310,23 +367,72 @@ public sealed class ChangeJournal
     };
 
     private readonly List<OperationSnapshot> _session = new();
+    private readonly object _sessionLock = new();
+    private int _operationActive;
 
-    public ChangeJournal()
+    public ChangeJournal() : this(BackupDirectory) { }
+
+    public ChangeJournal(string backupDirectory)
     {
-        Directory.CreateDirectory(BackupDirectory);
+        StorageDirectory = Path.GetFullPath(backupDirectory);
     }
 
     public static string BackupDirectory { get; } = Path.Combine(
         Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
         "WinKit", "Backups");
 
+    public string StorageDirectory { get; }
+
     public event Action<string>? Changed;
 
-    public bool CanUndo => _session.Count > 0;
+    public event Action<JournalRestoreResult>? ResultReported;
 
-    public int SessionCount => _session.Count;
+    /// <summary>从捕获前到提交/还原完成保持忙碌；通知可能来自后台线程。</summary>
+    public event Action? OperationStateChanged;
 
-    public string? LastTitle => _session.Count > 0 ? _session[^1].Title : null;
+    public bool IsOperationActive => Volatile.Read(ref _operationActive) != 0;
+
+    private OperationLease EnterOperation()
+    {
+        // 不能阻塞等待：RecordAsync 的续体可能正在等待调用者所在的 UI 线程。
+        if (Interlocked.CompareExchange(ref _operationActive, 1, 0) != 0)
+            throw new InvalidOperationException("另一项改动或还原正在进行，请等待完成后重试。");
+
+        var lease = new OperationLease(this);
+        try { OperationStateChanged?.Invoke(); }
+        catch
+        {
+            lease.Dispose();
+            throw;
+        }
+        return lease;
+    }
+
+    private sealed class OperationLease(ChangeJournal journal) : IDisposable
+    {
+        private ChangeJournal? _journal = journal;
+
+        public void Dispose()
+        {
+            var owner = Interlocked.Exchange(ref _journal, null);
+            if (owner is null) return;
+            Volatile.Write(ref owner._operationActive, 0);
+            owner.OperationStateChanged?.Invoke();
+        }
+    }
+
+    private JournalRestoreResult ReportResult(JournalRestoreResult result)
+    {
+        Changed?.Invoke(result.Message);
+        ResultReported?.Invoke(result);
+        return result;
+    }
+
+    public bool CanUndo { get { lock (_sessionLock) return _session.Count > 0; } }
+
+    public int SessionCount { get { lock (_sessionLock) return _session.Count; } }
+
+    public string? LastTitle { get { lock (_sessionLock) return _session.Count > 0 ? _session[^1].Title : null; } }
 
     public OperationSnapshot Record(
         string title,
@@ -334,21 +440,9 @@ public sealed class ChangeJournal
         Action action,
         IEnumerable<string>? trackedFiles = null)
     {
+        using var operation = EnterOperation();
         var snapshot = CaptureSnapshot(title, tracked, trackedFiles);
-
-        try
-        {
-            action();
-        }
-        catch
-        {
-            // 操作失败立即自动回滚，避免留下半截状态
-            RestoreSnapshot(snapshot);
-            throw;
-        }
-
-        Commit(snapshot);
-        return snapshot;
+        return ExecuteSnapshot(snapshot, action);
     }
 
     /// <summary>
@@ -361,15 +455,17 @@ public sealed class ChangeJournal
         Func<Task> action,
         IEnumerable<string>? trackedFiles = null)
     {
+        using var operation = EnterOperation();
         var snapshot = CaptureSnapshot(title, tracked, trackedFiles);
+        Save(snapshot); // 必须先持久化；保存失败时不执行任何改动。
 
         try
         {
             await action();
         }
-        catch
+        catch (Exception ex)
         {
-            RestoreSnapshot(snapshot);
+            HandleActionFailure(snapshot, ex);
             throw;
         }
 
@@ -392,20 +488,70 @@ public sealed class ChangeJournal
                 snapshot.Files.Add(SnapshotEngine.CaptureFile(file));
         }
 
+        ValidateSnapshot(snapshot);
         snapshot.KeyCount = SnapshotEngine.CountKeys(snapshot.Keys) + snapshot.Files.Count;
         return snapshot;
     }
 
-    private void Commit(OperationSnapshot snapshot)
+    private static void ValidateSnapshot(OperationSnapshot snapshot)
     {
-        _session.Add(snapshot);
+        if (snapshot.Keys is null || snapshot.Files is null)
+            throw new InvalidOperationException("快照中的注册表或文件清单无效");
+        foreach (var key in snapshot.Keys) SnapshotEngine.Validate(key);
+        foreach (var file in snapshot.Files) SnapshotEngine.Validate(file);
+    }
+
+    private OperationSnapshot ExecuteSnapshot(OperationSnapshot snapshot, Action action, string? preservedBackup = null)
+    {
         Save(snapshot);
+        try
+        {
+            action();
+        }
+        catch (Exception ex)
+        {
+            HandleActionFailure(snapshot, ex);
+            throw;
+        }
+
+        Commit(snapshot, preservedBackup);
+        return snapshot;
+    }
+
+    private void HandleActionFailure(OperationSnapshot snapshot, Exception actionError)
+    {
+        var failures = RestoreSnapshot(snapshot);
+        if (failures.Count == 0)
+        {
+            TryDeleteFile(snapshot);
+            ReportResult(new(false, true, $"执行「{snapshot.Title}」失败，已自动回滚：{actionError.Message}", snapshot.Title));
+            return;
+        }
+
+        // 自动回滚也失败时，磁盘与会话都必须保留原状态，供用户释放占用/提权后重试。
+        lock (_sessionLock) _session.Add(snapshot);
+        var message = $"执行「{snapshot.Title}」失败，自动回滚有 {failures.Count} 项未能还原；已保留撤销记录，可重试。";
+        ReportResult(new(false, true, message, snapshot.Title, Failures: failures));
+        throw new AggregateException(message + "\n" + string.Join("\n", failures), actionError,
+            new InvalidOperationException(string.Join("\n", failures)));
+    }
+
+    private void Commit(OperationSnapshot snapshot, string? preservedBackup = null)
+    {
+        lock (_sessionLock) _session.Add(snapshot);
+        Prune(preservedBackup);
         Changed?.Invoke($"已执行：{snapshot.Title}");
     }
 
     private static List<string> RestoreSnapshot(OperationSnapshot snapshot)
     {
         var failures = new List<string>();
+        try { ValidateSnapshot(snapshot); }
+        catch (Exception ex)
+        {
+            failures.Add(ex.Message);
+            return failures;
+        }
 
         foreach (var key in snapshot.Keys)
         {
@@ -434,94 +580,126 @@ public sealed class ChangeJournal
         return failures;
     }
 
+    // 兼容旧调用者的返回约定；新界面应使用结构化结果，不把错误字符串当作标题。
     public string? UndoLast()
     {
-        if (_session.Count == 0) return null;
+        var result = UndoLastResult();
+        return !result.HasChanges ? null : result.Succeeded ? result.Title : result.Message;
+    }
 
-        var snapshot = _session[^1];
-
-        // 先还原、成功后才摘掉记录：还原抛异常时不能把撤销历史一起丢掉
+    public JournalRestoreResult UndoLastResult()
+    {
+        using var operation = EnterOperation();
+        OperationSnapshot snapshot;
+        lock (_sessionLock)
+        {
+            if (_session.Count == 0)
+                return new(true, false, "没有可撤销的改动");
+            snapshot = _session[^1];
+        }
         var failures = RestoreSnapshot(snapshot);
-
         if (failures.Count > 0)
         {
-            Changed?.Invoke($"撤销「{snapshot.Title}」有 {failures.Count} 项未还原");
-            return $"撤销「{snapshot.Title}」时 {failures.Count} 项未能还原：\n" + string.Join("\n", failures);
+            var message = $"撤销「{snapshot.Title}」时 {failures.Count} 项未能还原；已保留记录，可重试：\n"
+                          + string.Join("\n", failures);
+            return ReportResult(new(false, true, message, snapshot.Title, Failures: failures));
         }
 
-        _session.RemoveAt(_session.Count - 1);
+        lock (_sessionLock) _session.RemoveAt(_session.Count - 1);
         TryDeleteFile(snapshot);
-        Changed?.Invoke($"已撤销：{snapshot.Title}");
-        return snapshot.Title;
+        var success = $"已撤销：{snapshot.Title}";
+        return ReportResult(new(true, true, success, snapshot.Title, 1));
     }
 
     public string? RollbackSession()
     {
-        if (_session.Count == 0) return null;
+        var result = RollbackSessionResult();
+        return result.HasChanges ? result.Message : null;
+    }
 
-        var failures = new List<string>();
-        for (var i = _session.Count - 1; i >= 0; i--)
+    public JournalRestoreResult RollbackSessionResult()
+    {
+        using var operation = EnterOperation();
+        if (!CanUndo)
+            return new(true, false, "没有可回滚的改动");
+
+        var restored = 0;
+        while (CanUndo)
         {
-            // 单条快照写不回去不能中断整个回滚，否则会留下“半还原”且用户无从判断
-            var itemFailures = RestoreSnapshot(_session[i]);
+            OperationSnapshot snapshot;
+            lock (_sessionLock) snapshot = _session[^1];
+            var failures = RestoreSnapshot(snapshot);
+            if (failures.Count > 0)
+            {
+                // 必须在失败处停下：较早快照可能覆盖同一路径，继续还原会使之后重试倒退。
+                var message = $"回滚未完成：已回滚 {restored} 次改动；「{snapshot.Title}」有 {failures.Count} 项未能还原。"
+                              + $"已保留 {SessionCount} 条记录，可重试：\n" + string.Join("\n", failures);
+                return ReportResult(new(false, true, message, snapshot.Title, restored, failures));
+            }
 
-            if (itemFailures.Count == 0)
-            {
-                TryDeleteFile(_session[i]);
-            }
-            else
-            {
-                foreach (var f in itemFailures) failures.Add($"{_session[i].Title} → {f}");
-            }
+            lock (_sessionLock) _session.RemoveAt(_session.Count - 1);
+            TryDeleteFile(snapshot);
+            restored++;
         }
 
-        var count = _session.Count;
-        _session.Clear();
-
-        if (failures.Count > 0)
-        {
-            Changed?.Invoke($"回滚完成，但有 {failures.Count} 次改动未能还原");
-            return $"已回滚 {count} 次改动，其中 {failures.Count} 次未能还原：\n" + string.Join("\n", failures);
-        }
-
-        Changed?.Invoke($"已回滚本次会话的 {count} 次改动");
-        return $"已回滚 {count} 次改动";
+        var success = $"已回滚本次会话的 {restored} 次改动";
+        return ReportResult(new(true, true, success, RestoredCount: restored));
     }
 
     private void Save(OperationSnapshot snapshot)
     {
+        string? temporaryPath = null;
         try
         {
+            Directory.CreateDirectory(StorageDirectory);
             var safeTitle = string.Concat(snapshot.Title.Select(c => Path.GetInvalidFileNameChars().Contains(c) ? '_' : c));
             if (safeTitle.Length > 40) safeTitle = safeTitle[..40];
             var shortId = snapshot.Id.Length >= 8 ? snapshot.Id[..8] : snapshot.Id;
             var name = $"{snapshot.TimestampUtc.ToLocalTime():yyyyMMdd_HHmmss_fff}_{shortId}_{safeTitle}.json";
-            var path = Path.Combine(BackupDirectory, name);
-            File.WriteAllText(path, JsonSerializer.Serialize(snapshot, JsonOptions));
+            var path = Path.Combine(StorageDirectory, name);
+            temporaryPath = path + ".tmp";
+            using (var stream = new FileStream(temporaryPath, FileMode.CreateNew, FileAccess.Write, FileShare.None))
+            {
+                JsonSerializer.Serialize(stream, snapshot, JsonOptions);
+                stream.Flush(true);
+            }
+            File.Move(temporaryPath, path);
             snapshot.SavedFilePath = path;
-            Prune();
         }
-        catch (Exception)
+        catch (Exception ex)
         {
-            // 备份失败不应阻断用户操作，但会在状态栏提示
+            throw new IOException("无法保存还原快照，未执行改动：" + ex.Message, ex);
+        }
+        finally
+        {
+            if (temporaryPath is not null)
+            {
+                try { File.Delete(temporaryPath); } catch (Exception) { }
+            }
         }
     }
 
-    private void Prune()
+    private void Prune(string? preservedBackup = null)
     {
         try
         {
-            var files = new DirectoryInfo(BackupDirectory)
+            HashSet<string> protectedPaths;
+            lock (_sessionLock)
+                protectedPaths = _session.Where(s => s.SavedFilePath is not null)
+                    .Select(s => s.SavedFilePath!).ToHashSet(StringComparer.OrdinalIgnoreCase);
+            if (preservedBackup is not null) protectedPaths.Add(Path.GetFullPath(preservedBackup));
+            var files = new DirectoryInfo(StorageDirectory)
                 .GetFiles("*.json")
                 .OrderByDescending(f => f.CreationTimeUtc)
-                .Skip(50)
+                .Where(f => !protectedPaths.Contains(f.FullName))
+                .Skip(Math.Max(0, 50 - protectedPaths.Count))
                 .ToList();
 
             foreach (var file in files) file.Delete();
         }
         catch (Exception)
         {
-            // 忽略清理失败
+            // 清理失败不影响已经持久化的快照，也不能删除仍可重试的会话快照。
         }
     }
 
@@ -529,15 +707,8 @@ public sealed class ChangeJournal
     {
         try
         {
-            if (!string.IsNullOrWhiteSpace(snapshot.SavedFilePath) && File.Exists(snapshot.SavedFilePath))
-            {
+            if (!string.IsNullOrWhiteSpace(snapshot.SavedFilePath))
                 File.Delete(snapshot.SavedFilePath);
-                return;
-            }
-
-            var shortId = snapshot.Id.Length >= 8 ? snapshot.Id[..8] : snapshot.Id;
-            foreach (var file in new DirectoryInfo(BackupDirectory).GetFiles("*" + shortId + "*.json"))
-                file.Delete();
         }
         catch (Exception)
         {
@@ -549,7 +720,7 @@ public sealed class ChangeJournal
     {
         try
         {
-            return new DirectoryInfo(BackupDirectory)
+            return new DirectoryInfo(StorageDirectory)
                 .GetFiles("*.json")
                 .OrderByDescending(f => f.CreationTimeUtc)
                 .ToList();
@@ -560,21 +731,56 @@ public sealed class ChangeJournal
         }
     }
 
-    public void RestoreBackup(string filePath)
+    private static (OperationSnapshot Snapshot, string Hash) ReadBackup(string filePath)
     {
-        var json = File.ReadAllText(filePath);
-        var snapshot = JsonSerializer.Deserialize<OperationSnapshot>(json, JsonOptions)
+        var bytes = File.ReadAllBytes(filePath);
+        var snapshot = JsonSerializer.Deserialize<OperationSnapshot>(bytes, JsonOptions)
                        ?? throw new InvalidOperationException("备份文件无法解析");
+        ValidateSnapshot(snapshot);
+        return (snapshot, Convert.ToHexString(SHA256.HashData(bytes)));
+    }
 
-        var failures = RestoreSnapshot(snapshot);
+    public BackupPreview PreviewBackup(string filePath)
+    {
+        var (snapshot, hash) = ReadBackup(filePath);
+        var targets = new List<string>();
+        foreach (var key in snapshot.Keys)
+            targets.Add($"• {key.Hive}\\{key.SubKey}（{key.View}；" +
+                (key.Existed ? "完全恢复此键及子项，会移除备份后新增的值和子键）" : "备份时不存在，还原会删除此键及子项）"));
+        foreach (var file in snapshot.Files)
+            targets.Add($"• {file.Path}（" + (file.Existed ? "覆盖为备份内容）" : "备份时不存在，还原会删除文件）"));
+        if (targets.Count == 0) throw new InvalidOperationException("该快照没有可还原的目标");
+        return new BackupPreview(snapshot.Title, string.Join("\n", targets), hash,
+            snapshot.Keys.Any(key => string.Equals(key.Hive, "HKLM", StringComparison.OrdinalIgnoreCase)));
+    }
 
-        if (failures.Count > 0)
+    public void RestoreBackup(string filePath, string? expectedContentHash = null)
+    {
+        using var operation = EnterOperation();
+        var (snapshot, hash) = ReadBackup(filePath);
+        if (expectedContentHash is not null && !string.Equals(hash, expectedContentHash, StringComparison.Ordinal))
+            throw new InvalidOperationException("快照内容在预览后发生变化，未执行还原。请重新查看目标后重试。");
+        var current = new OperationSnapshot { Title = $"还原备份：{snapshot.Title}" };
+        foreach (var key in snapshot.Keys)
         {
-            Changed?.Invoke($"从备份还原「{snapshot.Title}」有 {failures.Count} 项未还原");
-            throw new InvalidOperationException(
-                $"从备份还原「{snapshot.Title}」时 {failures.Count} 项未能还原：\n" + string.Join("\n", failures));
+            var hive = string.Equals(key.Hive, "HKCU", StringComparison.OrdinalIgnoreCase)
+                ? HiveKind.CurrentUser : HiveKind.LocalMachine;
+            var view = string.IsNullOrWhiteSpace(key.View)
+                ? RegViewKind.Default : Enum.Parse<RegViewKind>(key.View, true);
+            current.Keys.Add(SnapshotEngine.Capture(new RegPath(hive, key.SubKey, view)));
         }
+        foreach (var file in snapshot.Files)
+            current.Files.Add(SnapshotEngine.CaptureFile(file.Path));
+        ValidateSnapshot(current);
+        current.KeyCount = SnapshotEngine.CountKeys(current.Keys) + current.Files.Count;
 
-        Changed?.Invoke($"已从备份还原：{snapshot.Title}");
+        ExecuteSnapshot(current, () =>
+        {
+            var failures = RestoreSnapshot(snapshot);
+            if (failures.Count > 0)
+                throw new InvalidOperationException(
+                    $"从备份还原「{snapshot.Title}」时 {failures.Count} 项未能还原：\n" + string.Join("\n", failures));
+        }, filePath);
+        ReportResult(new(true, true, $"已从备份还原：{snapshot.Title}（可撤销上一步）", current.Title));
     }
 }

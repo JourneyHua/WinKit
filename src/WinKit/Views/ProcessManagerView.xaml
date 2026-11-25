@@ -125,7 +125,7 @@
                 <Border Grid.Row="1" Style="{StaticResource BusyOverlay}"
                         Visibility="{Binding IsBusy, Converter={StaticResource BoolToVis}}">
                     <StackPanel HorizontalAlignment="Center" VerticalAlignment="Center">
-                        <TextBlock Text="正在枚举进程…" Style="{StaticResource BusyText}" />
+                        <TextBlock Text="正在处理进程…" Style="{StaticResource BusyText}" />
                     </StackPanel>
                 </Border>
             </Grid>

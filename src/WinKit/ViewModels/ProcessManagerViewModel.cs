@@ -24,9 +24,11 @@ public sealed class ProcessManagerViewModel : ObservableObject, IModule
         _setBusy = setBusy;
         Items = new ObservableCollection<ProcessItem>();
 
-        RefreshCommand = new RelayCommand(() => _ = RefreshAsync());
-        KillCommand = new RelayCommand(p => Kill(p as ProcessItem, wholeTree: false));
-        KillTreeCommand = new RelayCommand(p => Kill(p as ProcessItem, wholeTree: true));
+        RefreshCommand = new RelayCommand(() => _ = RefreshAsync(), () => !IsBusy);
+        KillCommand = new RelayCommand(p => _ = KillAsync(p as ProcessItem, wholeTree: false),
+            p => !IsBusy && p is ProcessItem);
+        KillTreeCommand = new RelayCommand(p => _ = KillAsync(p as ProcessItem, wholeTree: true),
+            p => !IsBusy && p is ProcessItem);
         OpenLocationCommand = new RelayCommand(p => OpenLocation(p as ProcessItem));
         CopyCommand = new RelayCommand(p => Copy(p as ProcessItem));
     }
@@ -48,6 +50,9 @@ public sealed class ProcessManagerViewModel : ObservableObject, IModule
             {
                 _setBusy?.Invoke(value);
                 OnPropertyChanged(nameof(ShowEmptyState));
+                RefreshCommand.RaiseCanExecuteChanged();
+                KillCommand.RaiseCanExecuteChanged();
+                KillTreeCommand.RaiseCanExecuteChanged();
             }
         }
     }
@@ -96,7 +101,19 @@ public sealed class ProcessManagerViewModel : ObservableObject, IModule
     {
         if (IsBusy) return;
         IsBusy = true;
+        try
+        {
+            await LoadProcessesAsync();
+        }
+        finally
+        {
+            IsBusy = false;
+        }
+    }
 
+    // 调用方持有 busy；结束后的复查沿用同一次操作，不能从刷新入口重新进入。
+    private async Task LoadProcessesAsync()
+    {
         try
         {
             _status("正在枚举进程…");
@@ -115,10 +132,6 @@ public sealed class ProcessManagerViewModel : ObservableObject, IModule
         {
             SetError($"枚举进程失败：{ex.Message}");
             _status("枚举进程失败");
-        }
-        finally
-        {
-            IsBusy = false;
         }
     }
 
@@ -139,28 +152,44 @@ public sealed class ProcessManagerViewModel : ObservableObject, IModule
         OnPropertyChanged(nameof(ShowEmptyState));
     }
 
-    private void Kill(ProcessItem? item, bool wholeTree)
+    private async Task KillAsync(ProcessItem? item, bool wholeTree)
     {
-        if (item is null) return;
+        if (IsBusy || item is null) return;
+        IsBusy = true;
 
-        var what = wholeTree ? "它和它启动的所有子进程" : "它";
-        var confirm = MessageBox.Show(
-            $"结束「{item.Name}」（PID {item.Pid}）？\n\n会结束{what}。\n未保存的数据会丢失；如果是系统关键进程，Windows 会自己拦下来。",
-            wholeTree ? "结束进程树" : "结束进程",
-            MessageBoxButton.YesNo,
-            MessageBoxImage.Warning);
-
-        if (confirm != MessageBoxResult.Yes) return;
-
-        var (ok, message) = _service.Kill(item, wholeTree);
-        if (ok)
+        try
         {
+            var what = wholeTree ? "它和它启动的所有子进程" : "它";
+            var confirm = MessageBox.Show(
+                $"结束「{item.Name}」（PID {item.Pid}）？\n\n会结束{what}。\n未保存的数据会丢失，可能导致应用退出、桌面或服务中断。",
+                wholeTree ? "结束进程树" : "结束进程",
+                MessageBoxButton.YesNo,
+                MessageBoxImage.Warning,
+                MessageBoxResult.No);
+
+            if (confirm != MessageBoxResult.Yes) return;
+
+            SetError("");
+            _status($"正在结束「{item.Name}」（PID {item.Pid}）…");
+            var (ok, message) = await Task.Run(() => _service.Kill(item, wholeTree));
             _status(message);
-            _ = RefreshAsync();
+            if (ok)
+            {
+                await LoadProcessesAsync();
+            }
+            else
+            {
+                SetError(message);
+            }
         }
-        else
+        catch (Exception ex)
         {
-            SetError(message);
+            SetError($"结束进程失败：{ex.Message}");
+            _status("结束进程失败");
+        }
+        finally
+        {
+            IsBusy = false;
         }
     }
 

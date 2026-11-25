@@ -1,4 +1,5 @@
 using System.Collections.ObjectModel;
+using System.IO;
 using System.Windows;
 using System.Windows.Threading;
 using WinKit.Core;
@@ -33,6 +34,10 @@ public sealed class ContextMenuViewModel : ObservableObject, IModule
     private DateTime _uninstallDeadline;
     private NewMenuItem? _watching;
     private NewMenuItem? _lastUninstalled;
+    private string _residualTitle = "";
+    private string _residualDetails = "";
+    private bool _hasResidualFolder;
+    private bool _hasResidualRegistry;
 
     private List<MenuEntry> _all = new();
     private DomainNode? _selectedDomain;
@@ -66,17 +71,19 @@ public sealed class ContextMenuViewModel : ObservableObject, IModule
         NewDomains = new ObservableCollection<DomainNode>();
         FilteredNewItems = new ObservableCollection<NewMenuItem>();
 
-        RefreshCommand = new RelayCommand(ManualRefresh);
-        RecheckResidualCommand = new RelayCommand(RecheckResidual);
-        DeleteCommand = new RelayCommand(p => Delete(p as MenuEntry));
-        RenameCommand = new RelayCommand(p => Rename(p as MenuEntry));
+        RefreshCommand = new RelayCommand(ManualRefresh, () => !IsLoading);
+        RecheckResidualCommand = new RelayCommand(RecheckResidual, () => CanRecheckResidual && !IsLoading);
+        OpenResidualRegistryCommand = new RelayCommand(OpenResidualRegistry, () => HasResidualRegistry && !IsLoading);
+        OpenResidualFolderCommand = new RelayCommand(OpenResidualFolder, () => HasResidualFolder && !IsLoading);
+        DeleteCommand = new RelayCommand(p => Delete(p as MenuEntry), p => p is MenuEntry && !IsLoading);
+        RenameCommand = new RelayCommand(p => Rename(p as MenuEntry), p => p is MenuEntry { CanRename: true } && !IsLoading);
         CopyPathCommand = new RelayCommand(CopyPath);
         CopyCommandPathCommand = new RelayCommand(CopyCommandPath);
         OpenRegeditCommand = new RelayCommand(OpenRegedit);
         ShowNewMenuCommand = new RelayCommand(() => ShowNewMenu = true);
         ShowClassicMenuCommand = new RelayCommand(() => ShowNewMenu = false);
-        UninstallCommand = new RelayCommand(p => Uninstall(p as NewMenuItem));
-        ToggleBlockCommand = new RelayCommand(p => ToggleBlock(p as NewMenuItem));
+        UninstallCommand = new RelayCommand(p => Uninstall(p as NewMenuItem), p => p is NewMenuItem && !IsLoading);
+        ToggleBlockCommand = new RelayCommand(p => ToggleBlock(p as NewMenuItem), p => p is NewMenuItem && !IsLoading);
 
         _selectedDomain = Domains.FirstOrDefault();
     }
@@ -102,6 +109,8 @@ public sealed class ContextMenuViewModel : ObservableObject, IModule
 
     public RelayCommand RefreshCommand { get; }
     public RelayCommand RecheckResidualCommand { get; }
+    public RelayCommand OpenResidualRegistryCommand { get; }
+    public RelayCommand OpenResidualFolderCommand { get; }
     public RelayCommand DeleteCommand { get; }
     public RelayCommand RenameCommand { get; }
     public RelayCommand CopyPathCommand { get; }
@@ -197,7 +206,7 @@ public sealed class ContextMenuViewModel : ObservableObject, IModule
             catch (Exception ex)
             {
                 OnPropertyChanged();
-                MessageBox.Show($"切换默认菜单模式失败：{ex.Message}", "WinKit", MessageBoxButton.OK, MessageBoxImage.Warning);
+                SetError($"切换默认菜单模式失败：{ex.Message}");
             }
         }
     }
@@ -208,6 +217,41 @@ public sealed class ContextMenuViewModel : ObservableObject, IModule
         ? "复查残留"
         : $"复查残留（{_lastUninstalled.DisplayName}）";
 
+    public string ResidualTitle
+    {
+        get => _residualTitle;
+        private set
+        {
+            if (Set(ref _residualTitle, value)) OnPropertyChanged(nameof(HasResidualResult));
+        }
+    }
+
+    public string ResidualDetails
+    {
+        get => _residualDetails;
+        private set => Set(ref _residualDetails, value);
+    }
+
+    public bool HasResidualResult => !string.IsNullOrWhiteSpace(_residualTitle);
+    public bool HasResidualFolder => _hasResidualFolder;
+    public bool HasResidualRegistry => _hasResidualRegistry;
+
+    private void SetResidualResult(NewMenuItem item, string details, bool hasFolder = false, bool hasRegistry = false)
+    {
+        _lastUninstalled = item;
+        _hasResidualFolder = hasFolder;
+        _hasResidualRegistry = hasRegistry;
+        ResidualTitle = $"卸载残留复查 · {item.DisplayName}";
+        ResidualDetails = details;
+        OnPropertyChanged(nameof(CanRecheckResidual));
+        OnPropertyChanged(nameof(RecheckResidualText));
+        OnPropertyChanged(nameof(HasResidualFolder));
+        OnPropertyChanged(nameof(HasResidualRegistry));
+        RecheckResidualCommand.RaiseCanExecuteChanged();
+        OpenResidualRegistryCommand.RaiseCanExecuteChanged();
+        OpenResidualFolderCommand.RaiseCanExecuteChanged();
+    }
+
     public string NewMenuHint
     {
         get => _newMenuHint;
@@ -217,27 +261,27 @@ public sealed class ContextMenuViewModel : ObservableObject, IModule
     public bool IsLoading
     {
         get => _isLoading;
-        private set => Set(ref _isLoading, value);
+        private set
+        {
+            if (!Set(ref _isLoading, value)) return;
+            RefreshCommand.RaiseCanExecuteChanged();
+            RecheckResidualCommand.RaiseCanExecuteChanged();
+            OpenResidualRegistryCommand.RaiseCanExecuteChanged();
+            OpenResidualFolderCommand.RaiseCanExecuteChanged();
+            UninstallCommand.RaiseCanExecuteChanged();
+        }
     }
 
     public string EntryCountText => $"{Entries.Count} 项";
 
     private void ManualRefresh()
     {
-        if (_lastUninstalled is not null)
-        {
-            var pending = _lastUninstalled;
-            StopWatch();
-            ReportResidual(pending);
-            return;
-        }
-
         Refresh();
     }
 
     private void RecheckResidual()
     {
-        if (_lastUninstalled is null) return;
+        if (IsLoading || _lastUninstalled is null) return;
         var pending = _lastUninstalled;
         StopWatch();
         ReportResidual(pending);
@@ -281,7 +325,7 @@ public sealed class ContextMenuViewModel : ObservableObject, IModule
         }
         catch (Exception ex)
         {
-            _status("加载右键菜单失败：" + ex.Message);
+            SetError("加载右键菜单失败：" + ex.Message);
         }
         finally
         {
@@ -411,7 +455,7 @@ public sealed class ContextMenuViewModel : ObservableObject, IModule
         }
         catch (Exception ex)
         {
-            MessageBox.Show($"操作失败：{ex.Message}", "WinKit", MessageBoxButton.OK, MessageBoxImage.Warning);
+            SetError($"屏蔽或恢复菜单项失败：{ex.Message}");
         }
     }
 
@@ -424,11 +468,7 @@ public sealed class ContextMenuViewModel : ObservableObject, IModule
 
         if (candidates.Count == 0)
         {
-            MessageBox.Show(
-                $"没有找到「{item.DisplayName}」的卸载信息。\n\n" +
-                $"安装位置：{(string.IsNullOrWhiteSpace(item.Location) ? "未知" : item.Location)}\n\n" +
-                "它可能是随其他软件一起安装的组件，请到「设置 → 应用」里查找。",
-                "未找到卸载程序", MessageBoxButton.OK, MessageBoxImage.Information);
+            SetError($"没有找到「{item.DisplayName}」的卸载信息。安装位置：{(string.IsNullOrWhiteSpace(item.Location) ? "未知" : item.Location)}。请到「设置 → 应用」里查找。");
             return;
         }
 
@@ -456,7 +496,7 @@ public sealed class ContextMenuViewModel : ObservableObject, IModule
             $"将启动「{chosen.Name}」自带的卸载程序。\n\n" +
             $"卸载程序：{chosen.UninstallString}\n\n" +
             "WinKit 不会替你删除任何文件，卸载完成后会自动复查残留。继续吗？",
-            "确认卸载", MessageBoxButton.OKCancel, MessageBoxImage.Warning);
+            "确认卸载", MessageBoxButton.OKCancel, MessageBoxImage.Warning, MessageBoxResult.Cancel);
 
         if (confirm != MessageBoxResult.OK) return;
 
@@ -468,8 +508,7 @@ public sealed class ContextMenuViewModel : ObservableObject, IModule
         }
         catch (Exception ex)
         {
-            MessageBox.Show($"无法启动卸载程序：{ex.Message}\n\n路径：{chosen.UninstallString}",
-                "启动失败", MessageBoxButton.OK, MessageBoxImage.Warning);
+            SetError($"无法启动「{chosen.Name}」的卸载程序：{ex.Message}；路径：{chosen.UninstallString}");
         }
     }
 
@@ -477,62 +516,137 @@ public sealed class ContextMenuViewModel : ObservableObject, IModule
     {
         StopWatch();
         _watching = item;
-        _lastUninstalled = item;
-        OnPropertyChanged(nameof(CanRecheckResidual));
-        OnPropertyChanged(nameof(RecheckResidualText));
+        SetResidualResult(item, "已启动卸载程序，正在等待卸载完成。完成后将在此显示复查结果，也可随时手动复查残留。");
+        SetError(null);
         _uninstallDeadline = DateTime.UtcNow.AddMinutes(10);
 
         _uninstallTimer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(3) };
         _uninstallTimer.Tick += (_, _) =>
         {
-            var still = _uninstall.FindStillRegistered(item.Clsids);
-
-            if (still.Count == 0)
+            if (IsLoading) return;
+            var watching = _watching;
+            if (watching is null)
             {
                 StopWatch();
-                ReportResidual(item);
+                return;
             }
-            else if (DateTime.UtcNow > _uninstallDeadline)
+
+            try
+            {
+                var still = _uninstall.FindStillRegistered(watching.Clsids);
+                if (still.Count == 0)
+                {
+                    StopWatch();
+                    ReportResidual(watching);
+                }
+                else if (DateTime.UtcNow > _uninstallDeadline)
+                {
+                    StopWatch();
+                    SetResidualResult(watching, "等待卸载超时，尚未确认卸载完成。若已完成卸载，可点「复查残留」手动检查。");
+                    _status($"等待「{watching.DisplayName}」卸载超时，可在本页手动复查。");
+                }
+            }
+            catch (Exception ex)
             {
                 StopWatch();
-                _status("等待超时：可能取消了卸载。可随时点顶部「复查残留」或「重新扫描」手动检查。");
+                SetResidualResult(watching, $"卸载监测失败：{ex.Message}\n可点「复查残留」重试。");
+                SetError($"监测「{watching.DisplayName}」卸载状态失败：{ex.Message}");
             }
         };
         _uninstallTimer.Start();
-
         _status($"正在等待「{item.DisplayName}」卸载完成（最多等 10 分钟，也可随时点「复查残留」）…");
     }
 
     private void StopWatch()
     {
-        if (_uninstallTimer is null) return;
-        _uninstallTimer.Stop();
+        _uninstallTimer?.Stop();
         _uninstallTimer = null;
+        _watching = null;
     }
 
     private void ReportResidual(NewMenuItem item)
     {
-        var issues = _uninstall.CheckResidual(item.DisplayName, item.Location, item.Clsids);
+        if (IsLoading) return;
 
-        if (issues.Count == 0)
+        try
         {
-            _lastUninstalled = null;
-            OnPropertyChanged(nameof(CanRecheckResidual));
-            OnPropertyChanged(nameof(RecheckResidualText));
-            _status($"「{item.DisplayName}」已卸载，未发现残留");
-            MessageBox.Show($"「{item.DisplayName}」已卸载，未发现明显残留。",
-                "卸载完成", MessageBoxButton.OK, MessageBoxImage.Information);
+            var issues = _uninstall.CheckResidual(item.DisplayName, item.Location, item.Clsids);
+            var hasFolder = issues.Any(i => i.StartsWith("安装目录仍然存在且非空：", StringComparison.Ordinal));
+            var hasRegistry = _uninstall.FindStillRegistered(item.Clsids).Count > 0
+                              || item.Clsids.Any(ContextMenuService.IsBlocked);
+            var details = issues.Count == 0
+                ? "已卸载，未发现明显残留。"
+                : $"发现 {issues.Count} 处残留：\n• " + string.Join("\n• ", issues)
+                  + "\n\nWinKit 不会自动删除目录或注册表项；可使用下方操作自行检查。";
+
+            SetResidualResult(item, details, hasFolder, hasRegistry);
+            SetError(null);
+            _status(issues.Count == 0
+                ? $"「{item.DisplayName}」已卸载，未发现残留"
+                : $"「{item.DisplayName}」复查完成，发现 {issues.Count} 处残留");
             Refresh();
+        }
+        catch (Exception ex)
+        {
+            SetResidualResult(item, $"残留复查失败：{ex.Message}\n可点「复查残留」重试。");
+            SetError($"复查「{item.DisplayName}」卸载残留失败：{ex.Message}");
+        }
+    }
+
+    private void OpenResidualRegistry()
+    {
+        if (IsLoading || !_hasResidualRegistry || _lastUninstalled is not { } item) return;
+
+        try
+        {
+            foreach (var hive in new[] { HiveKind.CurrentUser, HiveKind.LocalMachine })
+            {
+                foreach (var package in item.Packages)
+                {
+                    foreach (var clsid in item.Clsids)
+                    {
+                        var normalized = clsid.Trim().Trim('{', '}');
+                        var path = RegPath.Of(hive, $@"Software\Classes\PackagedCom\Package\{package}\Class\{{{normalized}}}");
+                        if (!Reg.Exists(path)) continue;
+                        if (!Native.OpenInRegedit(path.FullPath)) SetError("无法打开注册表编辑器，请确认未取消授权且系统允许启动 regedit。");
+                        else _status($"已定位残留注册表项：{path.FullPath}");
+                        return;
+                    }
+                }
+
+                var blocked = RegPath.Of(hive, @"Software\Microsoft\Windows\CurrentVersion\Shell Extensions\Blocked");
+                if (!item.Clsids.Any(clsid => Reg.HasValue(blocked, clsid))) continue;
+                if (!Native.OpenInRegedit(blocked.FullPath)) SetError("无法打开注册表编辑器，请确认未取消授权且系统允许启动 regedit。");
+                else _status($"已定位残留屏蔽记录：{blocked.FullPath}");
+                return;
+            }
+
+            ReportResidual(item);
+            SetError("原残留注册表项已发生变化，请根据更新后的复查结果继续处理。");
+        }
+        catch (Exception ex)
+        {
+            SetError($"定位残留注册表项失败：{ex.Message}");
+        }
+    }
+
+    private void OpenResidualFolder()
+    {
+        if (IsLoading || !_hasResidualFolder || _lastUninstalled is not { } item) return;
+        if (!Directory.Exists(item.Location))
+        {
+            ReportResidual(item);
             return;
         }
 
-        _status($"「{item.DisplayName}」复查完成，发现 {issues.Count} 处残留");
-        MessageBox.Show(
-            $"「{item.DisplayName}」发现以下残留（若卸载尚未结束，可等卸载完成后再点「复查残留」）：\n\n• " + string.Join("\n• ", issues) +
-            "\n\nWinKit 只报告，不代你删文件。注册表项可在「注册表管理」里定位处理。",
-            "卸载残留复查", MessageBoxButton.OK, MessageBoxImage.Warning);
-
-        Refresh();
+        try
+        {
+            Native.OpenPath(item.Location);
+        }
+        catch (Exception ex)
+        {
+            SetError($"打开残留目录失败：{ex.Message}");
+        }
     }
 
     private void ApplyFilter()
@@ -630,7 +744,8 @@ public sealed class ContextMenuViewModel : ObservableObject, IModule
             $"将删除菜单项“{entry.DisplayName}”。\n\n删除前会自动保存快照，可通过“撤销上一步”恢复。\n\n{entry.RegistryPath}",
             "删除菜单项",
             MessageBoxButton.OKCancel,
-            MessageBoxImage.Warning);
+            MessageBoxImage.Warning,
+            MessageBoxResult.Cancel);
 
         if (result != MessageBoxResult.OK) return;
 
@@ -644,7 +759,7 @@ public sealed class ContextMenuViewModel : ObservableObject, IModule
         }
         catch (Exception ex)
         {
-            MessageBox.Show($"删除失败：{ex.Message}", "WinKit", MessageBoxButton.OK, MessageBoxImage.Warning);
+            SetError($"删除菜单项失败：{ex.Message}");
         }
     }
 
@@ -665,7 +780,7 @@ public sealed class ContextMenuViewModel : ObservableObject, IModule
         }
         catch (Exception ex)
         {
-            MessageBox.Show($"重命名失败：{ex.Message}", "WinKit", MessageBoxButton.OK, MessageBoxImage.Warning);
+            SetError($"重命名菜单项失败：{ex.Message}");
         }
     }
 
@@ -725,13 +840,14 @@ public sealed class ContextMenuViewModel : ObservableObject, IModule
 
         if (string.IsNullOrWhiteSpace(regPath))
         {
-            MessageBox.Show("当前条目不是注册表键（如发送到快捷方式），无法在 regedit 中打开。",
-                "WinKit", MessageBoxButton.OK, MessageBoxImage.Information);
+            SetError("当前条目不是注册表键（如发送到快捷方式），无法在 regedit 中打开。");
             return;
         }
 
         if (Native.OpenInRegedit(regPath))
             _status($"已在注册表编辑器中定位：{regPath}");
+        else
+            SetError("无法打开注册表编辑器，请确认未取消授权且系统允许启动 regedit。");
     }
 
     private string _errorText = "";

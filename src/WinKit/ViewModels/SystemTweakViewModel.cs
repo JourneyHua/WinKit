@@ -44,8 +44,14 @@ public sealed class SystemTweakViewModel : ObservableObject, IModule
         CopyPortInfoCommand = new RelayCommand(p => CopyPortInfo(p as PortProcessItem));
 
         FlushDnsCommand = new RelayCommand(() => _ = RunNetRepairAsync("刷新 DNS 缓存", "ipconfig.exe", "/flushdns"));
-        ResetWinsockCommand = new RelayCommand(() => _ = RunNetRepairAsync("重置 Winsock 目录", "netsh.exe", "winsock reset"));
-        ResetTcpIpCommand = new RelayCommand(() => _ = RunNetRepairAsync("重置 TCP/IP 协议栈", "netsh.exe", "int ip reset"));
+        ResetWinsockCommand = new RelayCommand(() => _ = RunNetRepairAsync(
+            "重置 Winsock 目录", "netsh.exe", "winsock reset",
+            "将执行 netsh winsock reset 重置 Winsock 目录。\n\n" +
+            "这会移除第三方 LSP（部分 VPN/杀毒的网络组件），需要重启电脑才完全生效。确定继续吗？"));
+        ResetTcpIpCommand = new RelayCommand(() => _ = RunNetRepairAsync(
+            "重置 TCP/IP 协议栈", "netsh.exe", "int ip reset",
+            "将执行 netsh int ip reset 重置 TCP/IP 协议栈。\n\n" +
+            "需要重启电脑才完全生效。确定继续吗？"));
         EditHostsCommand = new RelayCommand(EditHosts);
 
         OpenShortcutCommand = new RelayCommand(p => OpenShortcut(p as AdminPanelShortcut));
@@ -285,18 +291,35 @@ public sealed class SystemTweakViewModel : ObservableObject, IModule
         catch (Exception) { }
     }
 
-    private async Task RunNetRepairAsync(string title, string fileName, string args)
+    private async Task RunNetRepairAsync(string title, string fileName, string args, string? confirmation = null)
     {
         if (IsBusy) return;
-        IsBusy = true;
+        if (Native.RequireAdmin(title) is { } adminNeeded)
+        {
+            SetError(adminNeeded);
+            _status(adminNeeded);
+            return;
+        }
 
+        if (confirmation is not null && MessageBox.Show(confirmation, title,
+                MessageBoxButton.OKCancel, MessageBoxImage.Warning, MessageBoxResult.Cancel) != MessageBoxResult.OK)
+            return;
+
+        IsBusy = true;
+        SetError("");
         try
         {
             _status($"正在执行：{title}…");
             var (ok, msg) = await _service.RunNetworkRepairCommandAsync(title, fileName, args);
             _status(msg);
+            if (!ok) SetError(msg);
             MessageBox.Show(msg, title, MessageBoxButton.OK,
                 ok ? MessageBoxImage.Information : MessageBoxImage.Warning);
+        }
+        catch (Exception ex)
+        {
+            SetError($"{title} 失败：{ex.Message}");
+            _status(ErrorText);
         }
         finally
         {

@@ -4,6 +4,8 @@ on:
   push:
     branches: [master]
     tags: ['v*']
+  pull_request:
+    branches: [master]
   workflow_dispatch:
 
 permissions:
@@ -12,6 +14,8 @@ permissions:
 jobs:
   build:
     runs-on: windows-latest
+    env:
+      PACKAGE_REF: ${{ github.event_name == 'pull_request' && format('pr-{0}', github.event.pull_request.number) || github.ref_name }}
 
     steps:
       - uses: actions/checkout@v4
@@ -42,16 +46,15 @@ jobs:
             -o publish/preview --nologo
           if ($LASTEXITCODE -ne 0) { throw "Publish for smoke failed" }
 
-          # 清单必须是 asInvoker：未签名的 exe 声明 requireAdministrator 时双击会先被
-          # SmartScreen 拦（「Windows 已保护你的电脑」），而清单只有嵌进 apphost 才生效，
-          # 属性改了不算数——直接读 exe 字节找字符串。注意 app.manifest 的注释里也写着
-          # requireAdministrator 这个词，所以只能按属性形态判，不能按裸词判。
+          # 清单必须嵌入 asInvoker，确保浏览不主动请求 UAC；此检查不保证 SmartScreen 行为。
+          # 直接检查 apphost 字节中的属性形态，避免把注释里的裸词误认为执行级别。
           $exePath = Join-Path $PWD "publish/preview/WinKit.exe"
           $exeText = [System.Text.Encoding]::UTF8.GetString([System.IO.File]::ReadAllBytes($exePath))
-          if ($exeText -notmatch 'level="asInvoker"') { throw "清单没有嵌入 asInvoker，双击仍会被 SmartScreen 拦" }
+          if ($exeText -notmatch 'level="asInvoker"') { throw "清单没有嵌入 asInvoker，启动权限模型不符合预期" }
           if ($exeText -match 'level="requireAdministrator"') { throw "exe 的清单仍然要求提权" }
 
       - name: UI smoke with assertions
+        timeout-minutes: 10
         shell: pwsh
         run: |
           $out = Join-Path $PWD "smoke-out"
@@ -81,6 +84,7 @@ jobs:
 
           $log = Get-Content $logPath -Raw
           $failures = @()
+          if ($proc.ExitCode -ne 0) { $failures += "界面自检退出码：$($proc.ExitCode)" }
 
           if ($log -notmatch 'SMOKE OK') { $failures += "日志里没有 SMOKE OK" }
 
@@ -176,10 +180,21 @@ jobs:
             $failures += "SMART 属性页既没读到属性，也没说明原因"
           }
 
-          # 主清单是 asInvoker（未签名 + 要提权会被 SmartScreen 拦），
-          # 而无人值守时绝对不能弹「是否提权」的模态框，否则自检会卡死在那里。
-          if ($log -notmatch 'elevation: elevated=\w+ banner=\w+ prompts=False') {
-            $failures += "自检没有关闭提权提示（无人值守会卡在模态框上），或者没有打印权限状态"
+          # 浏览页面与正常运行走同一条非模态导航路径，不再为自检关闭提权弹窗。
+          if ($log -notmatch 'elevation: elevated=\w+ banner=\w+ navigation=nonmodal') {
+            $failures += "没有打印非模态导航权限状态"
+          }
+          if ($log -notmatch 'ux-interactions: .*result=OK') {
+            $failures += "导航、权限说明或可撤销反馈的交互回归检查失败"
+          }
+          foreach ($check in @('ux-backup', 'ux-path', 'ux-diff', 'ux-close')) {
+            if ($log -notmatch "${check}: .*result=OK") { $failures += "$check 交互回归缺失或失败" }
+          }
+          if ($log -notmatch 'ux-errors: pages=14 buttons=unobstructed result=OK') {
+            $failures += "14页错误提示未全部通过遮挡检查"
+          }
+          if ($log -notmatch 'theme: .*visual=True result=OK') {
+            $failures += "真实窗口的深浅主题切换失败"
           }
 
           if ($failures.Count -gt 0) {
@@ -197,6 +212,7 @@ jobs:
           name: smoke-log
           path: |
             smoke-out/smoke.log
+            smoke-out/*.png
             smoke.stdout.txt
             smoke.stderr.txt
           if-no-files-found: warn
@@ -209,14 +225,14 @@ jobs:
         run: |
           # 包里只放程序本体：1.10.2 起不再附带解除锁定脚本，改用 Windows 自带的
           # 「右键属性 → 解除锁定」勾选框（做的事完全一样，还少两个文件的编码坑）。
-          Compress-Archive -Path publish/framework-dependent/* -DestinationPath WinKit-${{ github.ref_name }}-framework-dependent.zip -Force
+          Compress-Archive -Path publish/framework-dependent/* -DestinationPath WinKit-${{ env.PACKAGE_REF }}-framework-dependent.zip -Force
 
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: WinKit-${{ github.ref_name }}
+          name: WinKit-${{ env.PACKAGE_REF }}
           path: |
-            WinKit-${{ github.ref_name }}-framework-dependent.zip
+            WinKit-${{ env.PACKAGE_REF }}-framework-dependent.zip
 
       - name: Create GitHub Release
         if: startsWith(github.ref, 'refs/tags/v')
@@ -224,13 +240,20 @@ jobs:
         with:
           generate_release_notes: true
           body: |
-            ### 运行要求与使用说明
+            ### 1.11.0 交互更新
 
-            - **WinKit 免 Runtime 轻量包**（`framework-dependent`，约 500 KB）：需系统安装 [.NET 10 Desktop Runtime](https://dotnet.microsoft.com/download/dotnet/10.0)
-            - **从浏览器下载的话，解压后先解除标记**：右键 `WinKit.exe` → 属性 → 勾选「解除锁定」→ 确定。否则每次启动都会被 SmartScreen 拦一次「Windows 已保护你的电脑」。
-            - 也可以直接用 winget 安装（解包不传播那个标记，不需要手动解除）：`winget install JourneyHua.WinKit`
-            - 双击 `WinKit.exe` 即普通权限启动（不弹 UAC）；清理、服务、驱动、补丁、还原点等写入操作会在程序内提示一次提权。
-            - 包含：**体检与维护**、**系统概览**、**磁盘健康**、**系统还原点**、**进程管理**、**SMART 属性**、**环境变量**、**右键菜单管理**、**此电脑管理**、**导航栏管理**、**任务栏与通知区域**（固定项与托盘图标）、**应用管理（卸载/残留清理/winget+scoop 更新）**、**驱动管理（自动备份/卸载/官方与本地更新）**、**启动与服务**、**系统清理**、**系统调优与百宝箱**、**文件占用解锁**、**文件与文件夹对比**、**重复文件检测**、**默认打开方式**、**事件日志诊断**、**Windows 更新管理**、**网络诊断**、**注册表体检**与**快照备份还原**。
-            - 本版本 CI 增加两道质量门槛：服务层自测（131 项）与界面离屏自检（24 个页面 + 关键模块数据断言），发布前还会直接读 exe 字节确认清单是 `asInvoker`（否则双击会被 SmartScreen 拦）。
+            - **按需提权与操作反馈**：浏览页面不再弹模态提权确认；受限操作在页内说明权限。支持快照的改动显示可撤销反馈，撤销/回滚失败保留记录供重试。
+            - **忙碌状态**：限制重复操作与导航；关闭窗口会等待当前操作结束，可点「取消关闭」。
+            - **卸载残留**：应用与右键菜单的等待、结果和失败在页内卡片呈现，按需清理注册表残留或定位目录/注册表。
+            - **备份还原**：先预览完整注册表/文件目标与覆盖、删除影响；确认时重新核对快照 SHA-256，内容变化则拒绝执行。
+            - **PATH 草稿**：用户/系统分别留稿，刷新及切换作用域保留未应用更改；写入前核对基线，外部变化时保留草稿并暂停应用。
+            - **文件工具**：对比结果绑定本次输入范围；重复文件回收前按扫描大小与完整 SHA-256 复核保留副本及目标，逐项报告失败。
+
+            ### 运行要求与下载说明
+
+            - **框架依赖包**（`framework-dependent`）不附带运行时，需 Windows 11 与 [.NET 10 Desktop Runtime](https://dotnet.microsoft.com/download/dotnet/10.0)。
+            - 双击默认以普通权限启动；需要管理员时可点击「以管理员身份重新启动」。也可使用 `winget install JourneyHua.WinKit`，版本以已发布清单为准。
+            - SmartScreen 提示受文件声誉、下载标记和本机策略影响。核实来源后，可在文件属性提供该选项时「解除锁定」；不保证解除标记或 winget 安装后不再出现安全提示。详见 README。
+            - 仓库配置 Probe 服务层自测与界面离屏自检门禁；本次结果以对应 Actions 日志为准，用例数随版本变化。
           files: |
-            WinKit-${{ github.ref_name }}-framework-dependent.zip
+            WinKit-${{ env.PACKAGE_REF }}-framework-dependent.zip

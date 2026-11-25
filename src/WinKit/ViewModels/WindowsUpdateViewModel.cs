@@ -128,7 +128,7 @@ public sealed class WindowsUpdateViewModel : ObservableObject, IModule
         var confirm = MessageBox.Show(
             $"将暂停 Windows 更新 {days} 天（系统允许的上限是 35 天）。\n\n" +
             "暂停期间不会下载或安装功能更新，安全补丁也会一并暂停。确定继续吗？",
-            "暂停 Windows 更新", MessageBoxButton.OKCancel, MessageBoxImage.Warning);
+            "暂停 Windows 更新", MessageBoxButton.OKCancel, MessageBoxImage.Warning, MessageBoxResult.Cancel);
 
         if (confirm != MessageBoxResult.OK) return;
 
@@ -177,7 +177,7 @@ public sealed class WindowsUpdateViewModel : ObservableObject, IModule
         var confirm = MessageBox.Show(
             "将清空 Windows 更新的下载缓存（C:\\Windows\\SoftwareDistribution\\Download）。\n\n" +
             "过程中会临时停止再启动 wuauserv 服务；已安装的补丁不受影响，正在下载的更新需要重新下载。确定继续吗？",
-            "清理更新下载缓存", MessageBoxButton.OKCancel, MessageBoxImage.Warning);
+            "清理更新下载缓存", MessageBoxButton.OKCancel, MessageBoxImage.Warning, MessageBoxResult.Cancel);
 
         if (confirm != MessageBoxResult.OK) return;
 

@@ -12,7 +12,7 @@
             <RowDefinition Height="*" />
         </Grid.RowDefinitions>
 
-        <Grid Grid.Row="0" Margin="0,0,0,10">
+        <Grid Grid.Row="0" Margin="0,0,0,10" IsEnabled="{Binding CanEditInputs}">
             <Grid.ColumnDefinitions>
                 <ColumnDefinition Width="*" />
                 <ColumnDefinition Width="Auto" />
@@ -34,9 +34,10 @@
 
         <StackPanel Grid.Row="1" Orientation="Horizontal" Margin="0,0,0,10">
             <CheckBox Content="递归子目录" IsChecked="{Binding Recursive, Mode=TwoWay}"
+                      IsEnabled="{Binding CanEditInputs}"
                       VerticalAlignment="Center" Margin="0,0,14,0" />
             <CheckBox Content="比对内容哈希（慢，但能识别大小与时间都相同的改动）"
-                      IsChecked="{Binding CompareHash, Mode=TwoWay}"
+                      IsChecked="{Binding CompareHash, Mode=TwoWay}" IsEnabled="{Binding CanEditInputs}"
                       VerticalAlignment="Center" Margin="0,0,14,0" />
             <CheckBox Content="只看差异" IsChecked="{Binding OnlyDifferences, Mode=TwoWay}"
                       VerticalAlignment="Center" Margin="0,0,14,0" />
@@ -55,6 +56,7 @@
                 <ColumnDefinition Width="Auto" />
             </Grid.ColumnDefinitions>
             <TextBlock Grid.Column="0" Text="{Binding SummaryText}" Style="{StaticResource Muted}"
+                       ToolTip="{Binding ResultScopeText}"
                        VerticalAlignment="Center" />
             <TextBlock Grid.Column="1" Text="{Binding ErrorText}" Style="{StaticResource Muted}"
                        Foreground="{DynamicResource Brush.Danger}" VerticalAlignment="Center"

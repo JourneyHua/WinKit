@@ -6,12 +6,9 @@
     <security>
       <requestedPrivileges xmlns="urn:schemas-microsoft-com:asm.v3">
         <!--
-          asInvoker 而不是 requireAdministrator：
-          未签名的 exe 一旦声明 requireAdministrator，双击时 Windows 会先弹
-          「Windows 已保护你的电脑」（SmartScreen），要点「更多信息 → 仍要运行」才继续，
-          而且这个拦截跟「来自 Internet」标记无关——解除锁定也去不掉，加签名才能去掉。
-          改成普通权限启动后这个拦截消失；需要管理员的模块由界面上的
-          「以管理员身份重新启动」按需提权（只弹一次正常的 UAC）。
+          默认以当前用户权限启动，浏览页面无需 UAC。
+          需要管理员权限的操作由界面上的「以管理员身份重新启动」按需提权。
+          SmartScreen 提示取决于文件来源、信誉及系统策略，asInvoker 不保证免除提示。
         -->
         <requestedExecutionLevel level="asInvoker" uiAccess="false" />
       </requestedPrivileges>

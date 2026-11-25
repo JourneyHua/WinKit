@@ -22,6 +22,11 @@ public sealed class DiffViewModel : ObservableObject, IModule
     private bool _isBusy;
     private string _summary = "";
     private string _errorText = "";
+    private ComparisonScope? _resultScope;
+    private readonly HashSet<DiffEntry> _resultEntries = [];
+
+    private sealed record ComparisonScope(
+        string LeftPath, string RightPath, bool Recursive, bool CompareHash, bool SingleFile);
 
     public DiffViewModel(Action<string> status, Action<bool>? setBusy = null)
     {
@@ -31,15 +36,16 @@ public sealed class DiffViewModel : ObservableObject, IModule
         Entries = new ObservableCollection<DiffEntry>();
         Filtered = new ObservableCollection<DiffEntry>();
 
-        CompareCommand = new RelayCommand(() => _ = CompareAsync());
-        CancelCommand = new RelayCommand(Cancel);
-        BrowseLeftCommand = new RelayCommand(() => Browse(true));
-        BrowseRightCommand = new RelayCommand(() => Browse(false));
-        SwapCommand = new RelayCommand(Swap);
-        CopyLeftPathCommand = new RelayCommand(p => CopyPath(p as DiffEntry, true));
-        CopyRightPathCommand = new RelayCommand(p => CopyPath(p as DiffEntry, false));
-        OpenLeftFolderCommand = new RelayCommand(p => OpenFolder(p as DiffEntry, true));
-        OpenRightFolderCommand = new RelayCommand(p => OpenFolder(p as DiffEntry, false));
+        CompareCommand = new RelayCommand(() => _ = CompareAsync(),
+            () => CanEditInputs && !string.IsNullOrWhiteSpace(LeftPath) && !string.IsNullOrWhiteSpace(RightPath));
+        CancelCommand = new RelayCommand(Cancel, () => IsBusy);
+        BrowseLeftCommand = new RelayCommand(() => Browse(true), () => CanEditInputs);
+        BrowseRightCommand = new RelayCommand(() => Browse(false), () => CanEditInputs);
+        SwapCommand = new RelayCommand(Swap, () => CanEditInputs);
+        CopyLeftPathCommand = new RelayCommand(p => CopyPath(p as DiffEntry, true), CanUseResult);
+        CopyRightPathCommand = new RelayCommand(p => CopyPath(p as DiffEntry, false), CanUseResult);
+        OpenLeftFolderCommand = new RelayCommand(p => OpenFolder(p as DiffEntry, true), CanUseResult);
+        OpenRightFolderCommand = new RelayCommand(p => OpenFolder(p as DiffEntry, false), CanUseResult);
     }
 
     public ObservableCollection<DiffEntry> Entries { get; }
@@ -58,25 +64,41 @@ public sealed class DiffViewModel : ObservableObject, IModule
     public string LeftPath
     {
         get => _leftPath;
-        set => Set(ref _leftPath, value);
+        set
+        {
+            if (IsBusy) { OnPropertyChanged(); return; }
+            if (Set(ref _leftPath, value)) InvalidateResults();
+        }
     }
 
     public string RightPath
     {
         get => _rightPath;
-        set => Set(ref _rightPath, value);
+        set
+        {
+            if (IsBusy) { OnPropertyChanged(); return; }
+            if (Set(ref _rightPath, value)) InvalidateResults();
+        }
     }
 
     public bool Recursive
     {
         get => _recursive;
-        set => Set(ref _recursive, value);
+        set
+        {
+            if (IsBusy) { OnPropertyChanged(); return; }
+            if (Set(ref _recursive, value)) InvalidateResults();
+        }
     }
 
     public bool CompareHash
     {
         get => _compareHash;
-        set => Set(ref _compareHash, value);
+        set
+        {
+            if (IsBusy) { OnPropertyChanged(); return; }
+            if (Set(ref _compareHash, value)) InvalidateResults();
+        }
     }
 
     public bool OnlyDifferences
@@ -93,9 +115,20 @@ public sealed class DiffViewModel : ObservableObject, IModule
         get => _isBusy;
         private set
         {
-            if (Set(ref _isBusy, value)) _setBusy?.Invoke(value);
+            if (!Set(ref _isBusy, value)) return;
+            OnPropertyChanged(nameof(CanEditInputs));
+            CompareCommand.RaiseCanExecuteChanged();
+            _setBusy?.Invoke(value);
         }
     }
+
+    public bool CanEditInputs => !IsBusy;
+
+    public string ResultScopeText => _resultScope is { } scope
+        ? $"左：{scope.LeftPath}\n右：{scope.RightPath}\n" +
+          $"{(scope.SingleFile ? "单文件对比" : scope.Recursive ? "包含子目录" : "仅当前目录")} · " +
+          (scope.CompareHash ? "校验内容哈希" : "按大小和修改时间比较")
+        : "";
 
     public string SummaryText
     {
@@ -120,8 +153,24 @@ public sealed class DiffViewModel : ObservableObject, IModule
             _ = CompareAsync();
     }
 
+    private void InvalidateResults()
+    {
+        _resultScope = null;
+        _resultEntries.Clear();
+        Entries.Clear();
+        Filtered.Clear();
+        ErrorText = "";
+        SummaryText = "对比条件已更改，请重新对比";
+        OnPropertyChanged(nameof(ResultScopeText));
+        CompareCommand.RaiseCanExecuteChanged();
+    }
+
+    private bool CanUseResult(object? value)
+        => !IsBusy && _resultScope is not null && value is DiffEntry entry && _resultEntries.Contains(entry);
+
     private void Browse(bool left)
     {
+        if (IsBusy) return;
         var dialog = new Microsoft.Win32.OpenFolderDialog
         {
             Title = left ? "选择左侧文件夹" : "选择右侧文件夹",
@@ -136,11 +185,13 @@ public sealed class DiffViewModel : ObservableObject, IModule
 
     private void Swap()
     {
+        if (IsBusy) return;
         (LeftPath, RightPath) = (RightPath, LeftPath);
     }
 
     private void Cancel()
     {
+        if (!IsBusy) return;
         _cts?.Cancel();
         _status("已请求取消…");
     }
@@ -151,6 +202,8 @@ public sealed class DiffViewModel : ObservableObject, IModule
 
         var left = LeftPath.Trim().Trim('"');
         var right = RightPath.Trim().Trim('"');
+        var recursive = Recursive;
+        var compareHash = CompareHash;
 
         if (string.IsNullOrWhiteSpace(left) || string.IsNullOrWhiteSpace(right))
         {
@@ -161,6 +214,9 @@ public sealed class DiffViewModel : ObservableObject, IModule
 
         IsBusy = true;
         ErrorText = "";
+        _resultScope = null;
+        _resultEntries.Clear();
+        OnPropertyChanged(nameof(ResultScopeText));
         Entries.Clear();
         Filtered.Clear();
         SummaryText = "正在对比…";
@@ -171,26 +227,50 @@ public sealed class DiffViewModel : ObservableObject, IModule
 
         try
         {
-            var (entries, error) = await Task.Run(
-                () => _service.Compare(left, right, Recursive, CompareHash, s => _status(s), token), token);
+            var (entries, error, scope) = await Task.Run(() =>
+            {
+                var fullLeft = Path.GetFullPath(left);
+                var fullRight = Path.GetFullPath(right);
+                var capturedScope = new ComparisonScope(fullLeft, fullRight, recursive, compareHash,
+                    File.Exists(fullLeft) && File.Exists(fullRight));
+                var result = _service.Compare(capturedScope.LeftPath, capturedScope.RightPath, capturedScope.Recursive,
+                    capturedScope.CompareHash, s => _status(s), token);
+                return (result.Entries, result.Error, capturedScope);
+            }, token);
 
+            _resultScope = scope;
+            _resultEntries.UnionWith(entries);
+            OnPropertyChanged(nameof(ResultScopeText));
             ErrorText = error ?? "";
 
             foreach (var entry in entries) Entries.Add(entry);
             ApplyFilter();
+
+            if (error is not null || token.IsCancellationRequested)
+            {
+                var cancelled = token.IsCancellationRequested || error == "已取消对比";
+                ErrorText = error ?? "已取消对比";
+                SummaryText = cancelled
+                    ? $"对比已取消，结果不完整（已返回 {entries.Count} 项）"
+                    : $"对比失败：{error}（已返回 {entries.Count} 项，结果不完整）";
+                _status(SummaryText);
+                return;
+            }
 
             SummaryText = DiffService.Summarize(entries);
             _status($"对比完成：{entries.Count} 项");
         }
         catch (OperationCanceledException)
         {
-            SummaryText = "已取消";
-            _status("已取消对比");
+            ErrorText = "已取消对比";
+            SummaryText = "对比已取消，结果不完整";
+            _status(SummaryText);
         }
         catch (Exception ex)
         {
             ErrorText = ex.Message;
-            _status($"对比失败：{ex.Message}");
+            SummaryText = $"对比失败：{ex.Message}";
+            _status(SummaryText);
         }
         finally
         {
@@ -208,11 +288,17 @@ public sealed class DiffViewModel : ObservableObject, IModule
         }
     }
 
+    internal string? ResolveResultPath(DiffEntry? entry, bool left)
+    {
+        // 行操作只接受本次结果中的对象，不能把旧行与另一轮的范围重新组合。
+        if (entry is null || _resultScope is not { } scope || !_resultEntries.Contains(entry)) return null;
+        var root = left ? scope.LeftPath : scope.RightPath;
+        return scope.SingleFile ? root : Path.Combine(root, entry.RelativePath);
+    }
+
     private void CopyPath(DiffEntry? entry, bool left)
     {
-        if (entry is null) return;
-
-        var full = Path.Combine(left ? LeftPath : RightPath, entry.RelativePath);
+        if (IsBusy || ResolveResultPath(entry, left) is not { } full) return;
         try
         {
             Clipboard.SetText(full);
@@ -226,9 +312,7 @@ public sealed class DiffViewModel : ObservableObject, IModule
 
     private void OpenFolder(DiffEntry? entry, bool left)
     {
-        if (entry is null) return;
-
-        var full = Path.Combine(left ? LeftPath : RightPath, entry.RelativePath);
+        if (IsBusy || ResolveResultPath(entry, left) is not { } full) return;
         try
         {
             if (File.Exists(full))

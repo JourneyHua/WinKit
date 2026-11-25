@@ -26,10 +26,9 @@ public sealed class NavItem
     public object ViewModel => Instance ??= Factory();
 
     /// <summary>
-    /// 这个模块的写入操作是否必须有管理员权限。
-    /// 主程序以 asInvoker 启动（未签名 + 要提权会被 SmartScreen 拦），所以进入这些模块
-    /// 时要主动提示提权，否则用户点了按钮只会拿到「拒绝访问」。
-    /// 只读也能有意义的模块（总览、文件占用、事件日志、磁盘健康、进程、SMART…）不在表里。
+    /// 这个模块是否包含需要管理员权限的操作。
+    /// 浏览页面不触发提权；由页面提示和操作时的权限检查说明限制。
+    /// 用户级设置仍可在普通权限下修改。
     /// </summary>
     public bool RequiresElevation => ElevationKeys.Contains(Key);
 
@@ -63,22 +62,30 @@ public sealed class NavGroup : ObservableObject
 
 public sealed class MainViewModel : ObservableObject
 {
-    private readonly ChangeJournal _journal = new();
+    private readonly ChangeJournal _journal;
     private readonly UiSettings _settings;
+    private readonly bool _saveSettings;
+    private bool _isClosePending;
     private NavItem? _selectedNav;
     private object? _currentViewModel;
     private string _statusText = "就绪";
     private int _busyCount;
-    /// <summary>本次运行里已经提示过提权的模块 key，避免每切一次页就问一遍。</summary>
-    private readonly HashSet<string> _elevationPrompted = new(StringComparer.OrdinalIgnoreCase);
+    private string _feedbackMessage = "";
+    private bool _feedbackIsError;
 
     public MainViewModel() : this(UiSettingsService.Load())
     {
     }
 
-    public MainViewModel(UiSettings settings)
+    public MainViewModel(UiSettings settings) : this(settings, new ChangeJournal())
+    {
+    }
+
+    internal MainViewModel(UiSettings settings, ChangeJournal journal, bool saveSettings = true)
     {
         _settings = settings;
+        _journal = journal;
+        _saveSettings = saveSettings;
         NavItems = new ObservableCollection<NavItem>
         {
             new()
@@ -179,7 +186,7 @@ public sealed class MainViewModel : ObservableObject
                 Glyph = "\uE72E",
                 Subtitle = "查出是谁锁着这个文件，可直接结束占用进程（Restart Manager）",
                 AccentBrush = new System.Windows.Media.SolidColorBrush(System.Windows.Media.Color.FromRgb(0x9D, 0x5B, 0x0E)),
-                Factory = () => new FileLockViewModel(SetStatus)
+                Factory = () => new FileLockViewModel(SetStatus, SetBusy)
             },
             new()
             {
@@ -319,14 +326,32 @@ public sealed class MainViewModel : ObservableObject
                 Glyph = "\uE81C",
                 Subtitle = "查看自动快照，随时回滚",
                 AccentBrush = new System.Windows.Media.SolidColorBrush(System.Windows.Media.Color.FromRgb(0x6B, 0x6B, 0x6B)),
-                Factory = () => new BackupViewModel(_journal, SetStatus)
+                Factory = () => new BackupViewModel(_journal, SetStatus, SetBusy, () => IsGlobalBusy)
             }
         };
 
-        _journal.Changed += SetStatus;
-        UndoCommand = new RelayCommand(Undo);
-        RestartExplorerCommand = new RelayCommand(RestartExplorer);
-        ElevateCommand = new RelayCommand(Elevate);
+        _journal.Changed += OnJournalChanged;
+        _journal.OperationStateChanged += () => OnUi(UpdateOperationState);
+        _journal.ResultReported += result => OnUi(() =>
+        {
+            FeedbackIsError = !result.Succeeded;
+            FeedbackMessage = result.Message;
+            if (result.HasChanges)
+            {
+                // 还原也可能只完成一部分；所有已打开模块都需重新读取真实状态。
+                // 只刷新当前页，其余保留实例与筛选条件，等下次进入时再扫描。
+                // 备份页自身监听 Changed 并合并列表刷新，不再安排第二次扫描。
+                foreach (var item in NavItems.Where(item => item.Instance is IModule and not BackupViewModel))
+                    item.WarmedUp = false;
+                RefreshCurrentModuleIfNeeded();
+            }
+            UpdateUndoState();
+        });
+        UndoCommand = new RelayCommand(Undo, () => _journal.CanUndo && !IsGlobalBusy);
+        DismissFeedbackCommand = new RelayCommand(() => FeedbackMessage = "");
+        RestartExplorerCommand = new RelayCommand(RestartExplorer, () => !IsGlobalBusy);
+        ElevateCommand = new RelayCommand(Elevate, () => !IsGlobalBusy);
+        CancelCloseCommand = new RelayCommand(() => IsClosePending = false);
         ToggleGroupCommand = new RelayCommand(p => ToggleGroup(p as NavGroup));
         ShowSettingsCommand = new RelayCommand(() => ShowSettingsRequested?.Invoke());
 
@@ -380,7 +405,7 @@ public sealed class MainViewModel : ObservableObject
                     _settings.ExpandedGroups.Remove(g.Name);
                 }
 
-                UiSettingsService.Save(_settings);
+                SaveSettings();
             };
 
             NavGroups.Add(group);
@@ -422,58 +447,30 @@ public sealed class MainViewModel : ObservableObject
         get => _selectedNav;
         set
         {
+            if (!ReferenceEquals(value, _selectedNav) && IsGlobalBusy)
+            {
+                OnPropertyChanged(nameof(SelectedNav));
+                return;
+            }
             if (!Set(ref _selectedNav, value) || value is null) return;
             CurrentViewModel = value.ViewModel;
             OnPropertyChanged(nameof(CurrentTitle));
             OnPropertyChanged(nameof(CurrentSubtitle));
             OnPropertyChanged(nameof(ElevationBannerText));
+            OnPropertyChanged(nameof(ShowElevationBanner));
+            OnPropertyChanged(nameof(ShowRestartExplorer));
 
             // 记住上次停留的模块
             _settings.LastModuleKey = value.Key;
-            UiSettingsService.Save(_settings);
+            SaveSettings();
 
             // 切到别的组里的模块时，展开那个组
             var owner = NavGroups.FirstOrDefault(g => g.Items.Contains(value));
             if (owner is not null && !owner.IsExpanded) owner.IsExpanded = true;
 
-            // 首次进入模块时才加载数据，避免启动时把所有模块都扫一遍
-            if (!value.WarmedUp)
-            {
-                value.WarmedUp = true;
-                if (value.ViewModel is IModule module) module.Refresh();
-            }
-
-            AskElevationIfNeeded(value);
+            RefreshCurrentModuleIfNeeded();
         }
     }
-
-    /// <summary>
-    /// 只在「未提权 + 进入需要管理员的模块」时问一次，每个模块本次运行只问一次。
-    /// 不自动提权：用户可能只是想看看数据，弹一次 UAC 就打断了。
-    /// </summary>
-    private void AskElevationIfNeeded(NavItem nav)
-    {
-        if (IsElevated || !nav.RequiresElevation) return;
-        if (!_elevationPrompted.Add(nav.Key)) return;
-
-        StatusText = $"「{nav.Title}」需要管理员权限才能写入，当前只能查看";
-
-        // --smoke / --maintain 没有人在屏幕前点「是」，绝不能弹模态框
-        if (!ElevationPromptsEnabled) return;
-
-        var result = MessageBox.Show(
-            $"「{nav.Title}」的写入操作需要管理员权限。当前是以普通权限运行的，点这些按钮只会被系统拒绝。\n\n" +
-            "现在以管理员身份重新启动 WinKit 吗？（会弹一次 UAC；也可以先只看看数据，稍后从顶部提示条提权）",
-            "需要管理员权限",
-            MessageBoxButton.YesNo,
-            MessageBoxImage.Question);
-
-        if (result == MessageBoxResult.Yes && Native.RestartAsAdmin())
-            Application.Current.Shutdown();
-    }
-
-    /// <summary>无人值守场景（--smoke、--maintain）把它设为 false，避免模态框卡住进程。</summary>
-    public bool ElevationPromptsEnabled { get; set; } = true;
 
     public object? CurrentViewModel
     {
@@ -491,7 +488,31 @@ public sealed class MainViewModel : ObservableObject
         private set => Set(ref _statusText, value);
     }
 
-    public string BackupHint => ChangeJournal.BackupDirectory;
+    public string SessionHint => _journal.CanUndo ? $"本次运行可撤销 {_journal.SessionCount} 次改动" : "";
+
+    public string UndoHint => IsGlobalBusy ? "请等待当前操作完成后撤销"
+        : _journal.CanUndo ? $"撤销：{_journal.LastTitle}" : "本次运行还没有可撤销的改动";
+
+    public bool HasUndo => _journal.CanUndo;
+
+    public string FeedbackMessage
+    {
+        get => _feedbackMessage;
+        private set
+        {
+            if (Set(ref _feedbackMessage, value)) OnPropertyChanged(nameof(HasFeedback));
+        }
+    }
+
+    public bool HasFeedback => !string.IsNullOrWhiteSpace(FeedbackMessage);
+
+    public bool FeedbackIsError
+    {
+        get => _feedbackIsError;
+        private set => Set(ref _feedbackIsError, value);
+    }
+
+    public bool ShowRestartExplorer => SelectedNav?.Key is "menu" or "thispc" or "nav" or "taskbar" or "tweaks";
 
     /// <summary>
     /// 当前进程是否已提权。主清单是 asInvoker，所以「没提权」是常态而不是异常。
@@ -502,22 +523,18 @@ public sealed class MainViewModel : ObservableObject
 
     public bool ShowElevateButton => !IsElevated;
 
-    /// <summary>顶部提示条：只在未提权时出现。</summary>
-    public bool ShowElevationBanner => !IsElevated;
+    /// <summary>只在包含受限操作的页面说明权限，不打断浏览。</summary>
+    public bool ShowElevationBanner => !IsElevated && SelectedNav is { RequiresElevation: true };
 
-    /// <summary>提示条文案：区分「这个模块确实需要管理员」和「只是普通权限运行」。</summary>
-    public string ElevationBannerText
-    {
-        get
-        {
-            if (IsElevated) return "";
-            if (SelectedNav is { RequiresElevation: true } nav)
-                return $"「{nav.Title}」的写入操作需要管理员权限，当前只能查看。点右边按钮重新以管理员身份启动，一次 UAC 就好。";
-            return "当前以普通权限运行：清理、服务、驱动、补丁、还原点等写入操作需要管理员权限。";
-        }
-    }
+    public string ElevationBannerText => ShowElevationBanner
+        ? $"「{SelectedNav!.Title}」的部分系统操作需要管理员权限。可先浏览；仅在需要时以管理员身份重启。"
+        : "";
 
-    public bool IsGlobalBusy => _busyCount > 0;
+    public bool IsGlobalBusy => _busyCount > 0 || _journal.IsOperationActive;
+
+    public bool IsNavigationEnabled => !IsGlobalBusy;
+
+    public string NavigationHint => IsGlobalBusy ? "正在完成当前操作，完成后可切换模块" : "打开此模块";
 
     public string VersionText
     {
@@ -530,6 +547,8 @@ public sealed class MainViewModel : ObservableObject
     }
 
     public RelayCommand UndoCommand { get; }
+
+    public RelayCommand DismissFeedbackCommand { get; }
 
     public RelayCommand RestartExplorerCommand { get; }
 
@@ -561,20 +580,88 @@ public sealed class MainViewModel : ObservableObject
         _settings.WindowLeft = left;
         _settings.WindowTop = top;
         _settings.WindowMaximized = maximized;
-        UiSettingsService.Save(_settings);
+        SaveSettings();
     }
 
     public UiSettings Settings => _settings;
 
-    private void SetStatus(string message) => StatusText = message;
+    private void SaveSettings()
+    {
+        if (_saveSettings) UiSettingsService.Save(_settings);
+    }
 
-    /// <summary>体检/维护模块专用：把结论推到状态栏，异常时同时提示。</summary>
-    private void SetMaintenanceStatus(string message) => StatusText = message;
+    public bool IsClosePending
+    {
+        get => _isClosePending;
+        private set => Set(ref _isClosePending, value);
+    }
 
-    private void SetBusy(bool busy)
+    public RelayCommand CancelCloseCommand { get; }
+
+    public event Action? CloseRequested;
+
+    public void RequestCloseWhenIdle()
+    {
+        if (IsGlobalBusy) IsClosePending = true;
+    }
+
+    private static void OnUi(Action action)
+    {
+        var dispatcher = Application.Current.Dispatcher;
+        if (dispatcher.CheckAccess()) action();
+        else dispatcher.BeginInvoke(action);
+    }
+
+    private void SetStatus(string message) => OnUi(() => StatusText = message);
+
+    private void SetMaintenanceStatus(string message) => SetStatus(message);
+
+    private void UpdateUndoState()
+    {
+        OnPropertyChanged(nameof(HasUndo));
+        OnPropertyChanged(nameof(SessionHint));
+        OnPropertyChanged(nameof(UndoHint));
+        UndoCommand.RaiseCanExecuteChanged();
+    }
+
+    private void OnJournalChanged(string message) => OnUi(() =>
+    {
+        StatusText = message;
+        FeedbackIsError = false;
+        FeedbackMessage = message;
+        UpdateUndoState();
+    });
+
+    private void SetBusy(bool busy) => OnUi(() =>
     {
         _busyCount = Math.Max(0, _busyCount + (busy ? 1 : -1));
+        UpdateOperationState();
+    });
+
+    private void UpdateOperationState()
+    {
         OnPropertyChanged(nameof(IsGlobalBusy));
+        OnPropertyChanged(nameof(IsNavigationEnabled));
+        OnPropertyChanged(nameof(NavigationHint));
+        UpdateUndoState();
+        RestartExplorerCommand.RaiseCanExecuteChanged();
+        ElevateCommand.RaiseCanExecuteChanged();
+        if (!IsGlobalBusy && IsClosePending)
+        {
+            IsClosePending = false;
+            CloseRequested?.Invoke();
+            return;
+        }
+        foreach (var backup in NavItems.Select(item => item.Instance).OfType<BackupViewModel>())
+            backup.NotifyGlobalStateChanged();
+        RefreshCurrentModuleIfNeeded();
+    }
+
+    private void RefreshCurrentModuleIfNeeded()
+    {
+        if (IsGlobalBusy || SelectedNav is not { WarmedUp: false, Instance: IModule module } item) return;
+        item.WarmedUp = true;
+        module.Refresh();
     }
 
     private static void Elevate()
@@ -583,30 +670,52 @@ public sealed class MainViewModel : ObservableObject
             Application.Current.Shutdown();
     }
 
-    private void Undo()
+    private async void Undo()
     {
-        if (!_journal.CanUndo)
+        if (!UndoCommand.CanExecute(null)) return;
+        SetBusy(true);
+        try
         {
-            MessageBox.Show("本次运行还没有可撤销的改动。", "WinKit", MessageBoxButton.OK, MessageBoxImage.Information);
-            return;
+            var result = await Task.Run(_journal.UndoLastResult);
+            StatusText = result.Message;
+            FeedbackIsError = !result.Succeeded;
+            FeedbackMessage = result.Message;
         }
-
-        var title = _journal.UndoLast();
-        StatusText = $"已撤销：{title}";
-        if (CurrentViewModel is IModule module) module.Refresh();
+        catch (Exception ex)
+        {
+            FeedbackIsError = true;
+            FeedbackMessage = $"撤销未完成：{ex.Message}。记录已保留，可稍后重试或到「备份与还原」查看。";
+            StatusText = FeedbackMessage;
+        }
+        finally
+        {
+            SetBusy(false);
+            UpdateUndoState();
+        }
     }
 
     private void RestartExplorer()
     {
+        if (!RestartExplorerCommand.CanExecute(null)) return;
         var result = MessageBox.Show(
             "将关闭并重新启动资源管理器。正在进行的文件复制或重命名会被中断，确定继续吗？",
             "重启资源管理器",
             MessageBoxButton.OKCancel,
-            MessageBoxImage.Warning);
+            MessageBoxImage.Warning,
+            MessageBoxResult.Cancel);
 
         if (result != MessageBoxResult.OK) return;
 
-        var killed = Native.RestartExplorer();
-        SetStatus($"已重启资源管理器（结束 {killed} 个进程）");
+        try
+        {
+            var killed = Native.RestartExplorer();
+            SetStatus($"已重启资源管理器（结束 {killed} 个进程）");
+        }
+        catch (Exception ex)
+        {
+            FeedbackIsError = true;
+            FeedbackMessage = $"资源管理器重启失败：{ex.Message}";
+            SetStatus(FeedbackMessage);
+        }
     }
 }
