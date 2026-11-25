@@ -310,7 +310,7 @@ public sealed class TaskbarViewModel : ObservableObject
         if (MessageBox.Show(Application.Current.MainWindow,
                 $"将删除 {missing.Count} 条指向已不存在文件的托盘图标记录。\n\n" +
                 "删除是整键删除（含图标缓存），已写入注册表快照，可以在「备份与快照」里撤销。",
-                "WinKit", MessageBoxButton.OKCancel, MessageBoxImage.Warning) != MessageBoxResult.OK)
+                "WinKit", MessageBoxButton.OKCancel, MessageBoxImage.Warning, MessageBoxResult.Cancel) != MessageBoxResult.OK)
             return;
 
         try

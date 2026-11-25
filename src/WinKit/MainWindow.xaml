@@ -8,6 +8,40 @@
         FontFamily="Microsoft YaHei UI, Segoe UI" FontSize="13"
         UseLayoutRounding="True">
 
+    <Window.Resources>
+        <Style x:Key="NavButton" TargetType="Button">
+            <Setter Property="Background" Value="Transparent" />
+            <Setter Property="BorderBrush" Value="Transparent" />
+            <Setter Property="BorderThickness" Value="1" />
+            <Setter Property="Padding" Value="11,6" />
+            <Setter Property="HorizontalContentAlignment" Value="Stretch" />
+            <Setter Property="Cursor" Value="Hand" />
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="Button">
+                        <Border x:Name="Bd" Background="{TemplateBinding Background}"
+                                BorderBrush="{TemplateBinding BorderBrush}" BorderThickness="{TemplateBinding BorderThickness}"
+                                CornerRadius="6" Padding="{TemplateBinding Padding}">
+                            <ContentPresenter HorizontalAlignment="Stretch" VerticalAlignment="Center" />
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter TargetName="Bd" Property="Background" Value="{DynamicResource Brush.Hover}" />
+                            </Trigger>
+                            <Trigger Property="IsKeyboardFocused" Value="True">
+                                <Setter TargetName="Bd" Property="BorderBrush" Value="{DynamicResource Brush.Accent}" />
+                            </Trigger>
+                            <Trigger Property="IsEnabled" Value="False">
+                                <Setter Property="Opacity" Value="0.5" />
+                                <Setter Property="Cursor" Value="Arrow" />
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+    </Window.Resources>
+
     <Grid>
         <Grid.ColumnDefinitions>
             <ColumnDefinition Width="228" />
@@ -41,9 +75,9 @@
                                     <!-- 分组标题（可折叠） -->
                                     <Button Command="{Binding DataContext.ToggleGroupCommand, RelativeSource={RelativeSource AncestorType=Window}}"
                                             CommandParameter="{Binding}"
-                                            HorizontalContentAlignment="Stretch"
-                                            Background="Transparent" BorderThickness="0"
-                                            Padding="0" Cursor="Hand">
+                                            Style="{StaticResource NavButton}"
+                                            AutomationProperties.Name="{Binding Name}"
+                                            Padding="0" Margin="7,0">
                                         <Border Padding="18,8,14,8">
                                             <Grid>
                                                 <Grid.ColumnDefinitions>
@@ -81,9 +115,14 @@
                                                   Visibility="{Binding IsExpanded, Converter={StaticResource BoolToVis}}">
                                         <ItemsControl.ItemTemplate>
                                             <DataTemplate>
-                                                <Border x:Name="RowBd" Background="Transparent" CornerRadius="6"
-                                                        Margin="8,1" Padding="12,7" Cursor="Hand"
-                                                        MouseLeftButtonUp="NavRow_Click">
+                                                <Button x:Name="NavRowButton" Style="{StaticResource NavButton}"
+                                                        Margin="8,1" Click="NavRow_Click"
+                                                        IsEnabled="{Binding DataContext.IsNavigationEnabled, RelativeSource={RelativeSource AncestorType=Window}}"
+                                                        ToolTip="{Binding DataContext.NavigationHint, RelativeSource={RelativeSource AncestorType=Window}}"
+                                                        ToolTipService.ShowOnDisabled="True"
+                                                        AutomationProperties.Name="{Binding Title}"
+                                                        AutomationProperties.HelpText="{Binding Subtitle}"
+                                                        AutomationProperties.AutomationId="{Binding Key}">
                                                     <Grid>
                                                         <Grid.ColumnDefinitions>
                                                             <ColumnDefinition Width="Auto" />
@@ -102,7 +141,7 @@
                                                                    Foreground="{DynamicResource Brush.Text}"
                                                                    TextTrimming="CharacterEllipsis" />
                                                     </Grid>
-                                                </Border>
+                                                </Button>
                                             </DataTemplate>
                                         </ItemsControl.ItemTemplate>
                                     </ItemsControl>
@@ -114,10 +153,6 @@
 
                 <StackPanel Grid.Row="2" Margin="20,10,20,14">
                     <TextBlock Text="{Binding ElevationText}" Style="{StaticResource Muted}" />
-                    <Button Content="以管理员身份重启" Style="{StaticResource BtnSmall}" Margin="0,6,0,2"
-                            HorizontalAlignment="Left"
-                            Visibility="{Binding ShowElevateButton, Converter={StaticResource BoolToVis}}"
-                            Command="{Binding ElevateCommand}" />
 
                     <Grid Margin="0,6,0,0">
                         <Grid.ColumnDefinitions>
@@ -129,7 +164,8 @@
                         <!-- 设置入口：主题 + 表格密度（只有 2 项，不占导航位） -->
                         <Button Grid.Column="1" x:Name="SettingsButton"
                                 Style="{StaticResource BtnSmall}" Padding="8,3"
-                                Click="SettingsButton_Click" ToolTip="外观设置（主题 / 表格密度）">
+                                Click="SettingsButton_Click" ToolTip="外观设置（主题 / 表格密度）"
+                                AutomationProperties.Name="外观设置">
                             <TextBlock Text="&#xE713;" FontFamily="Segoe Fluent Icons, Segoe MDL2 Assets"
                                        FontSize="14" Foreground="{DynamicResource Brush.TextMuted}" />
                         </Button>
@@ -159,9 +195,11 @@
                     </StackPanel>
                     <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Center">
                         <Button Content="撤销上一步" Style="{StaticResource BtnBase}"
-                                Command="{Binding UndoCommand}" Margin="0,0,8,0" />
+                                Command="{Binding UndoCommand}" ToolTip="{Binding UndoHint}"
+                                ToolTipService.ShowOnDisabled="True" />
                         <Button Content="重启资源管理器" Style="{StaticResource BtnBase}"
-                                Command="{Binding RestartExplorerCommand}" />
+                                Visibility="{Binding ShowRestartExplorer, Converter={StaticResource BoolToVis}}"
+                                Margin="8,0,0,0" Command="{Binding RestartExplorerCommand}" />
                     </StackPanel>
                 </Grid>
             </Border>
@@ -170,12 +208,44 @@
                 <Grid.RowDefinitions>
                     <RowDefinition Height="Auto" />
                     <RowDefinition Height="Auto" />
+                    <RowDefinition Height="Auto" />
                     <RowDefinition Height="*" />
                 </Grid.RowDefinitions>
 
-                <!-- 权限提示条：主清单是 asInvoker，未提权时写入类操作会被系统拒绝，
-                     与其让用户点完只看一句「拒绝访问」，不如在这里给出提权入口。 -->
-                <Border Grid.Row="0" Margin="16,8,16,0" Padding="14,8" CornerRadius="6"
+                <Border Grid.Row="0" Margin="16,8,16,0"
+                        Visibility="{Binding HasFeedback, Converter={StaticResource BoolToVis}}">
+                    <Border.Style>
+                        <Style TargetType="Border" BasedOn="{StaticResource HintCard}">
+                            <Style.Triggers>
+                                <DataTrigger Binding="{Binding FeedbackIsError}" Value="True">
+                                    <Setter Property="Background" Value="{DynamicResource Brush.DangerSoft}" />
+                                    <Setter Property="BorderBrush" Value="{DynamicResource Brush.DangerSoftBorder}" />
+                                </DataTrigger>
+                            </Style.Triggers>
+                        </Style>
+                    </Border.Style>
+                    <Grid>
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="Auto" />
+                            <ColumnDefinition Width="Auto" />
+                        </Grid.ColumnDefinitions>
+                        <ScrollViewer MaxHeight="112" VerticalScrollBarVisibility="Auto">
+                            <TextBlock Text="{Binding FeedbackMessage}" TextWrapping="Wrap"
+                                       Foreground="{DynamicResource Brush.Text}" VerticalAlignment="Center"
+                                       AutomationProperties.LiveSetting="Polite" />
+                        </ScrollViewer>
+                        <Button Grid.Column="1" Content="撤销上一步" Style="{StaticResource BtnSmall}"
+                                Visibility="{Binding HasUndo, Converter={StaticResource BoolToVis}}"
+                                Command="{Binding UndoCommand}" ToolTip="{Binding UndoHint}"
+                                ToolTipService.ShowOnDisabled="True" Margin="12,0,0,0" VerticalAlignment="Center" />
+                        <Button Grid.Column="2" Content="关闭提示" Style="{StaticResource BtnSmall}"
+                                Command="{Binding DismissFeedbackCommand}" Margin="8,0,0,0" VerticalAlignment="Center" />
+                    </Grid>
+                </Border>
+
+                <!-- 仅在包含受限操作的页面说明权限；浏览页面不触发模态提权提示。 -->
+                <Border Grid.Row="1" Margin="16,8,16,0" Padding="14,8" CornerRadius="6"
                         Background="{DynamicResource Brush.Card}"
                         BorderBrush="{DynamicResource Brush.Accent}" BorderThickness="3,0,0,0"
                         Visibility="{Binding ShowElevationBanner, Converter={StaticResource BoolToVis}}">
@@ -192,10 +262,22 @@
                     </Grid>
                 </Border>
 
-                <ProgressBar Grid.Row="1" Height="3" IsIndeterminate="True" BorderThickness="0"
-                             Background="Transparent" Foreground="{DynamicResource Brush.Accent}"
-                             Visibility="{Binding IsGlobalBusy, Converter={StaticResource BoolToVis}}" />
-                <ContentControl Grid.Row="2" Content="{Binding CurrentViewModel}" Margin="0" />
+                <StackPanel Grid.Row="2">
+                    <Border Style="{StaticResource HintCard}" Margin="16,8,16,8"
+                            Visibility="{Binding IsClosePending, Converter={StaticResource BoolToVis}}">
+                        <DockPanel>
+                            <Button DockPanel.Dock="Right" Content="取消关闭" Style="{StaticResource BtnSmall}"
+                                    Command="{Binding CancelCloseCommand}" Margin="12,0,0,0" />
+                            <TextBlock Text="当前操作完成后将关闭窗口。" TextWrapping="Wrap"
+                                       Foreground="{DynamicResource Brush.Text}" VerticalAlignment="Center"
+                                       AutomationProperties.LiveSetting="Polite" />
+                        </DockPanel>
+                    </Border>
+                    <ProgressBar Height="3" IsIndeterminate="True" BorderThickness="0"
+                                 Background="Transparent" Foreground="{DynamicResource Brush.Accent}"
+                                 Visibility="{Binding IsGlobalBusy, Converter={StaticResource BoolToVis}}" />
+                </StackPanel>
+                <ContentControl Grid.Row="3" Content="{Binding CurrentViewModel}" Margin="0" />
             </Grid>
 
             <Border Grid.Row="2" Padding="24,8" Background="{DynamicResource Brush.Card}"
@@ -206,10 +288,11 @@
                         <ColumnDefinition Width="Auto" />
                     </Grid.ColumnDefinitions>
                     <TextBlock Grid.Column="0" Text="{Binding StatusText}" Style="{StaticResource Muted}"
-                               VerticalAlignment="Center" TextTrimming="CharacterEllipsis" />
-                    <TextBlock Grid.Column="1" Text="{Binding BackupHint}" Style="{StaticResource Muted}"
-                               VerticalAlignment="Center" Margin="12,0,0,0" MaxWidth="420"
-                               TextTrimming="CharacterEllipsis" />
+                               VerticalAlignment="Center" TextTrimming="CharacterEllipsis" TextWrapping="NoWrap"
+                               ToolTip="{Binding StatusText}" />
+                    <TextBlock Grid.Column="1" Text="{Binding SessionHint}" Style="{StaticResource Muted}"
+                               VerticalAlignment="Center" Margin="12,0,0,0" MaxWidth="240"
+                               TextTrimming="CharacterEllipsis" ToolTip="{Binding UndoHint}" />
                 </Grid>
             </Border>
         </Grid>

@@ -376,7 +376,7 @@ public sealed class NavPaneViewModel : ObservableObject, IModule
             "过程中快速访问会短暂清空（几秒钟），结束后恢复。\n\n确定应用新顺序吗？",
             "应用新的固定顺序",
             MessageBoxButton.OKCancel,
-            MessageBoxImage.Warning);
+            MessageBoxImage.Warning, MessageBoxResult.Cancel);
 
         if (result != MessageBoxResult.OK) return;
 
@@ -423,7 +423,7 @@ public sealed class NavPaneViewModel : ObservableObject, IModule
             string.Join("\n", group.Guids) + "\n\n" +
             "这类软件每次启动都会换一个新 GUID 重新注册，所以按单个 ID 关永远关不完。\n" +
             "将一次性删除全部这些注册项（含此电脑与导航栏两处），删除前会存快照。\n\n确定继续吗？",
-            "彻底清理顽固节点", MessageBoxButton.OKCancel, MessageBoxImage.Warning);
+            "彻底清理顽固节点", MessageBoxButton.OKCancel, MessageBoxImage.Warning, MessageBoxResult.Cancel);
 
         if (result != MessageBoxResult.OK) return;
 
@@ -462,7 +462,7 @@ public sealed class NavPaneViewModel : ObservableObject, IModule
         if (picked is null) return;
 
         var confirm = MessageBox.Show($"确定结束「{picked}」吗？", "确认",
-            MessageBoxButton.OKCancel, MessageBoxImage.Warning);
+            MessageBoxButton.OKCancel, MessageBoxImage.Warning, MessageBoxResult.Cancel);
         if (confirm != MessageBoxResult.OK) return;
 
         var ok = _stubbornService.StopProcess(picked);
@@ -473,7 +473,7 @@ public sealed class NavPaneViewModel : ObservableObject, IModule
     private void RestartExplorer()
     {
         var result = MessageBox.Show("将重启资源管理器使改动立即生效，确定继续吗？",
-            "重启资源管理器", MessageBoxButton.OKCancel, MessageBoxImage.Warning);
+            "重启资源管理器", MessageBoxButton.OKCancel, MessageBoxImage.Warning, MessageBoxResult.Cancel);
         if (result != MessageBoxResult.OK) return;
 
         Native.RestartExplorer();

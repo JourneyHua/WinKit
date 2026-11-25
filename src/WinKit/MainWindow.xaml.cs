@@ -10,11 +10,15 @@ public partial class MainWindow : Window
 {
     private readonly MainViewModel _vm;
 
-    public MainWindow()
+    public MainWindow() : this(new MainViewModel())
+    {
+    }
+
+    internal MainWindow(MainViewModel viewModel)
     {
         InitializeComponent();
 
-        _vm = new MainViewModel();
+        _vm = viewModel;
         DataContext = _vm;
 
         Loaded += OnLoaded;
@@ -22,11 +26,12 @@ public partial class MainWindow : Window
         SourceInitialized += OnSourceInitialized;
 
         _vm.ShowSettingsRequested += ShowSettingsPopup;
+        _vm.CloseRequested += () => Dispatcher.BeginInvoke(new Action(Close));
     }
 
     private void OnSourceInitialized(object? sender, EventArgs e)
     {
-        // WinKit 的清单是 requireAdministrator，进程跑在高完整性级别；资源管理器是普通权限。
+        // 普通启动使用 asInvoker；用户主动提权后，进程完整性级别才高于资源管理器。
         // UIPI 会直接丢掉跨完整性级别的拖放消息，表现就是「拖进来毫无反应」，也没有异常可抓。
         // 这里只放行拖放必需的消息，不整体降低窗口的消息过滤级别。
         var hwnd = new System.Windows.Interop.WindowInteropHelper(this).Handle;
@@ -77,6 +82,13 @@ public partial class MainWindow : Window
 
     private void OnClosing(object? sender, System.ComponentModel.CancelEventArgs e)
     {
+        if (_vm.IsGlobalBusy)
+        {
+            e.Cancel = true;
+            _vm.RequestCloseWhenIdle();
+            return;
+        }
+
         var maximized = WindowState == WindowState.Maximized;
         var bounds = maximized ? RestoreBounds : new Rect(Left, Top, Width, Height);
 
@@ -85,7 +97,7 @@ public partial class MainWindow : Window
 
     // ---------- 导航选中态 ----------
 
-    private void NavRow_Click(object sender, MouseButtonEventArgs e)
+    private void NavRow_Click(object sender, RoutedEventArgs e)
     {
         if (sender is FrameworkElement { DataContext: NavItem item })
         {
@@ -97,32 +109,32 @@ public partial class MainWindow : Window
     /// <summary>NavItem 不是 ObservableObject，选中态由窗口手动同步（避免给 21 个模型加 UI 属性）。</summary>
     private void SyncNavSelection()
     {
-        foreach (var (border, item) in FindNavContainers(this))
+        foreach (var (button, item) in FindNavContainers(this))
         {
             var selected = ReferenceEquals(item, _vm.SelectedNav);
-            border.Background = selected
-                ? (System.Windows.Media.Brush)FindResource("Brush.AccentSoft")
-                : System.Windows.Media.Brushes.Transparent;
+            if (selected) button.SetResourceReference(BackgroundProperty, "Brush.AccentSoft");
+            else button.ClearValue(BackgroundProperty);
+            System.Windows.Automation.AutomationProperties.SetItemStatus(button, selected ? "当前页面" : "");
         }
     }
 
-    private static List<(Border Border, NavItem Item)> FindNavContainers(DependencyObject root)
+    private static List<(Button Button, NavItem Item)> FindNavContainers(DependencyObject root)
     {
-        var result = new List<(Border, NavItem)>();
+        var result = new List<(Button, NavItem)>();
         Walk(root, result);
         return result;
 
-        static void Walk(DependencyObject node, List<(Border, NavItem)> acc)
+        static void Walk(DependencyObject node, List<(Button, NavItem)> acc)
         {
             var count = System.Windows.Media.VisualTreeHelper.GetChildrenCount(node);
             for (var i = 0; i < count; i++)
             {
                 var child = System.Windows.Media.VisualTreeHelper.GetChild(node, i);
 
-                if (child is Border { DataContext: NavItem item } border
-                    && border.Name == "RowBd")
+                if (child is Button { DataContext: NavItem item } button
+                    && button.Name == "NavRowButton")
                 {
-                    acc.Add((border, item));
+                    acc.Add((button, item));
                 }
 
                 Walk(child, acc);

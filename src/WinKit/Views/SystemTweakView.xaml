@@ -4,7 +4,20 @@
              FontFamily="Microsoft YaHei UI, Segoe UI">
 
 
-    <Grid Margin="24,16,24,16">
+    <Grid>
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="*" />
+        </Grid.RowDefinitions>
+
+        <!-- 页面级错误条独立占行，失败时保留工具栏与恢复操作 -->
+        <Border Grid.Row="0" Style="{StaticResource ErrorBar}" Margin="24,16,24,0"
+                Visibility="{Binding HasError, Converter={StaticResource BoolToVis}}">
+            <TextBlock Text="{Binding ErrorText}" Style="{StaticResource ErrorText}"
+                       AutomationProperties.LiveSetting="Polite" />
+        </Border>
+
+    <Grid Grid.Row="1" Margin="24,16,24,16">
         <Grid.RowDefinitions>
             <RowDefinition Height="Auto" />
             <RowDefinition Height="*" />
@@ -278,11 +291,6 @@
                 </ItemsControl.ItemTemplate>
             </ItemsControl>
         </ScrollViewer>
-        <!-- 页面级错误条：失败时统一展示，替代原先只靠底部状态栏 -->
-        <Border Style="{StaticResource ErrorBar}" VerticalAlignment="Top"
-                Panel.ZIndex="99" Margin="24,8,24,0"
-                Visibility="{Binding HasError, Converter={StaticResource BoolToVis}}">
-            <TextBlock Text="{Binding ErrorText}" Style="{StaticResource ErrorText}" />
-        </Border>
+    </Grid>
     </Grid>
 </UserControl>

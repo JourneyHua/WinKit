@@ -118,19 +118,25 @@ public static class Reg
         return baseKey.CreateSubKey(path.SubKey, true);
     }
 
-    /// <summary>删除整棵子树；返回是否确实删掉（或本来就不存在）。失败时不再静默。</summary>
+    /// <summary>删除整棵子树；返回是否确实删掉（或本来就不存在）。</summary>
     public static bool DeleteTree(RegPath path)
     {
         try
         {
-            using var baseKey = RegistryKey.OpenBaseKey(ToRegistryHive(path.Hive), ToRegistryView(path.View));
-            baseKey.DeleteSubKeyTree(path.SubKey, false);
+            DeleteTreeOrThrow(path);
             return true;
         }
         catch (Exception)
         {
             return false;
         }
+    }
+
+    /// <summary>删除整棵子树，并在失败时保留异常供事务回滚处理。</summary>
+    public static void DeleteTreeOrThrow(RegPath path)
+    {
+        using var baseKey = RegistryKey.OpenBaseKey(ToRegistryHive(path.Hive), ToRegistryView(path.View));
+        baseKey.DeleteSubKeyTree(path.SubKey, false);
     }
 
     public static string? GetString(RegPath path, string name = "")

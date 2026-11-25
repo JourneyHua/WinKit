@@ -21,6 +21,10 @@ public sealed class UninstallCenterViewModel : ObservableObject
     private readonly ChangeJournal _journal;
     private readonly Action<string> _status;
 
+    // 自检可替换读取边界，无需覆盖当前桌面的剪贴板。正常操作始终使用系统读取器。
+    internal Func<string> ClipboardTextReader { get; set; } =
+        () => Clipboard.ContainsText() ? Clipboard.GetText() : "";
+
     private readonly UninstallService _uninstall = new();
     private readonly ResidualScanService _residual = new();
 
@@ -967,7 +971,7 @@ public sealed class UninstallCenterViewModel : ObservableObject
         string text;
         try
         {
-            text = Clipboard.ContainsText() ? Clipboard.GetText() : "";
+            text = ClipboardTextReader();
         }
         catch (Exception)
         {
@@ -1025,7 +1029,7 @@ public sealed class UninstallCenterViewModel : ObservableObject
 
     private static bool Confirm(string message) => MessageBox.Show(
         Application.Current.MainWindow, message, "WinKit",
-        MessageBoxButton.OKCancel, MessageBoxImage.Question) == MessageBoxResult.OK;
+        MessageBoxButton.OKCancel, MessageBoxImage.Question, MessageBoxResult.Cancel) == MessageBoxResult.OK;
 
     private static void Warn(string message) => MessageBox.Show(
         Application.Current.MainWindow, message, "WinKit",

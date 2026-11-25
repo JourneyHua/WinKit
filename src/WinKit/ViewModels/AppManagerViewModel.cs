@@ -37,6 +37,9 @@ public sealed class AppManagerViewModel : ObservableObject, IModule
     private DispatcherTimer? _uninstallTimer;
     private DateTime _uninstallDeadline;
     private InstalledAppItem? _lastUninstalled;
+    private AppResidualReport? _residualReport;
+    private string _residualTitle = "";
+    private string _residualDetails = "";
 
     public AppManagerViewModel(ChangeJournal journal, Action<string> status, Action<bool>? setBusy = null)
     {
@@ -49,16 +52,18 @@ public sealed class AppManagerViewModel : ObservableObject, IModule
         Tools = new ObservableCollection<SystemToolItem>();
         UninstallCenter = new UninstallCenterViewModel(journal, status);
 
-        RefreshCommand = new RelayCommand(ManualRefresh);
-        CheckUpdatesCommand = new RelayCommand(() => _ = CheckUpdatesAsync());
-        UpgradeAppCommand = new RelayCommand(p => _ = UpgradeAppAsync(p as InstalledAppItem));
-        UpgradeAllCommand = new RelayCommand(() => _ = UpgradeAllAsync());
-        UninstallAppCommand = new RelayCommand(p => _ = UninstallAppAsync(p as InstalledAppItem));
+        RefreshCommand = new RelayCommand(ManualRefresh, () => !IsBusy);
+        CheckUpdatesCommand = new RelayCommand(() => _ = CheckUpdatesAsync(), () => !IsBusy);
+        UpgradeAppCommand = new RelayCommand(p => _ = UpgradeAppAsync(p as InstalledAppItem), p => p is InstalledAppItem { HasUpdate: true } && !IsBusy);
+        UpgradeAllCommand = new RelayCommand(() => _ = UpgradeAllAsync(), () => HasUpdatable && !IsBusy);
+        UninstallAppCommand = new RelayCommand(p => _ = UninstallAppAsync(p as InstalledAppItem), p => p is InstalledAppItem && !IsBusy);
         OpenLocationCommand = new RelayCommand(p => OpenLocation(p as InstalledAppItem));
         CopyPathCommand = new RelayCommand(p => CopyPath(p as InstalledAppItem));
         OpenRegeditCommand = new RelayCommand(p => OpenRegedit(p as InstalledAppItem));
-        RecheckResidualCommand = new RelayCommand(RecheckResidual);
-        ScanResidualCommand = new RelayCommand(p => ScanItemResidual(p as InstalledAppItem));
+        RecheckResidualCommand = new RelayCommand(RecheckResidual, () => CanRecheckResidual && !IsBusy);
+        CleanResidualRegistryCommand = new RelayCommand(CleanResidualRegistry, () => HasRegistryResiduals && !IsBusy);
+        OpenResidualFolderCommand = new RelayCommand(OpenResidualFolder, () => HasResidualFolder && !IsBusy);
+        ScanResidualCommand = new RelayCommand(p => ScanItemResidual(p as InstalledAppItem), p => p is InstalledAppItem && !IsBusy);
 
         FilterAllCommand = new RelayCommand(() => SourceFilter = "all");
         FilterDesktopCommand = new RelayCommand(() => SourceFilter = "desktop");
@@ -94,6 +99,8 @@ public sealed class AppManagerViewModel : ObservableObject, IModule
     public RelayCommand CopyPathCommand { get; }
     public RelayCommand OpenRegeditCommand { get; }
     public RelayCommand RecheckResidualCommand { get; }
+    public RelayCommand CleanResidualRegistryCommand { get; }
+    public RelayCommand OpenResidualFolderCommand { get; }
     public RelayCommand ScanResidualCommand { get; }
 
     public RelayCommand FilterAllCommand { get; }
@@ -254,6 +261,15 @@ public sealed class AppManagerViewModel : ObservableObject, IModule
             if (Set(ref _isBusy, value))
             {
                 _setBusy?.Invoke(value);
+                RefreshCommand.RaiseCanExecuteChanged();
+                CheckUpdatesCommand.RaiseCanExecuteChanged();
+                UpgradeAppCommand.RaiseCanExecuteChanged();
+                UpgradeAllCommand.RaiseCanExecuteChanged();
+                UninstallAppCommand.RaiseCanExecuteChanged();
+                RecheckResidualCommand.RaiseCanExecuteChanged();
+                CleanResidualRegistryCommand.RaiseCanExecuteChanged();
+                OpenResidualFolderCommand.RaiseCanExecuteChanged();
+                ScanResidualCommand.RaiseCanExecuteChanged();
             }
         }
     }
@@ -279,16 +295,43 @@ public sealed class AppManagerViewModel : ObservableObject, IModule
         ? "复查残留"
         : $"复查残留（{_lastUninstalled.Name}）";
 
+    public string ResidualTitle
+    {
+        get => _residualTitle;
+        private set
+        {
+            if (Set(ref _residualTitle, value)) OnPropertyChanged(nameof(HasResidualResult));
+        }
+    }
+
+    public string ResidualDetails
+    {
+        get => _residualDetails;
+        private set => Set(ref _residualDetails, value);
+    }
+
+    public bool HasResidualResult => !string.IsNullOrWhiteSpace(_residualTitle);
+    public bool HasRegistryResiduals => _residualReport is { RegistryResiduals.Count: > 0 };
+    public bool HasResidualFolder => _residualReport is { FolderStillExists: true }
+                                     && !string.IsNullOrWhiteSpace(_residualReport.InstallLocation);
+
+    private void SetResidualResult(InstalledAppItem app, string details, AppResidualReport? report = null)
+    {
+        _lastUninstalled = app;
+        _residualReport = report;
+        ResidualTitle = $"卸载残留复查 · {app.Name}";
+        ResidualDetails = details;
+        OnPropertyChanged(nameof(CanRecheckResidual));
+        OnPropertyChanged(nameof(RecheckResidualText));
+        OnPropertyChanged(nameof(HasRegistryResiduals));
+        OnPropertyChanged(nameof(HasResidualFolder));
+        RecheckResidualCommand.RaiseCanExecuteChanged();
+        CleanResidualRegistryCommand.RaiseCanExecuteChanged();
+        OpenResidualFolderCommand.RaiseCanExecuteChanged();
+    }
+
     private void ManualRefresh()
     {
-        if (_lastUninstalled is not null)
-        {
-            var pending = _lastUninstalled;
-            StopWatch();
-            HandleResidualCheck(pending);
-            return;
-        }
-
         Refresh();
     }
 
@@ -329,7 +372,7 @@ public sealed class AppManagerViewModel : ObservableObject, IModule
         }
         catch (Exception ex)
         {
-            _status($"加载应用列表失败：{ex.Message}");
+            SetError($"加载应用列表失败：{ex.Message}");
         }
         finally
         {
@@ -410,7 +453,7 @@ public sealed class AppManagerViewModel : ObservableObject, IModule
             $"当前版本：{(string.IsNullOrWhiteSpace(app.Version) ? "未知" : app.Version)}\n" +
             $"目标版本：{app.LatestVersion}\n\n" +
             "优先以静默模式后台升级；若安装器要求交互，会自动弹出安装向导。确定继续吗？",
-            "更新应用", MessageBoxButton.OKCancel, MessageBoxImage.Information);
+            "更新应用", MessageBoxButton.OKCancel, MessageBoxImage.Information, MessageBoxResult.Cancel);
 
         if (confirm != MessageBoxResult.OK) return;
 
@@ -429,7 +472,7 @@ public sealed class AppManagerViewModel : ObservableObject, IModule
             }
             else
             {
-                MessageBox.Show(msg, "更新结果", MessageBoxButton.OK, MessageBoxImage.Warning);
+                SetError(msg);
             }
         }
         finally
@@ -452,7 +495,7 @@ public sealed class AppManagerViewModel : ObservableObject, IModule
 
         var confirm = MessageBox.Show(
             $"将依次通过 winget 更新以下 {targets.Count} 个应用：\n\n• {names}\n\n确定开始批量更新吗？",
-            "一键更新全部", MessageBoxButton.OKCancel, MessageBoxImage.Information);
+            "一键更新全部", MessageBoxButton.OKCancel, MessageBoxImage.Information, MessageBoxResult.Cancel);
 
         if (confirm != MessageBoxResult.OK) return;
 
@@ -482,9 +525,7 @@ public sealed class AppManagerViewModel : ObservableObject, IModule
             _status($"批量更新完成：成功 {succeeded} 个，失败 {failed.Count} 个");
             if (failed.Count > 0)
             {
-                MessageBox.Show(
-                    $"已完成 {succeeded} 个应用更新，以下 {failed.Count} 个未完成：\n\n• " + string.Join("\n• ", failed),
-                    "批量更新结果", MessageBoxButton.OK, MessageBoxImage.Warning);
+                SetError($"已完成 {succeeded} 个应用更新，以下 {failed.Count} 个未完成：\n• " + string.Join("\n• ", failed));
             }
         }
         finally
@@ -507,15 +548,14 @@ public sealed class AppManagerViewModel : ObservableObject, IModule
         {
             if (!ScoopService.CommandAvailable())
             {
-                MessageBox.Show("找不到 scoop.cmd，请确认 Scoop 已安装并加入 PATH。", "Scoop",
-                    MessageBoxButton.OK, MessageBoxImage.Warning);
+                SetError("找不到 scoop.cmd，请确认 Scoop 已安装并加入 PATH。");
                 return;
             }
 
             var confirmScoop = MessageBox.Show(
                 $"将通过 scoop 卸载「{app.Name}」：\n\nscoop uninstall {app.ScoopName}\n\n" +
                 "不删除任何个人数据；如需保留配置可用 scoop uninstall 的 -p 参数（本工具不代传）。确定继续吗？",
-                "卸载 Scoop 包", MessageBoxButton.OKCancel, MessageBoxImage.Warning);
+                "卸载 Scoop 包", MessageBoxButton.OKCancel, MessageBoxImage.Warning, MessageBoxResult.Cancel);
 
             if (confirmScoop != MessageBoxResult.OK) return;
 
@@ -527,7 +567,7 @@ public sealed class AppManagerViewModel : ObservableObject, IModule
                 _status(ok ? $"已卸载 Scoop 包：{app.Name}" : $"卸载失败：{msg}");
                 if (!ok)
                 {
-                    MessageBox.Show(msg, "卸载失败", MessageBoxButton.OK, MessageBoxImage.Warning);
+                    SetError(msg);
                     return;
                 }
             }
@@ -544,7 +584,7 @@ public sealed class AppManagerViewModel : ObservableObject, IModule
         {
             var confirmStore = MessageBox.Show(
                 $"将卸载商店/打包应用「{app.Name}」：\n\n包名：{app.PackageFullName}\n\n确定继续吗？",
-                "卸载打包应用", MessageBoxButton.OKCancel, MessageBoxImage.Warning);
+                "卸载打包应用", MessageBoxButton.OKCancel, MessageBoxImage.Warning, MessageBoxResult.Cancel);
 
             if (confirmStore != MessageBoxResult.OK) return;
 
@@ -556,7 +596,7 @@ public sealed class AppManagerViewModel : ObservableObject, IModule
                 _status(msg);
                 if (!ok)
                 {
-                    MessageBox.Show(msg, "卸载失败", MessageBoxButton.OK, MessageBoxImage.Warning);
+                    SetError(msg);
                     return;
                 }
             }
@@ -572,7 +612,7 @@ public sealed class AppManagerViewModel : ObservableObject, IModule
         var confirm = MessageBox.Show(
             $"将启动「{app.Name}」自带的官方卸载程序：\n\n{app.UninstallString}\n\n" +
             "卸载完成后，WinKit 会自动扫描残留注册表项（可一键快照清理）和残留安装目录。继续吗？",
-            "确认卸载", MessageBoxButton.OKCancel, MessageBoxImage.Warning);
+            "确认卸载", MessageBoxButton.OKCancel, MessageBoxImage.Warning, MessageBoxResult.Cancel);
 
         if (confirm != MessageBoxResult.OK) return;
 
@@ -592,41 +632,51 @@ public sealed class AppManagerViewModel : ObservableObject, IModule
         }
         catch (Exception ex)
         {
+            SetResidualResult(app, $"无法启动卸载程序：{ex.Message}\n请检查卸载信息后重试。");
             SetError($"无法启动卸载程序：{ex.Message}");
-            HandleResidualCheck(app);
         }
     }
 
     private void StartUninstallWatch(InstalledAppItem app)
     {
         StopWatch();
-        _lastUninstalled = app;
-        OnPropertyChanged(nameof(CanRecheckResidual));
-        OnPropertyChanged(nameof(RecheckResidualText));
+        SetResidualResult(app, "已启动卸载程序，正在等待卸载完成。完成后将在此显示复查结果，也可随时手动复查残留。");
         _uninstallDeadline = DateTime.UtcNow.AddMinutes(10);
 
         _uninstallTimer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(3) };
         _uninstallTimer.Tick += (_, _) =>
         {
-            var regGone = !Reg.Exists(RegPath.Of(app.Hive, app.SubKey));
-            var exe = ContextMenuService.ExtractExecutable(app.UninstallString);
-            var exeGone = !string.IsNullOrWhiteSpace(exe)
-                          && !exe.EndsWith("msiexec.exe", StringComparison.OrdinalIgnoreCase)
-                          && !File.Exists(Environment.ExpandEnvironmentVariables(exe));
+            if (IsBusy) return;
+            try
+            {
+                var regGone = !Reg.Exists(RegPath.Of(app.Hive, app.SubKey));
+                var exe = ContextMenuService.ExtractExecutable(app.UninstallString);
+                var exeGone = !string.IsNullOrWhiteSpace(exe)
+                              && !exe.EndsWith("msiexec.exe", StringComparison.OrdinalIgnoreCase)
+                              && !File.Exists(Environment.ExpandEnvironmentVariables(exe));
 
-            if (regGone || exeGone)
-            {
-                StopWatch();
-                HandleResidualCheck(app);
+                if (regGone || exeGone)
+                {
+                    StopWatch();
+                    HandleResidualCheck(app);
+                }
+                else if (DateTime.UtcNow > _uninstallDeadline)
+                {
+                    StopWatch();
+                    SetResidualResult(app, "等待卸载超时，尚未确认卸载完成。若已完成卸载，可点「复查残留」手动检查。");
+                    _status($"等待「{app.Name}」卸载超时，可在应用页手动复查残留。");
+                }
             }
-            else if (DateTime.UtcNow > _uninstallDeadline)
+            catch (Exception ex)
             {
                 StopWatch();
-                _status("等待卸载超时：可随时点顶部「复查残留」手动检查。");
+                SetResidualResult(app, $"卸载监测失败：{ex.Message}\n可点「复查残留」重试。");
+                SetError($"监测「{app.Name}」卸载状态失败：{ex.Message}");
+                _status($"「{app.Name}」卸载监测失败，详情已保留在应用页。");
             }
         };
         _uninstallTimer.Start();
-        _status($"正在等待「{app.Name}」卸载完成（也可随时点顶部「复查残留」）…");
+        _status($"正在等待「{app.Name}」卸载完成（也可随时手动复查残留）…");
     }
 
     private void StopWatch()
@@ -638,7 +688,7 @@ public sealed class AppManagerViewModel : ObservableObject, IModule
 
     private void RecheckResidual()
     {
-        if (_lastUninstalled is null) return;
+        if (IsBusy || _lastUninstalled is null) return;
         var pending = _lastUninstalled;
         StopWatch();
         HandleResidualCheck(pending);
@@ -646,7 +696,7 @@ public sealed class AppManagerViewModel : ObservableObject, IModule
 
     private void ScanItemResidual(InstalledAppItem? app)
     {
-        if (app is null) return;
+        if (app is null || IsBusy) return;
 
         // 用户在列表上点「扫描残留」是想清干净的，直接把他带到能清干净的地方，
         // 而不是弹一串「这个目录 WinKit 不代删」的提示
@@ -674,66 +724,130 @@ public sealed class AppManagerViewModel : ObservableObject, IModule
 
     private void HandleResidualCheck(InstalledAppItem app)
     {
-        var report = _service.ScanResiduals(app);
+        if (IsBusy) return;
 
-        if (!report.HasAny)
+        try
         {
-            _lastUninstalled = null;
-            OnPropertyChanged(nameof(CanRecheckResidual));
-            OnPropertyChanged(nameof(RecheckResidualText));
-            _status($"「{app.Name}」未发现明显残留");
-            MessageBox.Show($"「{app.Name}」未发现失效注册表残留或非空安装目录。",
-                "残留复查", MessageBoxButton.OK, MessageBoxImage.Information);
+            var report = _service.ScanResiduals(app);
+            SetResidualResult(app, BuildResidualDetails(report), report);
+            SetError(null);
+            _status(report.HasAny
+                ? $"「{app.Name}」复查完成，发现 {report.RegistryResiduals.Count + (report.FolderStillExists ? 1 : 0)} 处残留"
+                : $"「{app.Name}」未发现明显残留");
             Refresh();
+        }
+        catch (Exception ex)
+        {
+            SetResidualResult(app, $"残留扫描失败：{ex.Message}\n可点「复查残留」重试。");
+            SetError($"扫描「{app.Name}」卸载残留失败：{ex.Message}");
+        }
+    }
+
+    private static string BuildResidualDetails(AppResidualReport report)
+    {
+        if (!report.HasAny) return "未发现失效注册表项或非空安装目录残留。";
+
+        var lines = new List<string>();
+        if (report.RegistryResiduals.Count > 0)
+        {
+            lines.Add($"发现 {report.RegistryResiduals.Count} 处注册表残留：");
+            lines.AddRange(report.RegistryResiduals.Take(8).Select(r => $"• {r.Description}"));
+            if (report.RegistryResiduals.Count > 8)
+                lines.Add($"…另有 {report.RegistryResiduals.Count - 8} 处");
+            lines.Add("清理只会在你确认后执行，并会先创建可撤销快照。");
+        }
+
+        if (report.FolderStillExists)
+        {
+            lines.Add($"安装目录仍包含文件：{report.InstallLocation}");
+            lines.Add("为避免误删个人数据，WinKit 不会自动删除目录。");
+        }
+
+        return string.Join(Environment.NewLine, lines);
+    }
+
+    private void CleanResidualRegistry()
+    {
+        if (IsBusy || _lastUninstalled is not { } app
+                   || _residualReport is not { RegistryResiduals.Count: > 0 } report) return;
+
+        try
+        {
+            report = _service.ScanResiduals(app);
+            SetResidualResult(app, BuildResidualDetails(report), report);
+            if (report.RegistryResiduals.Count == 0)
+            {
+                SetError(null);
+                _status($"「{app.Name}」已无可清理的注册表残留");
+                return;
+            }
+        }
+        catch (Exception ex)
+        {
+            SetResidualResult(app, $"清理前复查失败：{ex.Message}");
+            SetError($"清理前无法确认「{app.Name}」的残留状态：{ex.Message}");
             return;
         }
 
-        if (report.RegistryResiduals.Count > 0)
+        var preview = string.Join("\n• ", report.RegistryResiduals.Take(8).Select(r => r.Description));
+        if (report.RegistryResiduals.Count > 8)
+            preview += $"\n…另有 {report.RegistryResiduals.Count - 8} 处";
+
+        var confirm = MessageBox.Show(Application.Current.MainWindow,
+            $"将清理「{app.Name}」的 {report.RegistryResiduals.Count} 处注册表残留：\n\n• {preview}\n\n" +
+            "操作前会创建可撤销快照。继续清理吗？",
+            "清理卸载注册表残留", MessageBoxButton.OKCancel, MessageBoxImage.Warning, MessageBoxResult.Cancel);
+        if (confirm != MessageBoxResult.OK) return;
+
+        if (Native.RequireAdmin("清理注册表残留") is { } adminNeeded)
         {
-            var preview = string.Join("\n• ", report.RegistryResiduals.Take(6).Select(r => r.Description));
-            if (report.RegistryResiduals.Count > 6)
-                preview += $"\n…等共 {report.RegistryResiduals.Count} 处注册表残留";
-
-            var askClean = MessageBox.Show(
-                $"发现「{app.Name}」共有 {report.RegistryResiduals.Count} 处注册表残留：\n\n• {preview}\n\n" +
-                "是否立即一键清理这些注册表残留？（清理前自动存快照，可随时撤销）",
-                "发现卸载注册表残留", MessageBoxButton.YesNo, MessageBoxImage.Warning);
-
-            if (askClean == MessageBoxResult.Yes)
-            {
-                // 只拦写入那一步：上面「只看残留报告」不需要管理员权限
-                if (Native.RequireAdmin("清理注册表残留") is { } adminNeeded)
-                {
-                    SetError(adminNeeded);
-                    return;
-                }
-
-                var cleaned = _service.CleanRegistryResiduals(report);
-                _status($"已清理「{app.Name}」的 {cleaned} 处注册表残留");
-            }
+            SetError(adminNeeded);
+            return;
         }
 
-        if (report.FolderStillExists && !string.IsNullOrWhiteSpace(report.InstallLocation))
+        IsBusy = true;
+        try
         {
-            var askOpen = MessageBox.Show(
-                $"原安装目录仍然存在且包含残留文件：\n{report.InstallLocation}\n\n" +
-                "为防止误删个人数据，WinKit 不直接代删文件夹。是否立即在资源管理器中打开该目录？",
-                "发现残留安装目录", MessageBoxButton.YesNo, MessageBoxImage.Information);
-
-            if (askOpen == MessageBoxResult.Yes)
-            {
-                try
-                {
-                    Native.OpenPath(report.InstallLocation);
-                }
-                catch (Exception) { }
-            }
+            var cleaned = _service.CleanRegistryResiduals(report);
+            var refreshedReport = _service.ScanResiduals(app);
+            SetResidualResult(app,
+                $"已清理 {cleaned} 处注册表残留，操作前已创建可撤销快照。\n\n{BuildResidualDetails(refreshedReport)}",
+                refreshedReport);
+            SetError(null);
+            _status($"已清理「{app.Name}」的 {cleaned} 处注册表残留");
+        }
+        catch (Exception ex)
+        {
+            SetResidualResult(app, $"清理或复查失败：{ex.Message}\n可检查错误提示后重新复查。");
+            SetError($"清理「{app.Name}」注册表残留失败：{ex.Message}");
+        }
+        finally
+        {
+            IsBusy = false;
         }
 
-        _lastUninstalled = null;
-        OnPropertyChanged(nameof(CanRecheckResidual));
-        OnPropertyChanged(nameof(RecheckResidualText));
         Refresh();
+    }
+
+    private void OpenResidualFolder()
+    {
+        if (IsBusy || _lastUninstalled is not { } app
+                   || _residualReport is not { FolderStillExists: true } report) return;
+
+        if (!Directory.Exists(report.InstallLocation))
+        {
+            HandleResidualCheck(app);
+            return;
+        }
+
+        try
+        {
+            Native.OpenPath(report.InstallLocation);
+        }
+        catch (Exception ex)
+        {
+            SetError($"打开残留目录失败：{ex.Message}");
+        }
     }
 
     private void OpenLocation(InstalledAppItem? app)
@@ -741,8 +855,7 @@ public sealed class AppManagerViewModel : ObservableObject, IModule
         if (app is null || string.IsNullOrWhiteSpace(app.InstallLocation)) return;
         if (!Directory.Exists(app.InstallLocation))
         {
-            MessageBox.Show($"目录不存在：\n{app.InstallLocation}", "WinKit",
-                MessageBoxButton.OK, MessageBoxImage.Information);
+            SetError($"目录不存在：{app.InstallLocation}");
             return;
         }
 
@@ -771,15 +884,14 @@ public sealed class AppManagerViewModel : ObservableObject, IModule
     {
         if (app is null || string.IsNullOrWhiteSpace(app.RegistryPath))
         {
-            MessageBox.Show("该条目没有直接关联的本地注册表路径。", "WinKit",
-                MessageBoxButton.OK, MessageBoxImage.Information);
+            SetError("该条目没有直接关联的本地注册表路径。");
             return;
         }
 
         if (Native.OpenInRegedit(app.RegistryPath))
             _status($"已在注册表编辑器中定位：{app.Name}");
         else
-            _status("无法打开注册表编辑器");
+            SetError("无法打开注册表编辑器，请确认未取消授权且系统允许启动 regedit。");
     }
 
     public void RefreshRuntimes()
@@ -793,7 +905,7 @@ public sealed class AppManagerViewModel : ObservableObject, IModule
         }
         catch (Exception ex)
         {
-            _status($"运行库检测失败：{ex.Message}");
+            SetError($"运行库检测失败：{ex.Message}");
         }
     }
 
@@ -836,7 +948,7 @@ public sealed class AppManagerViewModel : ObservableObject, IModule
             $"安装方式：{sourceDesc}\n" +
             $"组件说明：{item.Description}\n\n" +
             "确定继续吗？",
-            $"{actionName}运行库", MessageBoxButton.OKCancel, MessageBoxImage.Information);
+            $"{actionName}运行库", MessageBoxButton.OKCancel, MessageBoxImage.Information, MessageBoxResult.Cancel);
 
         if (confirm != MessageBoxResult.OK) return;
 
@@ -849,7 +961,7 @@ public sealed class AppManagerViewModel : ObservableObject, IModule
 
             if (!ok)
             {
-                MessageBox.Show(msg, "运行库安装结果", MessageBoxButton.OK, MessageBoxImage.Warning);
+                SetError(msg);
             }
         }
         finally
@@ -869,7 +981,7 @@ public sealed class AppManagerViewModel : ObservableObject, IModule
         var confirm = MessageBox.Show(
             $"将依次通过官方源安装本机缺失的 {missing.Count} 项运行库：\n\n• {listPreview}\n\n" +
             "确定开始一键补齐吗？",
-            "一键补齐缺失运行库", MessageBoxButton.OKCancel, MessageBoxImage.Information);
+            "一键补齐缺失运行库", MessageBoxButton.OKCancel, MessageBoxImage.Information, MessageBoxResult.Cancel);
 
         if (confirm != MessageBoxResult.OK) return;
 
@@ -893,9 +1005,7 @@ public sealed class AppManagerViewModel : ObservableObject, IModule
 
             if (failed.Count > 0)
             {
-                MessageBox.Show(
-                    $"已成功安装 {okCount} 项运行库，以下 {failed.Count} 项未完成：\n\n• " + string.Join("\n• ", failed),
-                    "运行库批量安装结果", MessageBoxButton.OK, MessageBoxImage.Warning);
+                SetError($"已成功安装 {okCount} 项运行库，以下 {failed.Count} 项未完成：\n• " + string.Join("\n• ", failed));
             }
         }
         finally
@@ -914,7 +1024,7 @@ public sealed class AppManagerViewModel : ObservableObject, IModule
         }
         catch (Exception ex)
         {
-            _status($"检测系统工具库失败：{ex.Message}");
+            SetError($"检测系统工具库失败：{ex.Message}");
         }
     }
 
@@ -967,7 +1077,7 @@ public sealed class AppManagerViewModel : ObservableObject, IModule
         _status(msg);
         if (!ok)
         {
-            MessageBox.Show(msg, "WinKit", MessageBoxButton.OK, MessageBoxImage.Warning);
+            SetError(msg);
         }
     }
 
@@ -997,7 +1107,7 @@ public sealed class AppManagerViewModel : ObservableObject, IModule
             $"分类：{tool.Category}\n" +
             $"简介：{tool.Description}\n\n" +
             "确定继续吗？",
-            $"{actionName}系统工具", MessageBoxButton.OKCancel, MessageBoxImage.Information);
+            $"{actionName}系统工具", MessageBoxButton.OKCancel, MessageBoxImage.Information, MessageBoxResult.Cancel);
 
         if (confirm != MessageBoxResult.OK) return;
 
@@ -1009,7 +1119,7 @@ public sealed class AppManagerViewModel : ObservableObject, IModule
             RefreshTools();
             if (!ok)
             {
-                MessageBox.Show(msg, "工具安装结果", MessageBoxButton.OK, MessageBoxImage.Warning);
+                SetError(msg);
             }
         }
         finally
@@ -1028,7 +1138,7 @@ public sealed class AppManagerViewModel : ObservableObject, IModule
 
         var confirm = MessageBox.Show(
             $"将依次通过系统 winget 官方源安装/更新以下 {targets.Count} 款工具：\n\n• {preview}\n\n确定开始批量安装吗？",
-            "批量安装系统工具", MessageBoxButton.OKCancel, MessageBoxImage.Information);
+            "批量安装系统工具", MessageBoxButton.OKCancel, MessageBoxImage.Information, MessageBoxResult.Cancel);
 
         if (confirm != MessageBoxResult.OK) return;
 
@@ -1052,9 +1162,7 @@ public sealed class AppManagerViewModel : ObservableObject, IModule
 
             if (failed.Count > 0)
             {
-                MessageBox.Show(
-                    $"已成功安装 {okCount} 款工具，以下 {failed.Count} 款未完成：\n\n• " + string.Join("\n• ", failed),
-                    "批量安装结果", MessageBoxButton.OK, MessageBoxImage.Warning);
+                SetError($"已成功安装 {okCount} 款工具，以下 {failed.Count} 款未完成：\n• " + string.Join("\n• ", failed));
             }
         }
         finally

@@ -13,6 +13,7 @@ public sealed class DuplicateViewModel : ObservableObject, IModule
     private readonly Action<string> _status;
     private readonly Action<bool>? _setBusy;
     private CancellationTokenSource? _cts;
+    private int _rootsVersion;
 
     private bool _isBusy;
     private bool _includeHidden;
@@ -28,15 +29,28 @@ public sealed class DuplicateViewModel : ObservableObject, IModule
         Roots = new ObservableCollection<string>();
         Groups = new ObservableCollection<DuplicateGroup>();
 
-        ScanCommand = new RelayCommand(() => _ = ScanAsync());
-        CancelCommand = new RelayCommand(Cancel);
-        AddRootCommand = new RelayCommand(AddRoot);
-        RemoveRootCommand = new RelayCommand(p => RemoveRoot(p as string));
-        ClearRootsCommand = new RelayCommand(ClearRoots);
-        DeleteGroupDuplicatesCommand = new RelayCommand(p => _ = DeleteGroupDuplicatesAsync(p as DuplicateGroup));
+        ScanCommand = new RelayCommand(() => _ = ScanAsync(), () => !IsBusy && Roots.Count > 0);
+        CancelCommand = new RelayCommand(Cancel, () => IsBusy && _cts is { IsCancellationRequested: false });
+        AddRootCommand = new RelayCommand(AddRoot, () => !IsBusy);
+        RemoveRootCommand = new RelayCommand(p => RemoveRoot(p as string),
+            p => !IsBusy && p is string root && Roots.Contains(root));
+        ClearRootsCommand = new RelayCommand(ClearRoots, () => !IsBusy && Roots.Count > 0);
+        DeleteGroupDuplicatesCommand = new RelayCommand(p => _ = DeleteGroupDuplicatesAsync(p as DuplicateGroup),
+            p => !IsBusy && p is DuplicateGroup group && group.Count > 1 && Groups.Contains(group));
         OpenFileFolderCommand = new RelayCommand(p => OpenFileFolder(p as DuplicateFile));
-        DeleteFileCommand = new RelayCommand(p => _ = DeleteFilesAsync(new[] { p as DuplicateFile }));
-        SelectCommonRootsCommand = new RelayCommand(AddCommonRoots);
+        DeleteFileCommand = new RelayCommand(p => _ = DeleteFileAsync(p as DuplicateFile),
+            p => !IsBusy && p is DuplicateFile file && Groups.Any(g => g.Count > 1 && g.Files.Contains(file)));
+        SelectCommonRootsCommand = new RelayCommand(AddCommonRoots, () => !IsBusy);
+
+        Roots.CollectionChanged += (_, _) =>
+        {
+            _rootsVersion++;
+            Groups.Clear();
+            OnPropertyChanged(nameof(HasGroups));
+            SummaryText = "";
+            ErrorText = "";
+            ScanCommand.RaiseCanExecuteChanged();
+        };
     }
 
     public ObservableCollection<string> Roots { get; }
@@ -57,20 +71,25 @@ public sealed class DuplicateViewModel : ObservableObject, IModule
         get => _isBusy;
         private set
         {
-            if (Set(ref _isBusy, value)) _setBusy?.Invoke(value);
+            if (!Set(ref _isBusy, value)) return;
+            OnPropertyChanged(nameof(CanEditScanOptions));
+            ScanCommand.RaiseCanExecuteChanged();
+            _setBusy?.Invoke(value);
         }
     }
+
+    public bool CanEditScanOptions => !IsBusy;
 
     public bool IncludeHidden
     {
         get => _includeHidden;
-        set => Set(ref _includeHidden, value);
+        set { if (!IsBusy) Set(ref _includeHidden, value); }
     }
 
     public string MinSizeText
     {
         get => _minSizeText;
-        set => Set(ref _minSizeText, value);
+        set { if (!IsBusy) Set(ref _minSizeText, value); }
     }
 
     public string SummaryText
@@ -94,11 +113,13 @@ public sealed class DuplicateViewModel : ObservableObject, IModule
 
     public void Refresh()
     {
-        if (Roots.Count > 0) _ = ScanAsync();
+        if (!IsBusy && Roots.Count > 0) _ = ScanAsync();
     }
 
     private void AddCommonRoots()
     {
+        if (IsBusy) return;
+
         var candidates = new[]
         {
             Environment.GetFolderPath(Environment.SpecialFolder.MyPictures),
@@ -120,13 +141,15 @@ public sealed class DuplicateViewModel : ObservableObject, IModule
 
     private void AddRoot()
     {
+        if (IsBusy) return;
+
         var dialog = new Microsoft.Win32.OpenFolderDialog
         {
             Title = "选择要扫描重复文件的文件夹",
             Multiselect = false
         };
 
-        if (dialog.ShowDialog() != true) return;
+        if (dialog.ShowDialog() != true || IsBusy) return;
         if (Roots.Contains(dialog.FolderName, StringComparer.OrdinalIgnoreCase)) return;
 
         Roots.Add(dialog.FolderName);
@@ -134,16 +157,14 @@ public sealed class DuplicateViewModel : ObservableObject, IModule
 
     private void RemoveRoot(string? root)
     {
-        if (string.IsNullOrWhiteSpace(root)) return;
+        if (IsBusy || string.IsNullOrWhiteSpace(root)) return;
         Roots.Remove(root);
     }
 
     private void ClearRoots()
     {
+        if (IsBusy) return;
         Roots.Clear();
-        Groups.Clear();
-        OnPropertyChanged(nameof(HasGroups));
-        SummaryText = "";
     }
 
     private static long ParseMinSize(string text, out string? error)
@@ -182,7 +203,9 @@ public sealed class DuplicateViewModel : ObservableObject, IModule
 
     private void Cancel()
     {
-        _cts?.Cancel();
+        if (!IsBusy || _cts is null || _cts.IsCancellationRequested) return;
+        _cts.Cancel();
+        CancelCommand.RaiseCanExecuteChanged();
         _status("已请求取消…");
     }
 
@@ -204,93 +227,172 @@ public sealed class DuplicateViewModel : ObservableObject, IModule
             return;
         }
 
+        var scanRoots = Roots.ToArray();
+        var includeHidden = IncludeHidden;
+        var rootsVersion = _rootsVersion;
+        _cts?.Dispose();
+        _cts = new CancellationTokenSource();
+        var token = _cts.Token;
+
         IsBusy = true;
         ErrorText = "";
         Groups.Clear();
         OnPropertyChanged(nameof(HasGroups));
         SummaryText = "正在扫描…";
 
-        _cts?.Dispose();
-        _cts = new CancellationTokenSource();
-        var token = _cts.Token;
-
         try
         {
             var (groups, error) = await Task.Run(
-                () => _service.Find(Roots.ToList(), minSize, IncludeHidden, s => _status(s), token), token);
+                () => _service.Find(scanRoots, minSize, includeHidden, s => _status(s), token), token);
+
+            if (rootsVersion != _rootsVersion)
+            {
+                ErrorText = "扫描范围已变化，本次结果已丢弃，请重新扫描";
+                SummaryText = "扫描未应用";
+                _status(ErrorText);
+                return;
+            }
 
             ErrorText = error ?? "";
 
             foreach (var group in groups) Groups.Add(group);
             OnPropertyChanged(nameof(HasGroups));
 
+            if (error is not null || token.IsCancellationRequested)
+            {
+                var cancelled = token.IsCancellationRequested || error == "已取消扫描";
+                ErrorText = error ?? "已取消扫描";
+                SummaryText = cancelled
+                    ? $"扫描已取消，结果不完整（已发现 {groups.Count} 组）"
+                    : $"扫描失败：{error}（已发现 {groups.Count} 组，结果不完整）";
+                _status(SummaryText);
+                return;
+            }
+
             SummaryText = DuplicateFinderService.Summarize(groups);
             _status($"重复文件扫描完成：{groups.Count} 组");
         }
         catch (OperationCanceledException)
         {
-            SummaryText = "已取消";
-            _status("已取消扫描");
+            ErrorText = "已取消扫描";
+            SummaryText = "扫描已取消，结果不完整";
+            _status(SummaryText);
         }
         catch (Exception ex)
         {
             ErrorText = ex.Message;
-            _status($"扫描失败：{ex.Message}");
+            SummaryText = $"扫描失败：{ex.Message}";
+            _status(SummaryText);
         }
         finally
         {
+            _cts?.Dispose();
+            _cts = null;
             IsBusy = false;
         }
     }
 
-    private async Task DeleteGroupDuplicatesAsync(DuplicateGroup? group)
+    private Task DeleteGroupDuplicatesAsync(DuplicateGroup? group)
     {
-        if (group is null || group.Files.Count < 2) return;
+        if (IsBusy || group is null || group.Files.Count < 2 || !Groups.Contains(group))
+            return Task.CompletedTask;
 
-        // 默认保留最先列出的那份（路径字典序，通常是较早建立的），其余进回收站
-        var keep = group.Files[0];
-        var targets = group.Files.Skip(1).ToList();
+        // 默认保留路径字典序最先列出的那份；与单文件清理使用相同的复核流程。
+        return DeleteFilesAsync(group, group.Files.Skip(1), group.Files[0].FullPath);
+    }
+
+    private Task DeleteFileAsync(DuplicateFile? file)
+    {
+        if (IsBusy || file is null) return Task.CompletedTask;
+        var group = Groups.FirstOrDefault(g => g.Files.Contains(file));
+        var targetPath = DuplicateFinderService.NormalizePath(file.FullPath);
+        var keep = group?.Files.FirstOrDefault(f =>
+            DuplicateFinderService.NormalizePath(f.FullPath) is { } path &&
+            !StringComparer.OrdinalIgnoreCase.Equals(path, targetPath));
+        if (group is null || targetPath is null || keep is null)
+        {
+            ErrorText = "无法确认同组的另一份保留文件，请重新扫描";
+            _status(ErrorText);
+            return Task.CompletedTask;
+        }
+
+        return DeleteFilesAsync(group, new[] { file }, keep.FullPath);
+    }
+
+    private async Task DeleteFilesAsync(DuplicateGroup group, IEnumerable<DuplicateFile> files, string keepPath)
+    {
+        if (IsBusy || !Groups.Contains(group)) return;
+
+        var keep = DuplicateFinderService.NormalizePath(keepPath);
+        if (keep is null)
+        {
+            ErrorText = "无法确认保留文件路径，已取消清理";
+            _status(ErrorText);
+            return;
+        }
+
+        var paths = files.Select(f => DuplicateFinderService.NormalizePath(f.FullPath))
+            .OfType<string>()
+            .Where(path => !StringComparer.OrdinalIgnoreCase.Equals(path, keep))
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToList();
+        if (paths.Count == 0)
+        {
+            ErrorText = "没有可安全移入回收站的其它文件";
+            _status(ErrorText);
+            return;
+        }
 
         var confirm = MessageBox.Show(
-            $"「{group.SizeText} × {group.Count}」这一组将保留：\n{keep.FullPath}\n\n" +
-            $"并把这 {targets.Count} 份移入回收站：\n• " +
-            string.Join("\n• ", targets.Select(t => t.FullPath)) +
-            "\n\n移入回收站后仍可还原。确定继续吗？",
-            "清理重复文件", MessageBoxButton.OKCancel, MessageBoxImage.Warning);
+            $"将保留：\n{keep}\n\n把以下 {paths.Count} 份移入回收站：\n• " +
+            string.Join("\n• ", paths) +
+            "\n\n操作前会按扫描时的大小和完整 SHA-256 重新复核，变化或无法确认的文件会跳过。" +
+            "\n移入回收站后仍可还原。确定继续吗？",
+            "清理重复文件", MessageBoxButton.OKCancel, MessageBoxImage.Warning, MessageBoxResult.Cancel);
+        if (confirm != MessageBoxResult.OK || IsBusy || !Groups.Contains(group)) return;
 
-        if (confirm != MessageBoxResult.OK) return;
-
-        await DeleteFilesAsync(targets);
-    }
-
-    private async Task DeleteFilesAsync(IEnumerable<DuplicateFile?> files)
-    {
-        var paths = files.Where(f => f is not null).Select(f => f!.FullPath).ToList();
-        if (paths.Count == 0) return;
-
-        if (paths.Count == 1)
-        {
-            var confirmOne = MessageBox.Show(
-                $"将把这个文件移入回收站：\n\n{paths[0]}\n\n确定继续吗？",
-                "移入回收站", MessageBoxButton.OKCancel, MessageBoxImage.Warning);
-            if (confirmOne != MessageBoxResult.OK) return;
-        }
-
+        var expectedSize = group.Size;
+        var expectedHash = group.Hash;
         IsBusy = true;
+        ErrorText = "";
+        SummaryText = "正在重新核验内容并移入回收站…";
         try
         {
-            var (ok, message) = await Task.Run(() => DuplicateFinderService.MoveToRecycleBin(paths));
-            _status(message);
-
-            if (!ok) MessageBox.Show(message, "清理结果", MessageBoxButton.OK, MessageBoxImage.Warning);
+            var result = await Task.Run(() =>
+                DuplicateFinderService.MoveToRecycleBin(paths, keep, expectedSize, expectedHash));
+            RemoveRecycledFiles(result.MovedPaths);
+            SummaryText = result.Message;
+            ErrorText = string.Join("\n\n", result.Failures);
+            _status(result.Message);
+        }
+        catch (Exception ex)
+        {
+            ErrorText = $"{ex.Message}\n请重新扫描以确认当前文件状态";
+            SummaryText = "清理未能完成";
+            _status(SummaryText);
         }
         finally
         {
             IsBusy = false;
         }
+    }
 
-        // 删完立刻重扫，避免界面留着已经不存在的文件
-        await ScanAsync();
+    private void RemoveRecycledFiles(IReadOnlyList<string> movedPaths)
+    {
+        if (movedPaths.Count == 0) return;
+        var moved = new HashSet<string>(movedPaths, StringComparer.OrdinalIgnoreCase);
+        for (var i = Groups.Count - 1; i >= 0; i--)
+        {
+            var group = Groups[i];
+            var remaining = group.Files.Where(f =>
+                DuplicateFinderService.NormalizePath(f.FullPath) is not { } path || !moved.Contains(path)).ToList();
+            if (remaining.Count == group.Files.Count) continue;
+            if (remaining.Count < 2)
+                Groups.RemoveAt(i);
+            else
+                Groups[i] = new DuplicateGroup { Hash = group.Hash, Size = group.Size, Files = remaining };
+        }
+        OnPropertyChanged(nameof(HasGroups));
     }
 
     private void OpenFileFolder(DuplicateFile? file)

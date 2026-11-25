@@ -26,8 +26,10 @@
                                    Margin="0,0,6,0" />
                         <TextBox Style="{StaticResource SearchBox}" Width="90"
                                  Text="{Binding MinSizeText, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
+                                 IsEnabled="{Binding CanEditScanOptions}"
                                  ToolTip="支持 500 KB / 1 MB / 2 GB 这类写法" />
                         <CheckBox Content="包含隐藏/系统文件" IsChecked="{Binding IncludeHidden, Mode=TwoWay}"
+                                  IsEnabled="{Binding CanEditScanOptions}"
                                   VerticalAlignment="Center" Margin="14,0,0,0" />
                     </StackPanel>
 
@@ -72,17 +74,14 @@
             </StackPanel>
         </Border>
 
-        <Grid Grid.Row="1" Margin="0,0,0,8">
-            <Grid.ColumnDefinitions>
-                <ColumnDefinition Width="*" />
-                <ColumnDefinition Width="Auto" />
-            </Grid.ColumnDefinitions>
-            <TextBlock Grid.Column="0" Text="{Binding SummaryText}" Style="{StaticResource Muted}"
-                       VerticalAlignment="Center" />
-            <TextBlock Grid.Column="1" Text="{Binding ErrorText}" Style="{StaticResource Muted}"
-                       Foreground="{DynamicResource Brush.Danger}" VerticalAlignment="Center"
-                       Visibility="{Binding HasError, Converter={StaticResource BoolToVis}}" />
-        </Grid>
+        <StackPanel Grid.Row="1" Margin="0,0,0,8">
+            <TextBlock Text="{Binding SummaryText}" Style="{StaticResource Muted}" TextWrapping="Wrap" />
+            <ScrollViewer MaxHeight="140" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled"
+                          Margin="0,4,0,0" Visibility="{Binding HasError, Converter={StaticResource BoolToVis}}">
+                <TextBlock Text="{Binding ErrorText}" Style="{StaticResource Muted}" TextWrapping="Wrap"
+                           Foreground="{DynamicResource Brush.Danger}" />
+            </ScrollViewer>
+        </StackPanel>
 
         <TextBlock Grid.Row="2" Style="{StaticResource Muted}" Margin="0,0,0,8"
                    Text="只有「大小 → 头部 64KB → 全文件 SHA-256」三级校验都相同的文件才会被列为重复。清理一律移入回收站，可还原。" />

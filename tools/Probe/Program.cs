@@ -15,6 +15,15 @@ internal static class Program
         if (args.Length > 0 && args[0] == "--selftest")
             return SelfTest();
 
+        if (args.Length > 0 && args[0] == "--journal-selftest")
+            return JournalSelfTest() == 0 ? 0 : 1;
+
+        if (args.Length > 0 && args[0] == "--duplicate-selftest")
+            return DuplicateCleanupSelfTest() == 0 ? 0 : 1;
+
+        if (args.Length > 0 && args[0] == "--duplicate-recycle-selftest")
+            return DuplicateCleanupSelfTest(includeRecycle: true) == 0 ? 0 : 1;
+
         if (args.Length > 0 && args[0] == "--shelltree")
             return ShellTree();
 
@@ -207,7 +216,7 @@ internal static class Program
     {
         var failures = 0;
         var skipped = 0;
-        var journal = new ChangeJournal();
+        var journal = new ChangeJournal(Path.Combine(Path.GetTempPath(), "winkit_selftest_backups_" + Guid.NewGuid().ToString("N")));
         // 不要用 Software\Classes\* 这类受保护路径：非提权时连 HKCU 也会被拒
         var testRoot = @"Software\WinKitSelfTest\Menu";
         var testPath = RegPath.Hkcu(testRoot);
@@ -827,11 +836,539 @@ internal static class Program
             try { Directory.Delete(workDir, true); } catch (Exception) { }
         }
 
+        failures += DuplicateCleanupSelfTest();
+        failures += JournalSelfTest();
+        try { Directory.Delete(journal.StorageDirectory, true); } catch (Exception) { }
         Console.WriteLine();
         Console.WriteLine(failures == 0
             ? $"全部通过（跳过 {skipped} 项）"
             : $"{failures} 项失败，跳过 {skipped} 项");
         return failures == 0 ? 0 : 1;
+    }
+
+    /// <summary>只使用唯一临时目录，验证扫描后变化或被写入的文件绝不按旧指纹清理。</summary>
+    private static int DuplicateCleanupSelfTest(bool includeRecycle = false)
+    {
+        var failures = 0;
+        var checks = 0;
+        var workDir = Path.Combine(Path.GetTempPath(), "winkit_duplicate_cleanup_" + Guid.NewGuid().ToString("N"));
+        // 变化点放在 64 KiB 之后，避免只复核文件头也能误通过回归。
+        var original = Enumerable.Range(0, 96 * 1024 + 17).Select(i => (byte)(i % 251)).ToArray();
+        var changed = (byte[])original.Clone();
+        changed[^1] ^= 0xff;
+        var resized = original[..^1];
+        var expectedHash = Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(original));
+        Console.WriteLine("=== 重复文件清理安全自测（临时夹具） ===");
+
+        void Check(string name, bool condition, string detail = "")
+        {
+            checks++;
+            if (!condition) failures++;
+            Console.WriteLine($"  {(condition ? "PASS" : "FAIL")}  {name}");
+            if (!condition && detail.Length > 0) Console.WriteLine("        " + detail);
+        }
+        void Run(string name, Action action)
+        {
+            try { action(); }
+            catch (Exception ex)
+            {
+                failures++;
+                Console.WriteLine($"  FAIL  {name}：{ex}");
+            }
+        }
+        string Fixture(string name)
+        {
+            var path = Path.Combine(workDir, name + ".bin");
+            File.WriteAllBytes(path, original);
+            return path;
+        }
+        DuplicateCleanupResult Cleanup(string keep, params string[] targets) =>
+            DuplicateFinderService.MoveToRecycleBin(targets, keep, original.LongLength, expectedHash);
+        void CheckRefused(string name, DuplicateCleanupResult result, string failedPath, bool needsRescan = false)
+        {
+            var detail = string.Join("；", result.Failures);
+            Check(name + "：不报告成功且无文件被回收",
+                !result.Ok && result.MovedPaths.Count == 0 && result.Failures.Count > 0, detail);
+            Check(name + "：失败信息包含对应文件路径",
+                result.Failures.Any(message => message.Contains(failedPath, StringComparison.OrdinalIgnoreCase)), detail);
+            if (needsRescan)
+                Check(name + "：明确要求重新扫描",
+                    result.Failures.Any(message => message.Contains("重新扫描", StringComparison.Ordinal)), detail);
+        }
+        void CheckPreserved(string name, string path, byte[] expected) =>
+            Check(name, File.Exists(path) && File.ReadAllBytes(path).SequenceEqual(expected), path);
+
+        try
+        {
+            Directory.CreateDirectory(workDir);
+            Run("目标同大小内容变化", () =>
+            {
+                var keep = Fixture("content-keep");
+                var target = Fixture("content-target");
+                File.WriteAllBytes(target, changed);
+                var result = Cleanup(keep, target);
+                CheckRefused("目标同大小内容变化", result, target, needsRescan: true);
+                CheckPreserved("内容变化目标仍存在且内容不变", target, changed);
+                CheckPreserved("内容变化时保留副本不变", keep, original);
+            });
+            Run("目标大小变化", () =>
+            {
+                var keep = Fixture("size-keep");
+                var target = Fixture("size-target");
+                File.WriteAllBytes(target, resized);
+                var result = Cleanup(keep, target);
+                CheckRefused("目标大小变化", result, target, needsRescan: true);
+                CheckPreserved("大小变化目标仍存在且内容不变", target, resized);
+                CheckPreserved("大小变化时保留副本不变", keep, original);
+            });
+            Run("目标丢失", () =>
+            {
+                var keep = Fixture("missing-target-keep");
+                var target = Fixture("missing-target");
+                File.Delete(target);
+                var result = Cleanup(keep, target);
+                CheckRefused("目标丢失", result, target);
+                Check("丢失目标不会被创建", !File.Exists(target));
+                CheckPreserved("目标丢失时保留副本不变", keep, original);
+            });
+            Run("目标被写入句柄占用", () =>
+            {
+                var keep = Fixture("locked-target-keep");
+                var target = Fixture("locked-target");
+                DuplicateCleanupResult result;
+                // 旧句柄允许删除，确保拒绝来自复核阶段，而不是 Shell 的删除共享冲突。
+                using (var writer = new FileStream(target, FileMode.Open, FileAccess.Write,
+                           FileShare.ReadWrite | FileShare.Delete))
+                    result = Cleanup(keep, target);
+                CheckRefused("目标被写入句柄占用", result, target);
+                CheckPreserved("被写入句柄占用的目标仍完整存在", target, original);
+                CheckPreserved("目标被占用时保留副本不变", keep, original);
+            });
+            Run("保留副本同大小内容变化", () =>
+            {
+                var keep = Fixture("changed-keep");
+                var first = Fixture("changed-keep-target-a");
+                var second = Fixture("changed-keep-target-b");
+                File.WriteAllBytes(keep, changed);
+                var result = Cleanup(keep, first, second);
+                CheckRefused("保留副本同大小内容变化", result, keep, needsRescan: true);
+                CheckPreserved("内容变化的保留副本不变", keep, changed);
+                CheckPreserved("保留副本内容变化时首个目标未清理", first, original);
+                CheckPreserved("保留副本内容变化时后续目标未清理", second, original);
+            });
+            Run("保留副本大小变化", () =>
+            {
+                var keep = Fixture("resized-keep");
+                var first = Fixture("resized-keep-target-a");
+                var second = Fixture("resized-keep-target-b");
+                File.WriteAllBytes(keep, resized);
+                var result = Cleanup(keep, first, second);
+                CheckRefused("保留副本大小变化", result, keep, needsRescan: true);
+                CheckPreserved("大小变化的保留副本不变", keep, resized);
+                CheckPreserved("保留副本大小变化时首个目标未清理", first, original);
+                CheckPreserved("保留副本大小变化时后续目标未清理", second, original);
+            });
+            Run("保留副本丢失", () =>
+            {
+                var keep = Fixture("missing-keep");
+                var first = Fixture("missing-keep-target-a");
+                var second = Fixture("missing-keep-target-b");
+                File.Delete(keep);
+                var result = Cleanup(keep, first, second);
+                CheckRefused("保留副本丢失", result, keep);
+                Check("丢失的保留副本不会被创建", !File.Exists(keep));
+                CheckPreserved("保留副本丢失时首个目标未清理", first, original);
+                CheckPreserved("保留副本丢失时后续目标未清理", second, original);
+            });
+            Run("保留副本被写入句柄占用", () =>
+            {
+                var keep = Fixture("locked-keep");
+                var first = Fixture("locked-keep-target-a");
+                var second = Fixture("locked-keep-target-b");
+                DuplicateCleanupResult result;
+                using (var writer = new FileStream(keep, FileMode.Open, FileAccess.Write,
+                           FileShare.ReadWrite | FileShare.Delete))
+                    result = Cleanup(keep, first, second);
+                CheckRefused("保留副本被写入句柄占用", result, keep);
+                CheckPreserved("被写入句柄占用的保留副本仍完整存在", keep, original);
+                CheckPreserved("保留副本被占用时首个目标未清理", first, original);
+                CheckPreserved("保留副本被占用时后续目标未清理", second, original);
+            });
+            if (includeRecycle)
+            {
+                Run("真实回收独立夹具", () =>
+                {
+                    var keep = Fixture("recycle-keep");
+                    var target = Fixture("recycle-target");
+                    var result = Cleanup(keep, keep, target, target);
+                    Check("真实回收成功且重复路径只报告一次", result.Ok
+                        && result.MovedPaths.SequenceEqual(new[] { target }, StringComparer.OrdinalIgnoreCase),
+                        string.Join("；", result.Failures));
+                    Check("真实回收后目标不在原位置", !File.Exists(target));
+                    CheckPreserved("真实回收保留最后副本", keep, original);
+                });
+            }
+        }
+        catch (Exception ex)
+        {
+            failures++;
+            Console.WriteLine("  FAIL  重复清理夹具初始化：" + ex);
+        }
+        finally
+        {
+            try { if (Directory.Exists(workDir)) Directory.Delete(workDir, true); }
+            catch (Exception ex)
+            {
+                failures++;
+                Console.WriteLine("  FAIL  重复清理临时夹具清理：" + ex.Message);
+            }
+        }
+
+        Console.WriteLine($"重复文件清理安全：{checks} 项断言，{failures} 项失败");
+        return failures;
+    }
+
+    /// <summary>仅使用临时文件、隔离备份目录和专用 HKCU 键，真实制造保存/写回失败。</summary>
+    private static int JournalSelfTest()
+    {
+        var failures = 0;
+        var checks = 0;
+        var workDir = Path.Combine(Path.GetTempPath(), "winkit_journal_" + Guid.NewGuid().ToString("N"));
+        var registryRoot = @"Software\WinKitSelfTest\Journal_" + Guid.NewGuid().ToString("N");
+        Directory.CreateDirectory(workDir);
+        Console.WriteLine("=== 撤销可靠性自测（临时夹具） ===");
+
+        void Check(string name, bool condition)
+        {
+            checks++;
+            if (!condition) failures++;
+            Console.WriteLine($"  {(condition ? "PASS" : "FAIL")}  {name}");
+        }
+        void Run(string name, Action action)
+        {
+            try { action(); }
+            catch (Exception ex)
+            {
+                failures++;
+                Console.WriteLine($"  FAIL  {name}：{ex}");
+            }
+        }
+        Exception? Error(Action action)
+        {
+            try { action(); return null; }
+            catch (Exception ex) { return ex; }
+        }
+        ChangeJournal Journal(string name) => new(Path.Combine(workDir, name + "-backups"));
+        string Fixture(string name, string text = "before")
+        {
+            var path = Path.Combine(workDir, name + ".txt");
+            File.WriteAllText(path, text);
+            return path;
+        }
+        var noKeys = Array.Empty<(HiveKind, string)>();
+
+        try
+        {
+            Run("保存失败", () =>
+            {
+                var blocker = Fixture("backup-directory-is-file");
+                var journal = new ChangeJournal(blocker);
+                var executed = false;
+                var sync = Error(() => journal.Record("保存失败", noKeys, () => executed = true));
+                Check("Record 保存失败拒绝执行且没有虚假历史", sync is IOException && !executed && !journal.CanUndo);
+                var asyncError = Error(() => journal.RecordAsync("异步保存失败", noKeys,
+                    () => { executed = true; return Task.CompletedTask; }).GetAwaiter().GetResult());
+                Check("RecordAsync 保存失败拒绝执行", asyncError is IOException && !executed && journal.SessionCount == 0);
+            });
+
+            Run("操作前落盘与兼容接口", () =>
+            {
+                var journal = Journal("before-action");
+                var path = Fixture("before-action");
+                var durable = false;
+                var snapshot = journal.Record("先保存", noKeys, () =>
+                {
+                    var saved = journal.ListBackups();
+                    durable = saved.Count == 1
+                        && System.Text.Json.JsonSerializer.Deserialize<OperationSnapshot>(File.ReadAllText(saved[0].FullName))
+                            ?.Files.Single().Base64Data == Convert.ToBase64String(Encoding.UTF8.GetBytes("before"));
+                    File.WriteAllText(path, "after");
+                }, new[] { path });
+                Check("动作执行前已有完整可解析快照", durable);
+                Check("旧 UndoLast 成功仍返回标题", journal.UndoLast() == "先保存");
+                Check("成功撤销恢复原文件并清理快照", File.ReadAllText(path) == "before"
+                    && !File.Exists(snapshot.SavedFilePath) && !journal.CanUndo);
+                Check("空历史结构化结果不冒充一次撤销", journal.UndoLastResult() is { Succeeded: true, HasChanges: false }
+                    && journal.UndoLast() is null && journal.RollbackSession() is null);
+            });
+
+            Run("文件撤销写回失败", () =>
+            {
+                var journal = Journal("locked-undo");
+                var path = Fixture("locked-undo");
+                var snapshot = journal.Record("文件占用", noKeys, () => File.WriteAllText(path, "after"), new[] { path });
+                JournalRestoreResult? reported = null;
+                journal.ResultReported += result => reported = result;
+                using (File.Open(path, FileMode.Open, FileAccess.ReadWrite, FileShare.None))
+                {
+                    var outcome = journal.UndoLastResult();
+                    Check("真实文件锁失败明确返回失败并发出失败事件", !outcome.Succeeded && outcome.HasChanges
+                        && outcome.Failures?.Count == 1 && reported?.Succeeded == false && !outcome.Message.StartsWith("已撤销"));
+                    Check("撤销失败保留会话和磁盘快照", journal.SessionCount == 1 && File.Exists(snapshot.SavedFilePath));
+                }
+                Check("释放占用后撤销可重试", journal.UndoLastResult().Succeeded && File.ReadAllText(path) == "before" && !journal.CanUndo);
+            });
+
+            Run("原本不存在的文件删除失败", () =>
+            {
+                var journal = Journal("locked-delete");
+                var path = Path.Combine(workDir, "new-file.txt");
+                var snapshot = journal.Record("创建文件", noKeys, () => File.WriteAllText(path, "new"), new[] { path });
+                using (File.Open(path, FileMode.Open, FileAccess.ReadWrite, FileShare.None))
+                    Check("撤销删除失败不会吞错", !journal.UndoLastResult().Succeeded && File.Exists(snapshot.SavedFilePath));
+                Check("撤销删除失败可重试", journal.UndoLastResult().Succeeded && !File.Exists(path));
+            });
+
+            foreach (var asynchronous in new[] { false, true })
+            {
+                Run(asynchronous ? "异步自动回滚失败" : "同步自动回滚失败", () =>
+                {
+                    var label = asynchronous ? "async" : "sync";
+                    var journal = Journal(label + "-action-failure");
+                    var path = Fixture(label + "-action-failure");
+                    var original = new InvalidOperationException(label + "-original-error");
+                    FileStream? held = null;
+                    JournalRestoreResult? reported = null;
+                    journal.ResultReported += result => reported = result;
+                    try
+                    {
+                        void MutateThenFail()
+                        {
+                            File.WriteAllText(path, "partial");
+                            held = File.Open(path, FileMode.Open, FileAccess.ReadWrite, FileShare.None);
+                            throw original;
+                        }
+                        var error = Error(() =>
+                        {
+                            if (asynchronous)
+                                journal.RecordAsync("异步部分失败", noKeys, async () =>
+                                {
+                                    await Task.Yield();
+                                    MutateThenFail();
+                                }, new[] { path }).GetAwaiter().GetResult();
+                            else journal.Record("同步部分失败", noKeys, MutateThenFail, new[] { path });
+                        });
+                        Check($"{label} 自动回滚失败保留原始异常", error is AggregateException aggregate
+                            && aggregate.Flatten().InnerExceptions.Contains(original));
+                        Check($"{label} 自动回滚失败保留可重试历史和文件", journal.SessionCount == 1
+                            && journal.ListBackups().Count == 1 && reported?.Succeeded == false);
+                    }
+                    finally { held?.Dispose(); }
+                    Check($"{label} 自动回滚失败释放占用后可撤销", journal.UndoLastResult().Succeeded
+                        && File.ReadAllText(path) == "before" && !journal.CanUndo);
+                });
+            }
+
+            Run("动作失败但自动回滚成功", () =>
+            {
+                var journal = Journal("rolled-back-action");
+                var path = Fixture("rolled-back-action");
+                var original = new InvalidOperationException("original-action-error");
+                var error = Error(() => journal.Record("执行失败", noKeys, () =>
+                {
+                    File.WriteAllText(path, "partial");
+                    throw original;
+                }, new[] { path }));
+                Check("自动回滚成功保留原始异常并恢复原状态", ReferenceEquals(error, original)
+                    && File.ReadAllText(path) == "before" && !journal.CanUndo && journal.ListBackups().Count == 0);
+            });
+
+            Run("会话回滚失败保持栈顺序", () =>
+            {
+                var journal = Journal("rollback-order");
+                var path = Fixture("rollback-order");
+                var other = Fixture("rollback-other");
+                var first = journal.Record("第一步", noKeys, () => File.WriteAllText(path, "one"), new[] { path });
+                var second = journal.Record("第二步", noKeys, () => File.WriteAllText(path, "two"), new[] { path });
+                var third = journal.Record("第三步", noKeys, () => File.WriteAllText(other, "three"), new[] { other });
+                using (File.Open(path, FileMode.Open, FileAccess.ReadWrite, FileShare.None))
+                {
+                    var outcome = journal.RollbackSessionResult();
+                    Check("部分回滚准确计数并停止在失败处", !outcome.Succeeded && outcome.RestoredCount == 1
+                        && journal.SessionCount == 2 && journal.LastTitle == "第二步");
+                    Check("只清理成功记录，失败及更早快照保留", File.Exists(first.SavedFilePath)
+                        && File.Exists(second.SavedFilePath) && !File.Exists(third.SavedFilePath) && File.ReadAllText(other) == "before");
+                }
+                Check("失败处之前的目标未被更早历史覆盖", File.ReadAllText(path) == "two");
+                var retry = journal.RollbackSessionResult();
+                Check("再次回滚按顺序回到原值", retry.Succeeded && retry.RestoredCount == 2
+                    && File.ReadAllText(path) == "before" && !journal.CanUndo);
+            });
+
+            Run("保留超出清理上限的活跃快照", () =>
+            {
+                var journal = Journal("retention");
+                var path = Fixture("retention");
+                var saved = new List<OperationSnapshot>();
+                for (var i = 0; i < 52; i++)
+                    saved.Add(journal.Record("保留历史 " + i, noKeys, () => File.WriteAllText(path, "step-" + i), new[] { path }));
+                Check("超过50条仍保留全部可撤销数据", saved.All(s => File.Exists(s.SavedFilePath)) && journal.ListBackups().Count == 52);
+                Check("超过50条全部可以按序回滚", journal.RollbackSessionResult() is { Succeeded: true, RestoredCount: 52 }
+                    && File.ReadAllText(path) == "before");
+            });
+
+            Run("备份恢复自身可撤销", () =>
+            {
+                var journal = Journal("restore-backup");
+                var path = Fixture("restore-backup");
+                var source = Path.Combine(workDir, "source-backup.json");
+                File.WriteAllText(source, System.Text.Json.JsonSerializer.Serialize(new OperationSnapshot
+                {
+                    Title = "来源备份", Files = new() { SnapshotEngine.CaptureFile(path) }
+                }));
+                File.WriteAllText(path, "current");
+                journal.RestoreBackup(source);
+                Check("还原备份生效并保留来源", File.ReadAllText(path) == "before" && File.Exists(source) && journal.SessionCount == 1);
+                Check("还原备份可撤销至恢复前状态", journal.UndoLastResult().Succeeded && File.ReadAllText(path) == "current" && File.Exists(source));
+            });
+
+            Run("备份目标预览与确认后变化", () =>
+            {
+                var journal = Journal("restore-preview");
+                var path = Fixture("restore-preview");
+                var source = Path.Combine(workDir, "preview-source.json");
+                File.WriteAllText(source, System.Text.Json.JsonSerializer.Serialize(new OperationSnapshot
+                {
+                    Title = "显示目标", Files = new() { SnapshotEngine.CaptureFile(path) }
+                }));
+                File.WriteAllText(path, "current");
+                var preview = journal.PreviewBackup(source);
+                Check("预览显示完整文件路径和覆盖行为", preview.Title == "显示目标"
+                    && preview.TargetsText.Contains(path) && preview.TargetsText.Contains("覆盖"));
+                File.AppendAllText(source, " ");
+                Check("预览后备份变动拒绝写入且不创建撤销记录",
+                    Error(() => journal.RestoreBackup(source, preview.ContentHash)) is InvalidOperationException
+                    && File.ReadAllText(path) == "current" && !journal.CanUndo);
+                var reviewed = journal.PreviewBackup(source);
+                journal.RestoreBackup(source, reviewed.ContentHash);
+                Check("重新核对后可恢复且可撤销", File.ReadAllText(path) == "before"
+                    && journal.UndoLastResult().Succeeded && File.ReadAllText(path) == "current");
+                Check("相对文件路径拒绝恢复", Error(() => SnapshotEngine.Validate(new SnapshotFile
+                {
+                    Path = "relative.txt", Existed = false
+                })) is InvalidOperationException);
+            });
+
+            Run("备份部分恢复失败", () =>
+            {
+                var journal = Journal("partial-restore");
+                var first = Fixture("partial-first");
+                var second = Fixture("partial-second");
+                var source = Path.Combine(workDir, "partial-source.json");
+                File.WriteAllText(source, System.Text.Json.JsonSerializer.Serialize(new OperationSnapshot
+                {
+                    Title = "部分失败备份", Files = new() { SnapshotEngine.CaptureFile(first), SnapshotEngine.CaptureFile(second) }
+                }));
+                File.WriteAllText(first, "current-first");
+                File.WriteAllText(second, "current-second");
+                using (File.Open(second, FileMode.Open, FileAccess.Read, FileShare.Read))
+                {
+                    var error = Error(() => journal.RestoreBackup(source));
+                    Check("备份部分恢复失败不返回成功且保留回滚数据", error is AggregateException
+                        && journal.SessionCount == 1 && journal.ListBackups().Count == 1 && File.Exists(source));
+                    Check("部分恢复失败将能写回的文件自动回滚", File.ReadAllText(first) == "current-first");
+                }
+                Check("部分恢复失败后可重试撤销", journal.UndoLastResult().Succeeded
+                    && File.ReadAllText(first) == "current-first" && File.ReadAllText(second) == "current-second");
+            });
+
+            Run("缺失还原数据拒绝写入", () =>
+            {
+                var journal = Journal("invalid-data");
+                var path = Fixture("invalid-data", "keep-current");
+                var source = Path.Combine(workDir, "missing-data.json");
+                File.WriteAllText(source, System.Text.Json.JsonSerializer.Serialize(new OperationSnapshot
+                {
+                    Files = new() { new SnapshotFile { Path = path, Existed = true, Base64Data = null } }
+                }));
+                Check("缺失内容不会以空文件假还原成功", Error(() => journal.RestoreBackup(source)) is InvalidOperationException
+                    && File.ReadAllText(path) == "keep-current" && !journal.CanUndo);
+                Check("跟踪目录不会误记为不存在的文件", Error(() => journal.Record("错误文件路径", noKeys,
+                    () => throw new Exception("不应执行"), new[] { workDir })) is IOException);
+            });
+
+            Run("不存在文件与注册表快照验证", () =>
+            {
+                Check("目标和父目录均不存在时删除还原成功", Error(() => SnapshotEngine.RestoreFile(new SnapshotFile
+                {
+                    Path = Path.Combine(workDir, "absent-parent", "absent.txt"), Existed = false
+                })) is null);
+                Check("捕获失败快照明确拒绝还原", Error(() => SnapshotEngine.Restore(new SnapshotKey
+                {
+                    Hive = "HKCU", SubKey = registryRoot, CaptureFailed = true
+                })) is InvalidOperationException);
+                var incomplete = new SnapshotKey
+                {
+                    Hive = "HKCU", SubKey = registryRoot, Existed = true,
+                    Children = new() { new SnapshotKey { Hive = "HKCU", SubKey = registryRoot + @"\child", Truncated = true } }
+                };
+                Check("写父键前预检全部子快照", Error(() => SnapshotEngine.Validate(incomplete)) is InvalidOperationException);
+                var invalidValues = new SnapshotKey
+                {
+                    Hive = "HKCU", SubKey = registryRoot, Existed = true,
+                    Values = new() { new SnapshotValue { Name = "v", Kind = "MultiString", Data = System.Text.Json.Nodes.JsonValue.Create("wrong-array") } }
+                };
+                Check("损坏的多字符串不能按空数组假还原", Error(() => SnapshotEngine.Validate(invalidValues)) is InvalidOperationException);
+                var journal = Journal("invalid-registry");
+                var executed = false;
+                var invalidPath = registryRoot + "\\" + new string('x', 256);
+                Check("Record拒绝无法完整捕获的注册表路径", Error(() => journal.Record("捕获失败",
+                    new[] { (HiveKind.CurrentUser, invalidPath) }, () => executed = true)) is not null
+                    && !executed && !journal.CanUndo);
+                Check("注册表删除失败返回值会转成恢复失败", Error(() => SnapshotEngine.Restore(new SnapshotKey
+                {
+                    Hive = "HKCU", SubKey = invalidPath, Existed = false
+                })) is IOException);
+            });
+
+            if (ProbeRegistryWrite(registryRoot))
+            {
+                Run("注册表不完整快照与字符串保真", () =>
+                {
+                    var path = RegPath.Hkcu(registryRoot);
+                    Reg.SetString(path, "base64-looking", "YWJj");
+                    Reg.SetExpandString(path, "expand", "%TEMP%\\test");
+                    Reg.SetString(RegPath.Hkcu(registryRoot + @"\child"), "v", "original");
+                    var snapshot = SnapshotEngine.Capture(path);
+                    Reg.SetString(path, "base64-looking", "changed");
+                    SnapshotEngine.Restore(snapshot);
+                    Check("看似Base64的普通字符串原样恢复", Reg.GetString(path, "base64-looking") == "YWJj"
+                        && Reg.GetString(path, "expand", false) == "%TEMP%\\test");
+                    snapshot.Children[0].Truncated = true;
+                    Reg.SetString(path, "sentinel", "keep");
+                    Check("子快照不完整时在修改父键前拒绝", Error(() => SnapshotEngine.Restore(snapshot)) is InvalidOperationException
+                        && Reg.GetString(path, "sentinel") == "keep");
+                    Check("捕获失败不能假报恢复成功", Error(() => SnapshotEngine.Restore(new SnapshotKey
+                    {
+                        Hive = "HKCU", SubKey = registryRoot, CaptureFailed = true
+                    })) is InvalidOperationException && Reg.GetString(path, "sentinel") == "keep");
+                });
+            }
+            else Console.WriteLine("  SKIP  注册表失败语义/字符串保真（当前会话不能写专用HKCU临时键）");
+        }
+        finally
+        {
+            Reg.DeleteTree(RegPath.Hkcu(registryRoot));
+            try { Directory.Delete(workDir, true); }
+            catch (Exception ex)
+            {
+                failures++;
+                Console.WriteLine("  FAIL  临时夹具清理：" + ex.Message);
+            }
+        }
+
+        Console.WriteLine($"撤销可靠性：{checks} 项断言，{failures} 项失败");
+        return failures;
     }
 
     /// <summary>探测当前会话能否写 HKCU（低完整性级别下会被拒绝）。失败时输出原因。</summary>

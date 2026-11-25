@@ -32,6 +32,7 @@ public sealed class RegistryAuditViewModel : ObservableObject, IModule
     private readonly Action<bool>? _setBusy;
 
     private CategoryNode? _selectedCategory;
+    private CategoryNode? _loadedCategory;
     private string _searchText = "";
     private bool _onlyInvalid = true;
     private string _noteText = "";
@@ -56,10 +57,11 @@ public sealed class RegistryAuditViewModel : ObservableObject, IModule
         };
 
         Items = new ObservableCollection<RegistryItem>();
-        RefreshCommand = new RelayCommand(() => Load(SelectedCategory));
-        ScanAllCategoriesCommand = new RelayCommand(() => _ = ScanAllCategoriesAsync());
-        RemoveCommand = new RelayCommand(p => Remove(p as RegistryItem));
-        RemoveAllCommand = new RelayCommand(RemoveAll);
+        RefreshCommand = new RelayCommand(() => Load(SelectedCategory), () => !IsBusy && SelectedCategory is not null);
+        ScanAllCategoriesCommand = new RelayCommand(() => _ = ScanAllCategoriesAsync(), () => !IsBusy);
+        RemoveCommand = new RelayCommand(p => _ = RemoveAsync(p as RegistryItem),
+            p => !IsBusy && HasCurrentCategory && p is RegistryItem { CanRemove: true } item && Items.Contains(item));
+        RemoveAllCommand = new RelayCommand(() => _ = RemoveAllAsync(), () => !IsBusy && CanRemoveAll);
         CopyPathCommand = new RelayCommand(p => CopyPath(p as RegistryItem));
         CopyDetailCommand = new RelayCommand(p => CopyDetail(p as RegistryItem));
         OpenRegeditCommand = new RelayCommand(p => OpenRegedit(p as RegistryItem));
@@ -83,7 +85,9 @@ public sealed class RegistryAuditViewModel : ObservableObject, IModule
     public RelayCommand CopyDetailCommand { get; }
     public RelayCommand OpenRegeditCommand { get; }
 
-    public bool CanRemoveAll => Items.Any(i => i.CanRemove);
+    private bool HasCurrentCategory => _loadedCategory is not null && ReferenceEquals(_loadedCategory, SelectedCategory);
+
+    public bool CanRemoveAll => HasCurrentCategory && Items.Any(i => i.CanRemove);
 
     public string RemoveAllText => $"清理全部可疑项（{Items.Count(i => i.CanRemove)}）";
 
@@ -93,6 +97,10 @@ public sealed class RegistryAuditViewModel : ObservableObject, IModule
         set
         {
             if (!Set(ref _selectedCategory, value)) return;
+            OnPropertyChanged(nameof(CanRemoveAll));
+            RefreshCommand.RaiseCanExecuteChanged();
+            RemoveCommand.RaiseCanExecuteChanged();
+            RemoveAllCommand.RaiseCanExecuteChanged();
             Load(value);
         }
     }
@@ -140,6 +148,10 @@ public sealed class RegistryAuditViewModel : ObservableObject, IModule
             if (Set(ref _isBusy, value))
             {
                 _setBusy?.Invoke(value);
+                RefreshCommand.RaiseCanExecuteChanged();
+                ScanAllCategoriesCommand.RaiseCanExecuteChanged();
+                RemoveCommand.RaiseCanExecuteChanged();
+                RemoveAllCommand.RaiseCanExecuteChanged();
             }
         }
     }
@@ -170,6 +182,7 @@ public sealed class RegistryAuditViewModel : ObservableObject, IModule
 
             if (currentResult is not null && ReferenceEquals(SelectedCategory, activeCat))
             {
+                _loadedCategory = activeCat;
                 _all = currentResult.Items;
                 NoteText = currentResult.Note ?? "";
                 _scannedText = currentResult.Truncated
@@ -192,9 +205,8 @@ public sealed class RegistryAuditViewModel : ObservableObject, IModule
         finally
         {
             IsBusy = false;
+            FlushPendingCategory();
         }
-
-        FlushPendingCategory();
     }
 
     private List<RegistryItem> _all = new();
@@ -219,6 +231,12 @@ public sealed class RegistryAuditViewModel : ObservableObject, IModule
 
     private async Task LoadAsync(CategoryNode category)
     {
+        if (IsBusy)
+        {
+            _pendingCategory = category;
+            return;
+        }
+
         IsBusy = true;
         try
         {
@@ -233,6 +251,7 @@ public sealed class RegistryAuditViewModel : ObservableObject, IModule
                 return;
             }
 
+            _loadedCategory = category;
             _all = result.Items;
             category.Count = result.Items.Count(i => i.IsInvalid);
             NoteText = result.Note ?? "";
@@ -251,9 +270,8 @@ public sealed class RegistryAuditViewModel : ObservableObject, IModule
         finally
         {
             IsBusy = false;
+            FlushPendingCategory();
         }
-
-        FlushPendingCategory();
     }
 
     private void FlushPendingCategory()
@@ -283,16 +301,19 @@ public sealed class RegistryAuditViewModel : ObservableObject, IModule
 
     private void UpdateSummary()
     {
-        if (SelectedCategory is null) return;
+        if (_loadedCategory is null) return;
         var invalid = _all.Count(i => i.IsInvalid);
-        SelectedCategory.Count = invalid;
+        _loadedCategory.Count = invalid;
         SummaryText = $"{_scannedText} · 可疑 {invalid} 项 · 当前显示 {Items.Count} 项";
         OnPropertyChanged(nameof(CanRemoveAll));
         OnPropertyChanged(nameof(RemoveAllText));
+        RemoveCommand.RaiseCanExecuteChanged();
+        RemoveAllCommand.RaiseCanExecuteChanged();
     }
 
-    private void RemoveAll()
+    private async Task RemoveAllAsync()
     {
+        if (IsBusy || !CanRemoveAll) return;
         if (Native.RequireAdmin("批量清理注册表项") is { } adminNeeded)
         {
             SetError(adminNeeded);
@@ -300,20 +321,24 @@ public sealed class RegistryAuditViewModel : ObservableObject, IModule
         }
         var targets = Items.Where(i => i.CanRemove).ToList();
         if (targets.Count == 0) return;
-
-        var preview = string.Join("\n• ", targets.Take(8).Select(t => t.Name));
-        if (targets.Count > 8) preview += $"\n…等共 {targets.Count} 项";
-
-        var result = MessageBox.Show(
-            $"将一次性清理当前列表中的 {targets.Count} 个可疑项：\n\n• {preview}\n\n" +
-            "整批操作会合并保存为 1 份快照，点一次「撤销上一步」即可整批恢复。确定继续吗？",
-            "批量清理可疑项", MessageBoxButton.OKCancel, MessageBoxImage.Warning);
-
-        if (result != MessageBoxResult.OK) return;
+        var categoryTitle = _loadedCategory?.Title ?? "注册表项";
+        IsBusy = true;
 
         try
         {
-            var removed = _service.RemoveBatch(targets, SelectedCategory?.Title ?? "注册表项");
+            var preview = string.Join("\n• ", targets.Take(8).Select(t => t.Name));
+            if (targets.Count > 8) preview += $"\n…等共 {targets.Count} 项";
+
+            var result = MessageBox.Show(
+                $"将一次性清理当前列表中的 {targets.Count} 个可疑项：\n\n• {preview}\n\n" +
+                "整批操作会合并保存为 1 份快照，点一次「撤销上一步」即可整批恢复。确定继续吗？",
+                "批量清理可疑项", MessageBoxButton.OKCancel, MessageBoxImage.Warning, MessageBoxResult.Cancel);
+
+            if (result != MessageBoxResult.OK) return;
+
+            SetError("");
+            _status($"正在保存快照并清理 {targets.Count} 项…");
+            var removed = await Task.Run(() => _service.RemoveBatch(targets, categoryTitle));
             foreach (var item in targets)
             {
                 _all.Remove(item);
@@ -326,6 +351,12 @@ public sealed class RegistryAuditViewModel : ObservableObject, IModule
         catch (Exception ex)
         {
             SetError($"批量清理失败：{ex.Message}");
+            _status("批量清理失败");
+        }
+        finally
+        {
+            IsBusy = false;
+            FlushPendingCategory();
         }
     }
 
@@ -366,34 +397,37 @@ public sealed class RegistryAuditViewModel : ObservableObject, IModule
             _status("无法打开注册表编辑器");
     }
 
-    private void Remove(RegistryItem? item)
+    private async Task RemoveAsync(RegistryItem? item)
     {
+        if (IsBusy || item is null || !HasCurrentCategory || !Items.Contains(item)) return;
         if (Native.RequireAdmin("删除注册表项") is { } adminNeeded)
         {
             SetError(adminNeeded);
             return;
         }
-        if (item is null) return;
-
-        if (!item.CanRemove)
-        {
-            MessageBox.Show(
-                "这一项没有可证明的失效证据，WinKit 不允许删除。\n\n" +
-                "如果你确定要处理，请到 regedit 里手动操作，或先在右键菜单页禁用。",
-                "不允许删除", MessageBoxButton.OK, MessageBoxImage.Information);
-            return;
-        }
-
-        var result = MessageBox.Show(
-            $"将删除：\n{item.KeyPath}\n{(item.ValueName is null ? "（整个键）" : $"值：{item.ValueName}")}\n\n" +
-            "删除前会自动保存快照，可用「撤销上一步」恢复。确定继续吗？",
-            "清理注册表项", MessageBoxButton.OKCancel, MessageBoxImage.Warning);
-
-        if (result != MessageBoxResult.OK) return;
+        IsBusy = true;
 
         try
         {
-            _service.Remove(item);
+            if (!item.CanRemove)
+            {
+                MessageBox.Show(
+                    "这一项没有可证明的失效证据，WinKit 不允许删除。\n\n" +
+                    "如果你确定要处理，请到 regedit 里手动操作，或先在右键菜单页禁用。",
+                    "不允许删除", MessageBoxButton.OK, MessageBoxImage.Information);
+                return;
+            }
+
+            var result = MessageBox.Show(
+                $"将删除：\n{item.KeyPath}\n{(item.ValueName is null ? "（整个键）" : $"值：{item.ValueName}")}\n\n" +
+                "删除前会自动保存快照，可用「撤销上一步」恢复。确定继续吗？",
+                "清理注册表项", MessageBoxButton.OKCancel, MessageBoxImage.Warning, MessageBoxResult.Cancel);
+
+            if (result != MessageBoxResult.OK) return;
+
+            SetError("");
+            _status($"正在保存快照并清理「{item.Name}」…");
+            await Task.Run(() => _service.Remove(item));
             _all.Remove(item);
             Items.Remove(item);
             _status($"已清理：{item.Name}");
@@ -402,6 +436,12 @@ public sealed class RegistryAuditViewModel : ObservableObject, IModule
         catch (Exception ex)
         {
             SetError($"删除失败：{ex.Message}");
+            _status("删除失败");
+        }
+        finally
+        {
+            IsBusy = false;
+            FlushPendingCategory();
         }
     }
 

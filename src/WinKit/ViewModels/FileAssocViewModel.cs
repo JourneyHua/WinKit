@@ -177,7 +177,7 @@ public sealed class FileAssocViewModel : ObservableObject, IModule
             "将清理「当前用户」下那些指向的程序已经不存在了的扩展名关联。\n\n" +
             "只删 HKCU\\Software\\Classes\\<扩展名> 的默认值，不动系统级登记，也不改你手动指定过的关联。\n" +
             "删除前会存快照，可用「撤销上一步」恢复。确定继续吗？",
-            "清理失效关联", MessageBoxButton.OKCancel, MessageBoxImage.Warning);
+            "清理失效关联", MessageBoxButton.OKCancel, MessageBoxImage.Warning, MessageBoxResult.Cancel);
 
         if (confirm != MessageBoxResult.OK) return;
 

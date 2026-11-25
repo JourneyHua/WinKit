@@ -13,6 +13,7 @@ public sealed class ProcessItem
     public long WorkingSetBytes { get; init; }
     public int ThreadCount { get; init; }
     public string StartTimeText { get; init; } = "";
+    public long? StartTimeUtcTicks { get; init; }
 
     public string MemoryText => ThisPcService.FormatSize(WorkingSetBytes);
 
@@ -51,6 +52,7 @@ public sealed class ProcessService
             {
                 try
                 {
+                    var startTime = ReadStartTime(process);
                     items.Add(new ProcessItem
                     {
                         Pid = process.Id,
@@ -60,7 +62,8 @@ public sealed class ProcessService
                         ExecutablePath = ReadPath(process),
                         WorkingSetBytes = process.WorkingSet64,
                         ThreadCount = process.Threads.Count,
-                        StartTimeText = ReadStartTime(process)
+                        StartTimeText = startTime?.ToLocalTime().ToString("yyyy-MM-dd HH:mm:ss") ?? "",
+                        StartTimeUtcTicks = startTime?.Ticks
                     });
                 }
                 catch (Exception)
@@ -77,27 +80,40 @@ public sealed class ProcessService
     }
 
     public (bool Ok, string Message) Kill(ProcessItem item, bool wholeTree)
+        => TerminateProcess(item.Pid, item.StartTimeUtcTicks, wholeTree);
+
+    /// <summary>expectedStartTimeUtcTicks 必须来自查询快照，不能在执行结束时临时捕获。</summary>
+    public static (bool Ok, string Message) TerminateProcess(
+        int processId, long? expectedStartTimeUtcTicks, bool wholeTree = false)
     {
-        if (item.Pid == Environment.ProcessId)
+        if (processId == Environment.ProcessId)
             return (false, "不能结束 WinKit 自己");
+        if (processId <= 4)
+            return (false, "无效 PID 或系统保留进程，不能结束");
+        if (expectedStartTimeUtcTicks is null or <= 0)
+            return (false, "无法确认进程启动身份，请刷新查询后重试");
 
         try
         {
-            using var process = Process.GetProcessById(item.Pid);
+            using var process = Process.GetProcessById(processId);
+            // 先持有该实例的句柄；身份核对和终止使用同一进程实例，避免 PID 再次复用。
+            _ = process.SafeHandle;
+            if (process.StartTime.ToUniversalTime().Ticks != expectedStartTimeUtcTicks.Value)
+                return (false, $"PID {processId} 的进程身份已变化，已拒绝结束，请刷新查询后重试");
+            if (process.HasExited)
+                return (false, $"PID {processId} 已退出，请刷新查询");
             process.Kill(wholeTree);
-
-            // 等一会儿再回报：没等到就说明它还在（多半是被系统拦住了），这时候说“已结束”就是骗人。
             return process.WaitForExit(3000)
-                ? (true, $"已结束 {item.Name}（PID {item.Pid}）")
-                : (false, $"已发出结束请求，但 {item.Name} 在 3 秒内没有退出");
+                ? (true, $"已结束进程（PID {processId}）")
+                : (false, $"已发出结束请求，但 PID {processId} 在 3 秒内没有退出，请刷新确认");
         }
         catch (ArgumentException)
         {
-            return (false, $"{item.Name}（PID {item.Pid}）已经不存在了");
+            return (false, $"PID {processId} 已不存在，请刷新查询");
         }
         catch (Exception ex)
         {
-            return (false, $"结束 {item.Name}（PID {item.Pid}）失败：{ex.Message}");
+            return (false, $"无法确认或结束 PID {processId}：{ex.Message}。请刷新查询后重试");
         }
     }
 
@@ -139,16 +155,10 @@ public sealed class ProcessService
         }
     }
 
-    private static string ReadStartTime(Process process)
+    private static DateTime? ReadStartTime(Process process)
     {
-        try
-        {
-            return process.StartTime.ToString("yyyy-MM-dd HH:mm:ss");
-        }
-        catch (Exception)
-        {
-            return "";
-        }
+        try { return process.StartTime.ToUniversalTime(); }
+        catch (Exception) { return null; }
     }
 
     public static string Summarize(IReadOnlyList<ProcessItem> items)

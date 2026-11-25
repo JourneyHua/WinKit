@@ -54,8 +54,7 @@ public partial class App : Application
                 ? e.Args[smokeIndex + 1]
                 : Path.Combine(AppContext.BaseDirectory, "smoke");
 
-            RunSmoke(output);
-            Shutdown(0);
+            Shutdown(RunSmoke(output));
             return;
         }
 
@@ -274,9 +273,10 @@ public partial class App : Application
     /// 离屏渲染自检：逐个模块截图，用于开发期验证界面是否正常渲染。
     /// 用法：WinKit.exe --smoke &lt;输出目录&gt;
     /// </summary>
-    private static void RunSmoke(string outputDir)
+    private static int RunSmoke(string outputDir)
     {
         var log = new StringBuilder();
+        var exitCode = 0;
 
         // 目录和日志必须在任何可能失败的操作之前就绪：
         // CI 的无交互桌面会话里窗口可能起不来，但数据 dump 仍要能落盘。
@@ -285,7 +285,11 @@ public partial class App : Application
 
         try
         {
-            var window = new MainWindow
+            Services.ThemeService.Apply(Services.AppTheme.Light);
+            WinKit.MainWindow.ApplyDensity(Services.TableDensity.Compact);
+            var journal = new ChangeJournal(Path.Combine(outputDir, "ux-backups"));
+            var smokeVm = new MainViewModel(new Services.UiSettings(), journal, saveSettings: false);
+            var window = new MainWindow(smokeVm)
             {
                 WindowStartupLocation = WindowStartupLocation.Manual,
                 Left = -4000,
@@ -303,8 +307,7 @@ public partial class App : Application
             }
             catch (Exception ex)
             {
-                // 无桌面会话时窗口起不来：不中断，继续走数据 dump（CI 只断言数据）
-                log.AppendLine($"WARN 窗口无法显示，跳过渲染：{ex.GetType().Name} {OneLine(ex.Message)}");
+                throw new InvalidOperationException("无法显示真实窗口，交互自检不能通过", ex);
             }
 
             // 布局尺寸必须钉死，不能依赖窗口实际大小：窗口可用尺寸受屏幕分辨率
@@ -339,18 +342,20 @@ public partial class App : Application
             }
 
             var vm = (MainViewModel)window.DataContext;
-            vm.Initialize();
+            if (!shown) vm.Initialize();
 
-            // 无人值守：切到需要管理员的模块时不能弹「是否提权」的模态框，否则整个自检会卡在那里
-            vm.ElevationPromptsEnabled = false;
-
-            log.AppendLine($"  elevation: elevated={vm.IsElevated} banner={vm.ShowElevationBanner} prompts={vm.ElevationPromptsEnabled}");
+            // 自检走与正常用户相同的导航路径；浏览模块不需要关闭任何模态提示开关。
+            log.AppendLine($"  elevation: elevated={vm.IsElevated} banner={vm.ShowElevationBanner} navigation=nonmodal");
+            RunUxInteractionChecks(window, vm, journal, outputDir, log);
+            RunModuleStateChecks(outputDir, log);
+            RunDeferredCloseCheck(outputDir, log);
             log.AppendLine($"  nav: groups={vm.NavGroups.Count} items={vm.NavItems.Count} expanded={vm.NavGroups.Count(g => g.IsExpanded)}");
 
+            var errorPagesChecked = 0;
             foreach (var nav in vm.NavItems)
             {
-                vm.SelectedNav = nav;
-                Pump();
+                NavigateSmoke(window, vm, nav);
+                errorPagesChecked += CheckErrorLayout(window, vm.CurrentViewModel!, nav.Key, outputDir, log);
 
                 if (shown)
                 {
@@ -398,7 +403,8 @@ public partial class App : Application
                 {
                     lockVm.PathText = typeof(App).Assembly.Location;
                     lockVm.Refresh();
-                    Pump(2500);
+                    WaitWhileBusy(() => lockVm.IsBusy, 40000);
+                    if (lockVm.IsBusy) throw new TimeoutException("文件占用查询超时");
                     UpdateLayoutSafe(window);
                     Pump();
                     Capture(window, outputDir, "filelock-scanned", log);
@@ -603,22 +609,24 @@ public partial class App : Application
                     log.AppendLine($"  uninstall: kind=\"{OneLine(appVm.UninstallCenter.TargetKindText)}\" matches={appVm.UninstallCenter.Matches.Count} candidates={appVm.UninstallCenter.Candidates.Count} residuals={appVm.UninstallCenter.Residuals.Count} summary=\"{OneLine(appVm.UninstallCenter.IdentifySummary)}\"");
                     log.AppendLine($"  uninstall-view: {DescribeView(window, typeof(Views.UninstallCenterView))}");
 
-                    // 拖放这条路没法在离屏自检里模拟（要跨进程从资源管理器拖进来），
-                    // 只能验证两件可查的事：视图确实允许放置；「粘贴路径」这条替代入口
-                    // 能从剪贴板识别出同一个目录。剪贴板在无交互会话里可能不可用，
-                    // 那就只打 WARN，不让它变成假失败。
+                    // 离屏窗口验证拖放消息放行和替代的粘贴动作；输入边界使用夹具，避免改动桌面剪贴板。
                     var uninstallView = FindDescendant(window, typeof(Views.UninstallCenterView)) as Views.UninstallCenterView;
                     log.AppendLine($"  dragdrop: error={dragDropFilterError} viewAllowDrop={uninstallView?.AllowDrop}");
+                    var clipboardReader = appVm.UninstallCenter.ClipboardTextReader;
                     try
                     {
-                        Clipboard.SetText(smokeTarget);
-                        appVm.UninstallCenter.PastePathCommand.Execute(null);
+                        appVm.UninstallCenter.ClipboardTextReader = () => $"\"{smokeTarget}\"\r\n";
+                        appVm.UninstallCenter.ClearCommand.Execute(null);
                         Pump();
-                        log.AppendLine($"  paste: ok=True target=\"{OneLine(appVm.UninstallCenter.TargetPath)}\" kind=\"{OneLine(appVm.UninstallCenter.TargetKindText)}\" same={string.Equals(appVm.UninstallCenter.TargetPath, smokeTarget, StringComparison.OrdinalIgnoreCase)}");
+                        InvokeButton(FindVisibleButton(window, b => ReferenceEquals(b.Command, appVm.UninstallCenter.PastePathCommand))
+                            ?? throw new InvalidOperationException("没有找到粘贴路径按钮"));
+                        var same = string.Equals(appVm.UninstallCenter.TargetPath, smokeTarget, StringComparison.OrdinalIgnoreCase);
+                        if (!same) throw new InvalidOperationException("粘贴动作没有重新识别夹具路径");
+                        log.AppendLine($"  paste: ok=True source=isolated-input target=\"{OneLine(appVm.UninstallCenter.TargetPath)}\" kind=\"{OneLine(appVm.UninstallCenter.TargetKindText)}\" same={same}");
                     }
-                    catch (Exception ex)
+                    finally
                     {
-                        log.AppendLine($"WARN 剪贴板不可用，跳过「粘贴路径」验证：{ex.GetType().Name} {OneLine(ex.Message)}");
+                        appVm.UninstallCenter.ClipboardTextReader = clipboardReader;
                     }
 
                     appVm.ShowUninstallCenter = false;
@@ -659,27 +667,31 @@ public partial class App : Application
                 }
             }
 
-            try { window.Close(); } catch (Exception) { }
+            if (errorPagesChecked != 14)
+                throw new InvalidOperationException($"错误布局自检覆盖不完整：预期14页，实际{errorPagesChecked}页");
+            log.AppendLine($"  ux-errors: pages={errorPagesChecked} buttons=unobstructed result=OK");
+            NavigateSmoke(window, vm, vm.NavItems.First(n => n.Key == "env"));
+            log.AppendLine(ThemeCheck(window, outputDir, log));
+            window.Close();
             log.AppendLine("SMOKE OK");
-
-            // 主题自检：切换主题后 Brush.Card 的颜色必须真的变化（防止 DynamicResource 失效）
-            log.AppendLine(ThemeCheck());        }
+            if (log.ToString().Contains("FAILED", StringComparison.Ordinal)) exitCode = 1;
+        }
         catch (Exception ex)
         {
+            exitCode = 1;
             log.AppendLine("SMOKE FAILED");
             log.AppendLine(ex.ToString());
         }
 
         File.WriteAllText(logPath, log.ToString(), new UTF8Encoding(true));
+        return exitCode;
     }
 
     /// <summary>
     /// 给卸载残留清理面板造一个可预期的识别目标：一个名字像卸载器的 exe 放在独立子目录里。
     /// 不用机器上真实装的软件——那在不同机器上结果完全不同，CI 没法断言。
     ///
-    /// 必须建在输出目录下：--smoke 进程是低完整性级别，写 %TEMP% 会被拒绝
-    /// （UnauthorizedAccessException: Access to the path ... is denied），
-    /// 而输出目录是它自己刚建出来写截图的，一定可写。
+    /// 夹具全部建在指定输出目录下，与真实安装目录及用户备份隔离。
     /// </summary>
     private static string SmokeUninstallTarget(string outputDir)
     {
@@ -699,17 +711,346 @@ public partial class App : Application
         return root;
     }
 
-    private static void UpdateLayoutSafe(Window window)
+    private static void RunUxInteractionChecks(
+        MainWindow window, MainViewModel vm, ChangeJournal journal, string outputDir, StringBuilder log)
     {
-        // 无桌面会话时布局可能抛异常；数据 dump 不该因此中断
+        static void Require(bool condition, string message)
+        {
+            if (!condition) throw new InvalidOperationException("UX 自检失败：" + message);
+        }
+
+        void Invoke(System.Windows.Input.ICommand command)
+        {
+            Pump();
+            var button = FindVisibleButton(window, b => b.Command == command);
+            Require(button is not null && button.IsEnabled, "界面动作不可用");
+            InvokeButton(button!);
+            if (ReferenceEquals(command, vm.UndoCommand))
+            {
+                WaitWhileBusy(() => vm.IsGlobalBusy, 15000);
+                Require(!vm.IsGlobalBusy, "撤销操作未结束");
+            }
+        }
+
+        var file = Path.GetFullPath(Path.Combine(outputDir, "ux-check.txt"));
+        File.WriteAllText(file, "before");
+        journal.Record("界面撤销验证", [], () => File.WriteAllText(file, "after"), [file]);
+        Pump();
+        Require(vm.HasFeedback && vm.HasUndo && vm.UndoCommand.CanExecute(null), "修改后缺少反馈或撤销入口");
+        Invoke(vm.UndoCommand);
+        Require(File.ReadAllText(file) == "before" && !journal.CanUndo, "界面撤销未恢复原文件");
+
+        var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var pending = journal.RecordAsync("并发保护验证", [], async () =>
+        {
+            File.WriteAllText(file, "pending");
+            await release.Task;
+        }, [file]);
+        Pump();
+        Require(vm.IsGlobalBusy && !vm.IsNavigationEnabled && !vm.UndoCommand.CanExecute(null)
+            && !vm.ElevateCommand.CanExecute(null), "操作中仍允许导航、撤销或重启提权");
+        var previous = vm.SelectedNav;
+        var navigationButton = FindVisibleButton(window, b => ReferenceEquals(b.DataContext, previous));
+        Require(navigationButton is not null && !navigationButton.IsEnabled, "导航按钮未显示禁用状态");
+        var navigationPeer = new System.Windows.Automation.Peers.ButtonAutomationPeer(navigationButton!);
         try
         {
-            window.UpdateLayout();
+            ((System.Windows.Automation.Provider.IInvokeProvider)navigationPeer.GetPattern(
+                System.Windows.Automation.Peers.PatternInterface.Invoke)!).Invoke();
+            Require(false, "禁用的导航按钮仍可执行");
         }
-        catch (Exception)
+        catch (System.Windows.Automation.ElementNotEnabledException) { }
+        vm.SelectedNav = vm.NavItems.First(item => item != previous);
+        vm.UndoCommand.Execute(null);
+        Require(vm.SelectedNav == previous && File.ReadAllText(file) == "pending", "忙碌时执行了冲突动作");
+        window.Close();
+        Pump();
+        Require(window.IsVisible && vm.IsClosePending, "操作中关闭窗口丢失了未完成任务");
+        Invoke(vm.CancelCloseCommand);
+        Require(!vm.IsClosePending && window.IsVisible, "无法取消等待关闭");
+        release.SetResult();
+        WaitWhileBusy(() => !pending.IsCompleted, 5000);
+        Require(pending.IsCompleted, "异步操作未结束");
+        pending.GetAwaiter().GetResult();
+        Pump();
+        Require(!vm.IsGlobalBusy && vm.IsNavigationEnabled && navigationButton!.IsEnabled, "结束后交互未恢复");
+        Invoke(vm.UndoCommand);
+        Require(File.ReadAllText(file) == "before", "异步操作无法撤销");
+
+        journal.Record("撤销失败重试验证", [], () => File.WriteAllText(file, "retry"), [file]);
+        using (var locked = File.Open(file, FileMode.Open, FileAccess.ReadWrite, FileShare.None))
         {
-            // 忽略：CI 只断言数据，不断言像素
+            Invoke(vm.UndoCommand);
+            Require(vm.FeedbackIsError && journal.CanUndo, "撤销失败未解释原因或丢失了重试记录");
         }
+        Invoke(vm.UndoCommand);
+        Require(!vm.FeedbackIsError && !journal.CanUndo && File.ReadAllText(file) == "before", "解除占用后无法重试撤销");
+        Invoke(vm.DismissFeedbackCommand);
+        Require(!vm.HasFeedback, "提示无法关闭");
+        log.AppendLine("  ux-interactions: undo=invoked busy=guarded close=deferred/cancelled retry=restored feedback=dismissed result=OK");
+
+        journal.Record("备份界面恢复验证", [], () => File.WriteAllText(file, "after-backup"), [file]);
+        NavigateSmoke(window, vm, vm.NavItems.First(n => n.Key == "backup"));
+        var backups = vm.CurrentViewModel as BackupViewModel ?? throw new InvalidOperationException("备份页未加载");
+        void WaitIdle()
+        {
+            WaitWhileBusy(() => vm.IsGlobalBusy, 15000);
+            Require(!vm.IsGlobalBusy, "备份界面操作未结束");
+            Pump();
+        }
+        void Preview(BackupRow row)
+        {
+            InvokeButton(FindVisibleButton(window, b => b.Command == backups.RestoreCommand && ReferenceEquals(b.CommandParameter, row))
+                ?? throw new InvalidOperationException("找不到快照还原按钮"));
+            WaitIdle();
+        }
+        var source = backups.Backups.Single(b => b.Title == "备份界面恢复验证");
+        Preview(source);
+        Require(backups.HasPreview && backups.PreviewText.Contains(file, StringComparison.OrdinalIgnoreCase), "恢复前未显示完整目标");
+        Capture(window, outputDir, "ux-backup-preview", log);
+        Invoke(backups.ClosePreviewCommand);
+        Require(!backups.HasPreview, "备份预览无法关闭");
+        Preview(source);
+        File.AppendAllText(source.FilePath, " ");
+        Invoke(backups.ConfirmRestoreCommand);
+        WaitIdle();
+        Require(backups.HasError && File.ReadAllText(file) == "after-backup" && journal.SessionCount == 1,
+            "备份预览后内容变化未阻止恢复");
+        var damaged = Path.Combine(journal.StorageDirectory, "ux-damaged.json");
+        File.WriteAllText(damaged, "invalid json");
+        backups.Refresh();
+        WaitIdle();
+        var invalid = backups.Backups.Single(b => b.FilePath == damaged);
+        Preview(invalid);
+        Require(backups.HasError && !backups.HasPreview && !backups.ConfirmRestoreCommand.CanExecute(null), "损坏快照仍保留旧恢复入口");
+        File.Delete(damaged);
+        backups.Refresh();
+        WaitIdle();
+        source = backups.Backups.Single(b => b.Title == "备份界面恢复验证");
+        Preview(source);
+        Invoke(backups.ConfirmRestoreCommand);
+        WaitIdle();
+        Require(!backups.HasPreview && !backups.HasError && File.ReadAllText(file) == "before" && journal.SessionCount == 2,
+            "界面确认未恢复快照或没有生成撤销记录");
+        Invoke(vm.UndoCommand);
+        Require(File.ReadAllText(file) == "after-backup", "界面撤销恢复未回到恢复前状态");
+        Invoke(vm.UndoCommand);
+        Require(File.ReadAllText(file) == "before" && !journal.CanUndo, "备份夹具未还原初始状态");
+        log.AppendLine("  ux-backup: preview=invoked targets=complete tampering=blocked invalid=cleared restore=invoked undo=restored result=OK");
+
+    }
+
+    private static void NavigateSmoke(MainWindow window, MainViewModel vm, NavItem nav)
+    {
+        WaitWhileBusy(() => vm.IsGlobalBusy, 60000);
+        if (vm.IsGlobalBusy) throw new TimeoutException($"切换到 {nav.Key} 前仍有操作未完成");
+        var group = vm.NavGroups.First(g => g.Items.Contains(nav));
+        if (!group.IsExpanded)
+            InvokeButton(FindVisibleButton(window, b => ReferenceEquals(b.DataContext, group))
+                ?? throw new InvalidOperationException($"未找到导航分组：{group.Name}"));
+        InvokeButton(FindVisibleButton(window, b => ReferenceEquals(b.DataContext, nav))
+            ?? throw new InvalidOperationException($"未找到导航按钮：{nav.Key}"));
+        if (!ReferenceEquals(vm.SelectedNav, nav)) throw new InvalidOperationException($"未能进入 {nav.Key}");
+        WaitWhileBusy(() => vm.IsGlobalBusy, 60000);
+        if (vm.IsGlobalBusy) throw new TimeoutException($"{nav.Key} 加载未完成");
+        Pump();
+    }
+
+    private static void RunModuleStateChecks(string outputDir, StringBuilder log)
+    {
+        static void Require(bool condition, string message)
+        {
+            if (!condition) throw new InvalidOperationException("模块自检失败：" + message);
+        }
+
+        var paths = new Dictionary<Services.EnvScope, string>
+        {
+            [Services.EnvScope.User] = @"C:\WinKit-User-A;C:\WinKit-User-B",
+            [Services.EnvScope.Machine] = @"C:\WinKit-Machine-A;C:\WinKit-Machine-B"
+        };
+        var readFailure = false;
+        var pathVm = new EnvironmentViewModel(new ChangeJournal(Path.Combine(outputDir, "path-backups")), _ => { }, null,
+            scope => readFailure ? throw new IOException("模拟读取失败") : paths[scope], () => []);
+        pathVm.Refresh();
+        var pathWindow = new Window
+        {
+            Content = new Views.EnvironmentView { DataContext = pathVm },
+            Width = 1264, Height = 781, Left = -4000, Top = -4000, ShowInTaskbar = false,
+            WindowStartupLocation = WindowStartupLocation.Manual
+        };
+        try
+        {
+            pathWindow.Show();
+            Pump();
+            var apply = FindVisibleButton(pathWindow, b => b.Command == pathVm.ApplyPathCommand);
+            Require(apply is not null && !apply.IsEnabled && !pathVm.HasPathChanges, "未修改时仍可应用 PATH");
+            var first = pathVm.PathEntries[0];
+            InvokeButton(FindVisibleButton(pathWindow, b => b.Command == pathVm.MovePathDownCommand && ReferenceEquals(b.CommandParameter, first))
+                ?? throw new InvalidOperationException("找不到 PATH 排序按钮"));
+            Require(pathVm.HasPathChanges && pathVm.CanApplyPath && apply!.IsEnabled,
+                $"排序后状态错误：dirty={pathVm.HasPathChanges} canApply={pathVm.CanApplyPath} button={apply!.IsEnabled}");
+            InvokeButton(FindVisibleButton(pathWindow, b => b.Command == pathVm.MovePathUpCommand && ReferenceEquals(b.CommandParameter, first))
+                ?? throw new InvalidOperationException("找不到 PATH 还原排序按钮"));
+            Require(!pathVm.HasPathChanges && !apply!.IsEnabled, "恢复原顺序后仍标记为更改");
+            pathVm.PathEntries.Move(0, 1);
+            var userDraft = pathVm.PathEntries.Select(p => p.Raw).ToArray();
+            pathVm.ShowMachinePathCommand.Execute(null);
+            pathVm.PathEntries.Move(0, 1);
+            var machineDraft = pathVm.PathEntries.Select(p => p.Raw).ToArray();
+            pathVm.ShowUserPathCommand.Execute(null);
+            pathVm.Refresh();
+            Require(pathVm.PathEntries.Select(p => p.Raw).SequenceEqual(userDraft) && pathVm.HasPendingPathDrafts, "刷新或切换丢失用户草稿");
+            paths[Services.EnvScope.User] = @"C:\WinKit-External";
+            Require(!pathVm.ValidatePathBaseline() && pathVm.HasPathConflict && !pathVm.CanApplyPath
+                && pathVm.PathEntries.Select(p => p.Raw).SequenceEqual(userDraft), "外部 PATH 冲突未阻止写入或丢失草稿");
+            Pump();
+            Capture(pathWindow, outputDir, "ux-path-conflict", log);
+            pathVm.DiscardPathDraft();
+            Require(!pathVm.HasPathChanges && pathVm.PathEntries.Single().Raw == paths[Services.EnvScope.User], "放弃草稿未读取最新值");
+            pathVm.ShowMachinePathCommand.Execute(null);
+            Require(pathVm.HasPathChanges && pathVm.PathEntries.Select(p => p.Raw).SequenceEqual(machineDraft), "放弃用户草稿影响了系统草稿");
+            readFailure = true;
+            pathVm.Refresh();
+            Require(!pathVm.IsBusy && pathVm.HasError && pathVm.PathEntries.Select(p => p.Raw).SequenceEqual(machineDraft), "读取失败后丢失草稿或未释放忙碌状态");
+        }
+        finally { pathWindow.Close(); }
+        log.AppendLine("  ux-path: reorder=invoked scopes=preserved refresh=preserved conflict=blocked discard=scoped read-failure=preserved result=OK");
+
+        var left = Path.Combine(outputDir, "diff-fixture-left");
+        var right = Path.Combine(outputDir, "diff-fixture-right");
+        Directory.CreateDirectory(left);
+        Directory.CreateDirectory(right);
+        File.WriteAllText(Path.Combine(left, "entry.txt"), "left");
+        File.WriteAllText(Path.Combine(right, "entry.txt"), "right");
+        var diff = new DiffViewModel(_ => { }) { LeftPath = left, RightPath = right, CompareHash = true };
+        void Compare()
+        {
+            diff.CompareCommand.Execute(null);
+            Require(diff.IsBusy && !diff.SwapCommand.CanExecute(null), "比较时仍可修改范围");
+            var captured = diff.LeftPath;
+            diff.LeftPath = right;
+            diff.SwapCommand.Execute(null);
+            Require(diff.LeftPath == captured, "比较中范围发生变化");
+            WaitWhileBusy(() => diff.IsBusy, 15000);
+            Require(!diff.IsBusy && !diff.HasError && diff.Entries.Count > 0, "隔离文件比较失败");
+        }
+        Compare();
+        var oldEntry = diff.Entries[0];
+        Require(diff.ResolveResultPath(oldEntry, true) == Path.Combine(left, "entry.txt"), "比较结果路径错误");
+        diff.Recursive = !diff.Recursive;
+        Require(diff.Entries.Count == 0 && diff.ResolveResultPath(oldEntry, true) is null
+            && !diff.CopyLeftPathCommand.CanExecute(oldEntry), "条件变化后仍能操作旧结果");
+        diff.LeftPath = Path.Combine(left, "entry.txt");
+        diff.RightPath = Path.Combine(right, "entry.txt");
+        Compare();
+        var single = diff.Entries[0];
+        Require(diff.ResolveResultPath(single, true) == diff.LeftPath && diff.ResolveResultPath(single, false) == diff.RightPath,
+            "单文件路径被重复拼接");
+        diff.SwapCommand.Execute(null);
+        Require(diff.Entries.Count == 0 && diff.ResolveResultPath(single, false) is null, "交换范围后仍可操作旧行");
+        log.AppendLine("  ux-diff: busy=guarded stale-result=invalidated single-file=resolved swap=invalidated result=OK");
+    }
+
+    private static void RunDeferredCloseCheck(string outputDir, StringBuilder log)
+    {
+        var journal = new ChangeJournal(Path.Combine(outputDir, "close-backups"));
+        var vm = new MainViewModel(new Services.UiSettings(), journal, saveSettings: false);
+        var window = new MainWindow(vm)
+        {
+            Left = -4000, Top = -4000, ShowInTaskbar = false, WindowStartupLocation = WindowStartupLocation.Manual
+        };
+        var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        window.Show();
+        Pump();
+        var operation = journal.RecordAsync("完成后关闭验证", [], async () => await release.Task);
+        window.Close();
+        Pump();
+        if (!window.IsVisible || !vm.IsClosePending) throw new InvalidOperationException("忙碌窗口未等待操作完成");
+        release.SetResult();
+        WaitWhileBusy(() => !operation.IsCompleted || window.IsVisible, 15000);
+        operation.GetAwaiter().GetResult();
+        if (window.IsVisible || vm.IsClosePending) throw new InvalidOperationException("操作完成后窗口没有关闭");
+        log.AppendLine("  ux-close: pending=visible completion=closed result=OK");
+    }
+
+    private static int CheckErrorLayout(Window window, object model, string key, string outputDir, StringBuilder log)
+    {
+        var errorStyle = (Style)window.FindResource("ErrorBar");
+        var bar = VisualDescendants(window).OfType<System.Windows.Controls.Border>()
+            .FirstOrDefault(b => ReferenceEquals(b.Style, errorStyle) && ReferenceEquals(b.DataContext, model));
+        if (bar is null) return 0;
+        var property = model.GetType().GetProperty("ErrorText")
+            ?? throw new InvalidOperationException($"{key} 错误提示没有对应状态");
+        var setter = property.GetSetMethod(nonPublic: true)
+            ?? throw new InvalidOperationException($"{key} 错误状态无法注入自检");
+        var original = property.GetValue(model);
+        try
+        {
+            setter.Invoke(model, ["验证错误提示：操作未完成，当前内容已保留。请检查后重试；此提示应完整显示，且不遮住刷新、搜索或其它恢复操作。"]);
+            Pump();
+            window.UpdateLayout();
+            if (!bar.IsVisible || bar.ActualWidth <= 0 || bar.ActualHeight <= 0)
+                throw new InvalidOperationException($"{key} 出错后没有显示页内提示");
+            var errorBounds = new Rect(bar.TranslatePoint(new Point(), window), bar.RenderSize);
+            foreach (var button in VisualDescendants(window).OfType<System.Windows.Controls.Button>()
+                         .Where(b => b.IsVisible && b.ActualWidth > 0 && b.ActualHeight > 0))
+            {
+                if (bar.IsAncestorOf(button)) continue;
+                var buttonBounds = new Rect(button.TranslatePoint(new Point(), window), button.RenderSize);
+                var overlap = Rect.Intersect(errorBounds, buttonBounds);
+                if (!overlap.IsEmpty && overlap.Width > 1 && overlap.Height > 1)
+                    throw new InvalidOperationException($"{key} 错误提示遮住按钮：{button.Content}");
+            }
+            Capture(window, outputDir, $"error-{key}", log);
+            log.AppendLine($"  error-layout: page={key} buttons=unobstructed result=OK");
+        }
+        finally
+        {
+            setter.Invoke(model, [original]);
+            Pump();
+        }
+        return 1;
+    }
+
+    private static IEnumerable<DependencyObject> VisualDescendants(DependencyObject root)
+    {
+        for (var i = 0; i < VisualTreeHelper.GetChildrenCount(root); i++)
+        {
+            var child = VisualTreeHelper.GetChild(root, i);
+            yield return child;
+            foreach (var descendant in VisualDescendants(child)) yield return descendant;
+        }
+    }
+
+    private static System.Windows.Controls.Button? FindVisibleButton(DependencyObject root,
+        Func<System.Windows.Controls.Button, bool> predicate)
+    {
+        for (var i = 0; i < VisualTreeHelper.GetChildrenCount(root); i++)
+        {
+            var child = VisualTreeHelper.GetChild(root, i);
+            if (child is System.Windows.Controls.Button button && button.IsVisible && predicate(button))
+                return button;
+            var found = FindVisibleButton(child, predicate);
+            if (found is not null) return found;
+        }
+        return null;
+    }
+
+    private static void InvokeButton(System.Windows.Controls.Button button)
+    {
+        if (!button.IsEnabled) throw new InvalidOperationException("界面按钮不可用");
+        var peer = new System.Windows.Automation.Peers.ButtonAutomationPeer(button);
+        var invoke = peer.GetPattern(System.Windows.Automation.Peers.PatternInterface.Invoke)
+            as System.Windows.Automation.Provider.IInvokeProvider
+            ?? throw new InvalidOperationException("按钮缺少键盘/辅助功能调用入口");
+        invoke.Invoke();
+        Pump();
+    }
+
+    private static void UpdateLayoutSafe(Window window)
+    {
+        // 交互回归依赖真实布局；失败必须阻断发布。
+        window.UpdateLayout();
     }
 
     private static void Pump(int waitMs = 0)
@@ -747,7 +1088,8 @@ public partial class App : Application
     private static void PumpOnce()
     {
         var frame = new DispatcherFrame();
-        Dispatcher.CurrentDispatcher.BeginInvoke(DispatcherPriority.Background,
+        // Invoke 的命令可能再次排队刷新 CanExecute；排空到空闲再读取按钮状态。
+        Dispatcher.CurrentDispatcher.BeginInvoke(DispatcherPriority.ApplicationIdle,
             new Action(() => frame.Continue = false));
         Dispatcher.PushFrame(frame);
     }
@@ -897,27 +1239,32 @@ public partial class App : Application
     }
 
     /// <summary>
-    /// 主题自检：分别切到浅色/深色，读取 Brush.Card 的实际颜色。
-    /// 这条能抓住"改了 Colors 字典但视图仍用 StaticResource"这类静默失效。
+    /// 主题自检：在同一个真实窗口中切换主题，验证已创建元素并保存两套截图。
     /// </summary>
-    private static string ThemeCheck()
+    private static string ThemeCheck(Window window, string outputDir, StringBuilder log)
     {
         try
         {
-            string Read()
-            {
-                var brush = Current?.Resources["Brush.Card"] as System.Windows.Media.SolidColorBrush;
-                return brush?.Color.ToString() ?? "null";
-            }
-
+            var label = FindDescendant<System.Windows.Controls.TextBlock>(window)
+                ?? throw new InvalidOperationException("窗口缺少可验证的文字元素");
+            static string ColorOf(Brush? brush) => (brush as SolidColorBrush)?.Color.ToString() ?? "null";
             Services.ThemeService.Apply(Services.AppTheme.Light);
-            var light = Read();
+            Pump();
+            var light = ColorOf(window.Background);
+            var lightText = ColorOf(label.Foreground);
+            Capture(window, outputDir, "theme-light", log);
 
             Services.ThemeService.Apply(Services.AppTheme.Dark);
-            var dark = Read();
+            Pump();
+            var dark = ColorOf(window.Background);
+            var darkText = ColorOf(label.Foreground);
+            Capture(window, outputDir, "theme-dark", log);
 
-            var ok = light != dark && light != "null" && dark != "null";
-            return $"  theme: light={light} dark={dark} result={(ok ? "OK" : "FAILED")}";
+            var ok = light != dark && lightText != darkText
+                && light != "null" && dark != "null" && lightText != "null" && darkText != "null";
+            Services.ThemeService.Apply(Services.AppTheme.Light);
+            Pump();
+            return $"  theme: light={light} dark={dark} lightText={lightText} darkText={darkText} visual=True result={(ok ? "OK" : "FAILED")}";
         }
         catch (Exception ex)
         {
@@ -931,7 +1278,14 @@ public partial class App : Application
         var width = Math.Max(1, (int)target.ActualWidth);
         var height = Math.Max(1, (int)target.ActualHeight);
 
+        // 内容根可能透明，离屏截图也要包含正常窗口绘制的背景。
+        var visual = new DrawingVisual();
+        using (var drawing = visual.RenderOpen())
+        {
+            drawing.DrawRectangle(window.Background ?? (Brush)window.FindResource("Brush.Window"), null, new Rect(0, 0, width, height));
+        }
         var bitmap = new RenderTargetBitmap(width, height, 96, 96, PixelFormats.Pbgra32);
+        bitmap.Render(visual);
         bitmap.Render(target);
 
         var encoder = new PngBitmapEncoder();

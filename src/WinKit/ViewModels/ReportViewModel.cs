@@ -211,7 +211,7 @@ public sealed class ReportViewModel : ObservableObject, IModule
             "时间：每周日 03:00\n" +
             "动作：安全清理临时文件 + 生成体检报告\n\n" +
             "不安装后台服务，也不常驻；任务可在本页随时一键删除（删除前会导出任务 XML 备份）。确定继续吗？",
-            "注册定期维护任务", MessageBoxButton.OKCancel, MessageBoxImage.Question);
+            "注册定期维护任务", MessageBoxButton.OKCancel, MessageBoxImage.Question, MessageBoxResult.Cancel);
 
         if (confirm != MessageBoxResult.OK) return;
 
@@ -237,7 +237,7 @@ public sealed class ReportViewModel : ObservableObject, IModule
         var confirm = MessageBox.Show(
             $"确定删除计划任务「{MaintenanceService.TaskName}」吗？\n\n" +
             "删除前会先把任务 XML 导出到 %LOCALAPPDATA%\\WinKit\\TaskBackups，需要时可以再导入。",
-            "删除定期维护任务", MessageBoxButton.OKCancel, MessageBoxImage.Warning);
+            "删除定期维护任务", MessageBoxButton.OKCancel, MessageBoxImage.Warning, MessageBoxResult.Cancel);
 
         if (confirm != MessageBoxResult.OK) return;
 

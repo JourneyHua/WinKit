@@ -213,7 +213,7 @@ public sealed class SystemCleanViewModel : ObservableObject, IModule
         var confirm = MessageBox.Show(
             $"将清理以下 {selected.Count} 类缓存与临时文件：\n\n• {listText}\n\n" +
             "正在被系统或应用占用的临时文件会自动跳过，不会影响正在运行的程序。确定立即清理吗？",
-            "确认清理", MessageBoxButton.OKCancel, MessageBoxImage.Information);
+            "确认清理", MessageBoxButton.OKCancel, MessageBoxImage.Information, MessageBoxResult.Cancel);
 
         if (confirm != MessageBoxResult.OK) return;
 
@@ -246,7 +246,7 @@ public sealed class SystemCleanViewModel : ObservableObject, IModule
         var confirm = MessageBox.Show(
             "将调用系统内置命令：\ndism.exe /Online /Cleanup-Image /StartComponentCleanup\n\n" +
             "该操作会安全清理 Windows 更新后被取代的旧版 WinSxS 系统组件备份（通常耗时 1~5 分钟）。确定开始吗？",
-            "DISM 组件存储清理", MessageBoxButton.OKCancel, MessageBoxImage.Information);
+            "DISM 组件存储清理", MessageBoxButton.OKCancel, MessageBoxImage.Information, MessageBoxResult.Cancel);
 
         if (confirm != MessageBoxResult.OK) return;
 
@@ -331,7 +331,7 @@ public sealed class SystemCleanViewModel : ObservableObject, IModule
 
         var confirm = MessageBox.Show(
             $"确定将大文件移入回收站吗？\n\n文件：{item.FileName}\n大小：{item.SizeText}\n路径：{item.FilePath}\n\n（文件只会移入系统回收站，不会直接永久粉碎）",
-            "移入回收站", MessageBoxButton.OKCancel, MessageBoxImage.Warning);
+            "移入回收站", MessageBoxButton.OKCancel, MessageBoxImage.Warning, MessageBoxResult.Cancel);
 
         if (confirm != MessageBoxResult.OK) return;
 

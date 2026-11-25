@@ -223,7 +223,7 @@ public sealed class SystemRestoreViewModel : ObservableObject, IModule
             "删除后无法恢复，系统再也回不到这个时间点了。",
             "删除还原点",
             MessageBoxButton.OKCancel,
-            MessageBoxImage.Warning);
+            MessageBoxImage.Warning, MessageBoxResult.Cancel);
 
         if (confirm != MessageBoxResult.OK) return;
 
@@ -263,12 +263,12 @@ public sealed class SystemRestoreViewModel : ObservableObject, IModule
         var confirm = MessageBox.Show(
             $"要把系统恢复到下面这个还原点吗？\n\n#{point.SequenceNumber} · {point.CreatedAt}\n{point.Description}\n\n" +
             "注意：\n" +
-            "· 系统会**立即重启**并开始还原，请先保存所有工作；\n" +
+            "· 请先保存所有工作；确认后系统会立即重启并开始还原；\n" +
             "· 还原只影响系统设置与程序，个人文件（文档、照片）不会被回退；\n" +
             "· 还原过程可能持续十几分钟，中途不要断电。",
             "恢复到还原点",
             MessageBoxButton.OKCancel,
-            MessageBoxImage.Warning);
+            MessageBoxImage.Warning, MessageBoxResult.Cancel);
 
         if (confirm != MessageBoxResult.OK) return;
 
@@ -311,7 +311,7 @@ public sealed class SystemRestoreViewModel : ObservableObject, IModule
                 "关闭系统保护会**删除该驱动器上已有的全部还原点**，并停止后续自动创建。\n\n确定关闭吗？",
                 "关闭系统保护",
                 MessageBoxButton.OKCancel,
-                MessageBoxImage.Warning);
+                MessageBoxImage.Warning, MessageBoxResult.Cancel);
 
             if (confirm != MessageBoxResult.OK) return;
         }

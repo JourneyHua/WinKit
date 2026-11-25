@@ -13,6 +13,7 @@ public sealed class FileLocker
     public string ExecutablePath { get; init; } = "";
     public string AppTypeText { get; init; } = "";
     public string StartTimeText { get; init; } = "";
+    public long? StartTimeUtcTicks { get; init; }
     public bool CanKill { get; init; } = true;
     public string Note { get; init; } = "";
 }
@@ -80,6 +81,7 @@ public sealed class FileLockService
             {
                 if (process.Id is 0 or 4) continue;
 
+                var startTime = SafeStartTime(process);
                 ProcessModuleCollection modules;
                 try
                 {
@@ -113,8 +115,9 @@ public sealed class FileLockService
                     AppName = process.ProcessName,
                     ExecutablePath = exePath,
                     AppTypeText = "已加载该模块",
-                    StartTimeText = SafeStartTime(process),
-                    CanKill = process.Id > 4,
+                    StartTimeText = startTime?.ToLocalTime().ToString("yyyy-MM-dd HH:mm:ss") ?? "",
+                    StartTimeUtcTicks = startTime?.Ticks,
+                    CanKill = process.Id > 4 && process.Id != Environment.ProcessId && startTime.HasValue,
                     Note = "由已加载模块扫描得出"
                 });
             }
@@ -131,16 +134,10 @@ public sealed class FileLockService
         return results.OrderBy(l => l.ProcessName, StringComparer.CurrentCulture).ToList();
     }
 
-    private static string SafeStartTime(Process process)
+    private static DateTime? SafeStartTime(Process process)
     {
-        try
-        {
-            return process.StartTime.ToString("yyyy-MM-dd HH:mm:ss");
-        }
-        catch (Exception)
-        {
-            return "";
-        }
+        try { return process.StartTime.ToUniversalTime(); }
+        catch (Exception) { return null; }
     }
 
     private (List<FileLocker> Lockers, string? Error) QueryRestartManager(string path)
@@ -200,6 +197,7 @@ public sealed class FileLockService
                 var name = info.strAppName;
                 var exePath = "";
                 var startText = "";
+                long? startTimeUtcTicks = null;
                 var canKill = true;
                 var note = "";
 
@@ -208,9 +206,22 @@ public sealed class FileLockService
                     using var process = Process.GetProcessById(pid);
                     if (string.IsNullOrWhiteSpace(name)) name = process.ProcessName;
                     try { exePath = process.MainModule?.FileName ?? ""; } catch (Exception) { }
-                    try { startText = process.StartTime.ToString("yyyy-MM-dd HH:mm:ss"); } catch (Exception) { }
+                    var startTime = SafeStartTime(process);
+                    var rmFileTime = ((long)info.Process.ProcessStartTime.dwHighDateTime << 32)
+                        | (uint)info.Process.ProcessStartTime.dwLowDateTime;
+                    if (startTime.HasValue && rmFileTime > 0
+                        && startTime.Value.ToFileTimeUtc() == rmFileTime)
+                    {
+                        startText = startTime.Value.ToLocalTime().ToString("yyyy-MM-dd HH:mm:ss");
+                        startTimeUtcTicks = startTime.Value.Ticks;
+                    }
+                    else
+                    {
+                        canKill = false;
+                        note = "进程启动身份无法确认或已变化，请刷新查询";
+                    }
 
-                    if (pid is 0 or 4)
+                    if (pid is 0 or 4 || pid == Environment.ProcessId || info.ApplicationType == RM_APP_TYPE.RmCritical)
                     {
                         canKill = false;
                         note = "系统关键进程，不能结束";
@@ -238,6 +249,7 @@ public sealed class FileLockService
                         _ => "其它"
                     },
                     StartTimeText = startText,
+                    StartTimeUtcTicks = startTimeUtcTicks,
                     CanKill = canKill,
                     Note = note
                 });
@@ -251,20 +263,11 @@ public sealed class FileLockService
         return (lockers.OrderBy(l => l.ProcessName, StringComparer.CurrentCulture).ToList(), null);
     }
 
-    public (bool Ok, string Message) Kill(int processId)
+    public (bool Ok, string Message) Kill(FileLocker locker)
     {
-        try
-        {
-            using var process = Process.GetProcessById(processId);
-            var name = process.ProcessName;
-            process.Kill();
-            process.WaitForExit(3000);
-            return (true, $"已结束 {name}（PID {processId}）");
-        }
-        catch (Exception ex)
-        {
-            return (false, $"结束失败：{ex.Message}");
-        }
+        if (!locker.CanKill)
+            return (false, string.IsNullOrWhiteSpace(locker.Note) ? "该进程不能结束，请刷新查询" : locker.Note);
+        return ProcessService.TerminateProcess(locker.ProcessId, locker.StartTimeUtcTicks);
     }
 
     private enum RM_APP_TYPE

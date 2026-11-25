@@ -8,6 +8,7 @@
     <Grid Margin="24,16,24,16">
         <Grid.RowDefinitions>
             <RowDefinition Height="Auto" />
+            <RowDefinition Height="Auto" />
             <RowDefinition Height="*" />
         </Grid.RowDefinitions>
 
@@ -27,8 +28,9 @@
         </StackPanel>
 
         <!-- 子视图 1：已安装应用 -->
-        <Grid Grid.Row="1" Visibility="{Binding ShowInstalledApps, Converter={StaticResource BoolToVis}}">
+        <Grid Grid.Row="2" Visibility="{Binding ShowInstalledApps, Converter={StaticResource BoolToVis}}">
             <Grid.RowDefinitions>
+                <RowDefinition Height="Auto" />
                 <RowDefinition Height="Auto" />
                 <RowDefinition Height="Auto" />
                 <RowDefinition Height="*" />
@@ -84,12 +86,37 @@
             </Grid>
 
             <Border Grid.Row="1" Style="{StaticResource Card}" Padding="14,10" Margin="0,0,0,10"
+                    Visibility="{Binding HasResidualResult, Converter={StaticResource BoolToVis}}">
+                <Grid>
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="*" />
+                        <ColumnDefinition Width="Auto" />
+                    </Grid.ColumnDefinitions>
+                    <StackPanel Grid.Column="0" Margin="0,0,12,0">
+                        <TextBlock Text="{Binding ResidualTitle}" Style="{StaticResource H2}" />
+                        <ScrollViewer MaxHeight="130" VerticalScrollBarVisibility="Auto" Margin="0,6,0,0">
+                            <TextBlock Text="{Binding ResidualDetails}" Style="{StaticResource Muted}" TextWrapping="Wrap" />
+                        </ScrollViewer>
+                    </StackPanel>
+                    <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Top">
+                        <Button Content="清理注册表残留…" Style="{StaticResource BtnSmall}" Margin="0,0,8,0"
+                                Foreground="{DynamicResource Brush.Danger}"
+                                Visibility="{Binding HasRegistryResiduals, Converter={StaticResource BoolToVis}}"
+                                Command="{Binding CleanResidualRegistryCommand}" />
+                        <Button Content="打开残留目录" Style="{StaticResource BtnSmall}"
+                                Visibility="{Binding HasResidualFolder, Converter={StaticResource BoolToVis}}"
+                                Command="{Binding OpenResidualFolderCommand}" />
+                    </StackPanel>
+                </Grid>
+            </Border>
+
+            <Border Grid.Row="2" Style="{StaticResource Card}" Padding="14,10" Margin="0,0,0,10"
                     Background="{DynamicResource Brush.WarnSoft}" BorderBrush="{DynamicResource Brush.WarnSoftBorder}">
                 <TextBlock Text="{Binding HintText}" Style="{StaticResource Muted}"
                            Foreground="{DynamicResource Brush.Warn}" />
             </Border>
 
-            <Border Grid.Row="2" Style="{StaticResource Card}" Padding="0">
+            <Border Grid.Row="3" Style="{StaticResource Card}" Padding="0">
                 <Grid>
                     <Grid.RowDefinitions>
                         <RowDefinition Height="Auto" />
@@ -205,7 +232,7 @@
         </Grid>
 
         <!-- 子视图 2：常用运行库体检与安装 -->
-        <Grid Grid.Row="1" Visibility="{Binding ShowRuntimes, Converter={StaticResource BoolToVis}}">
+        <Grid Grid.Row="2" Visibility="{Binding ShowRuntimes, Converter={StaticResource BoolToVis}}">
             <Grid.RowDefinitions>
                 <RowDefinition Height="Auto" />
                 <RowDefinition Height="Auto" />
@@ -334,7 +361,7 @@
         </Grid>
 
         <!-- 子视图 3：常用系统工具库 -->
-        <Grid Grid.Row="1" Visibility="{Binding ShowTools, Converter={StaticResource BoolToVis}}">
+        <Grid Grid.Row="2" Visibility="{Binding ShowTools, Converter={StaticResource BoolToVis}}">
             <Grid.RowDefinitions>
                 <RowDefinition Height="Auto" />
                 <RowDefinition Height="Auto" />
@@ -477,13 +504,12 @@
              Visibility 必须在外面这层容器上求值：一旦同一个元素上再写 DataContext，
              {Binding ShowUninstallCenter} 就会跑去子 ViewModel 上找，属性不存在 →
              绑定失败 → BoolToVis 拿到 UnsetValue → 子视图永远显示，叠在应用列表上面。 -->
-        <Grid Grid.Row="1" Visibility="{Binding ShowUninstallCenter, Converter={StaticResource BoolToVis}}">
+        <Grid Grid.Row="2" Visibility="{Binding ShowUninstallCenter, Converter={StaticResource BoolToVis}}">
             <local:UninstallCenterView DataContext="{Binding UninstallCenter}" />
         </Grid>
 
         <!-- 页面级错误条：失败时统一展示，替代原先只靠底部状态栏 -->
-        <Border Style="{StaticResource ErrorBar}" VerticalAlignment="Top"
-                Panel.ZIndex="99" Margin="24,8,24,0"
+        <Border Grid.Row="1" Style="{StaticResource ErrorBar}" Margin="0,0,0,10"
                 Visibility="{Binding HasError, Converter={StaticResource BoolToVis}}">
             <TextBlock Text="{Binding ErrorText}" Style="{StaticResource ErrorText}" />
         </Border>

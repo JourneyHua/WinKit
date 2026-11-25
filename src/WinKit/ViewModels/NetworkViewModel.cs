@@ -166,7 +166,7 @@ public sealed class NetworkViewModel : ObservableObject, IModule
         var confirm = MessageBox.Show(
             "将执行 netsh winsock reset 重置 Winsock 目录。\n\n" +
             "这会移除第三方 LSP（部分 VPN/杀毒的网络组件），需要重启电脑才完全生效。确定继续吗？",
-            "重置 Winsock", MessageBoxButton.OKCancel, MessageBoxImage.Warning);
+            "重置 Winsock", MessageBoxButton.OKCancel, MessageBoxImage.Warning, MessageBoxResult.Cancel);
 
         if (confirm != MessageBoxResult.OK) return;
 
@@ -178,7 +178,7 @@ public sealed class NetworkViewModel : ObservableObject, IModule
         var confirm = MessageBox.Show(
             "将执行 netsh int ip reset 重置 TCP/IP 协议栈。\n\n" +
             "需要重启电脑才完全生效。确定继续吗？",
-            "重置 TCP/IP", MessageBoxButton.OKCancel, MessageBoxImage.Warning);
+            "重置 TCP/IP", MessageBoxButton.OKCancel, MessageBoxImage.Warning, MessageBoxResult.Cancel);
 
         if (confirm != MessageBoxResult.OK) return;
 
