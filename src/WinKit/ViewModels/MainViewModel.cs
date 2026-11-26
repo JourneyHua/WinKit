@@ -306,7 +306,7 @@ public sealed class MainViewModel : ObservableObject
                 Glyph = "\uE756",
                 Subtitle = "查看/编辑用户与系统环境变量，可视化调整 PATH 顺序并标记失效目录",
                 AccentBrush = new System.Windows.Media.SolidColorBrush(System.Windows.Media.Color.FromRgb(0x8A, 0x6D, 0x1F)),
-                Factory = () => new EnvironmentViewModel(_journal, SetStatus, SetBusy)
+                Factory = CreateEnvironmentViewModel
             },
             new()
             {
@@ -347,15 +347,75 @@ public sealed class MainViewModel : ObservableObject
             }
             UpdateUndoState();
         });
-        UndoCommand = new RelayCommand(Undo, () => _journal.CanUndo && !IsGlobalBusy);
+        UndoCommand = new RelayCommand(Undo, () => _journal.CanUndo && IsNavigationEnabled);
         DismissFeedbackCommand = new RelayCommand(() => FeedbackMessage = "");
-        RestartExplorerCommand = new RelayCommand(RestartExplorer, () => !IsGlobalBusy);
-        ElevateCommand = new RelayCommand(Elevate, () => !IsGlobalBusy);
+        RestartExplorerCommand = new RelayCommand(RestartExplorer, () => IsNavigationEnabled);
+        ElevateCommand = new RelayCommand(Elevate, () => IsNavigationEnabled);
         CancelCloseCommand = new RelayCommand(() => IsClosePending = false);
         ToggleGroupCommand = new RelayCommand(p => ToggleGroup(p as NavGroup));
         ShowSettingsCommand = new RelayCommand(() => ShowSettingsRequested?.Invoke());
 
+        Updater = new AppUpdateViewModel(
+            new AppUpdateService(_saveSettings ? null : System.IO.Path.Combine(_journal.StorageDirectory, "updates")),
+            () => IsGlobalBusy,
+            () => NavItems.Select(item => item.Instance).OfType<EnvironmentViewModel>().Any(env => env.HasPendingPathDrafts),
+            PrepareUpdateRestartAsync, () => CloseRequested?.Invoke());
+        Updater.PropertyChanged += (_, args) =>
+        {
+            if (args.PropertyName == nameof(AppUpdateViewModel.IsPreparing)) UpdateOperationState();
+        };
         BuildGroups();
+    }
+
+    public AppUpdateViewModel Updater { get; }
+    private AppUpdateRestartSession? _updateRestartSession;
+    public bool IsMainContentEnabled => !IsPreparingUpdate;
+    private bool IsPreparingUpdate => Updater is { IsPreparing: true };
+
+    private EnvironmentViewModel CreateEnvironmentViewModel()
+    {
+        var environment = new EnvironmentViewModel(_journal, SetStatus, SetBusy);
+        environment.PropertyChanged += (_, args) =>
+        {
+            if (args.PropertyName == nameof(EnvironmentViewModel.HasPendingPathDrafts)) Updater.NotifyHostStateChanged();
+        };
+        return environment;
+    }
+
+    private async Task<bool> PrepareUpdateRestartAsync(AppUpdateDownload download, CancellationToken cancellationToken)
+    {
+        if (IsGlobalBusy) return false;
+        var session = await new AppUpdateInstaller().PrepareRestartAsync(download, cancellationToken);
+        if (!session.Ready || IsGlobalBusy)
+        {
+            await session.CancelAsync();
+            await session.DisposeAsync();
+            return false;
+        }
+        try
+        {
+            await session.AllowExitAsync(cancellationToken);
+            cancellationToken.ThrowIfCancellationRequested();
+            _updateRestartSession = session;
+            return true;
+        }
+        catch
+        {
+            try { await session.CancelAsync(); } catch { }
+            try { await session.DisposeAsync(); } catch { }
+            throw;
+        }
+    }
+
+    public void OnWindowClosed()
+    {
+        Updater.Dispose();
+        if (_updateRestartSession is not null) _ = DisposeUpdateSessionAsync(_updateRestartSession);
+    }
+
+    private static async Task DisposeUpdateSessionAsync(AppUpdateRestartSession session)
+    {
+        try { await session.DisposeAsync(); } catch { /* 关闭进程时只释放握手资源。 */ }
     }
 
     /// <summary>由 MainWindow 订阅，弹出主题/密度浮层。</summary>
@@ -447,7 +507,7 @@ public sealed class MainViewModel : ObservableObject
         get => _selectedNav;
         set
         {
-            if (!ReferenceEquals(value, _selectedNav) && IsGlobalBusy)
+            if (!ReferenceEquals(value, _selectedNav) && !IsNavigationEnabled)
             {
                 OnPropertyChanged(nameof(SelectedNav));
                 return;
@@ -532,9 +592,9 @@ public sealed class MainViewModel : ObservableObject
 
     public bool IsGlobalBusy => _busyCount > 0 || _journal.IsOperationActive;
 
-    public bool IsNavigationEnabled => !IsGlobalBusy;
+    public bool IsNavigationEnabled => !IsGlobalBusy && !IsPreparingUpdate;
 
-    public string NavigationHint => IsGlobalBusy ? "正在完成当前操作，完成后可切换模块" : "打开此模块";
+    public string NavigationHint => !IsNavigationEnabled ? "正在完成当前操作，完成后可切换模块" : "打开此模块";
 
     public string VersionText
     {
@@ -542,7 +602,7 @@ public sealed class MainViewModel : ObservableObject
         {
             var v = typeof(MainViewModel).Assembly.GetName().Version;
             var verText = v is null ? "1.2.0" : $"{v.Major}.{v.Minor}.{Math.Max(0, v.Build)}";
-            return $"v{verText} · .NET 10";
+            return $"v{verText}";
         }
     }
 
@@ -570,6 +630,7 @@ public sealed class MainViewModel : ObservableObject
         var lastOutcome = MaintenanceService.LastOutcomeText();
         if (lastOutcome.Contains("失败", StringComparison.Ordinal))
             StatusText = $"上次定期维护未成功（{lastOutcome}），详见「体检与维护」页";
+        if (_saveSettings) Updater.StartAutomaticChecks();
     }
 
     /// <summary>供窗口关闭时写回窗口位置与大小。</summary>
@@ -643,6 +704,8 @@ public sealed class MainViewModel : ObservableObject
         OnPropertyChanged(nameof(IsGlobalBusy));
         OnPropertyChanged(nameof(IsNavigationEnabled));
         OnPropertyChanged(nameof(NavigationHint));
+        OnPropertyChanged(nameof(IsMainContentEnabled));
+        Updater.NotifyHostStateChanged();
         UpdateUndoState();
         RestartExplorerCommand.RaiseCanExecuteChanged();
         ElevateCommand.RaiseCanExecuteChanged();

@@ -1,0 +1,33 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net10.0-windows</TargetFramework>
+    <RuntimeIdentifier>win-x64</RuntimeIdentifier>
+    <SelfContained>true</SelfContained>
+    <PublishSingleFile>true</PublishSingleFile>
+    <IncludeNativeLibrariesForSelfExtract>true</IncludeNativeLibrariesForSelfExtract>
+    <PublishTrimmed>false</PublishTrimmed>
+    <PublishAot>false</PublishAot>
+    <EnableCompressionInSingleFile>false</EnableCompressionInSingleFile>
+    <Version>1.11.0</Version>
+    <FileVersion>1.11.0.0</FileVersion>
+    <AssemblyVersion>1.11.0.0</AssemblyVersion>
+    <InformationalVersion>1.11.0</InformationalVersion>
+    <IncludeSourceRevisionInInformationalVersion>false</IncludeSourceRevisionInInformationalVersion>
+    <Product>WinKit</Product>
+    <AssemblyName>WinKit</AssemblyName>
+    <RootNamespace>WinKit.UpdateEndToEndProbe</RootNamespace>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <LangVersion>latest</LangVersion>
+  </PropertyGroup>
+  <ItemGroup>
+    <Compile Include="..\..\src\WinKit\Services\AppUpdateService.cs" Link="Services\AppUpdateService.cs" />
+    <Compile Include="..\..\src\WinKit\Services\AppUpdateModels.cs" Link="Services\AppUpdateModels.cs" />
+    <Compile Include="..\..\src\WinKit\Services\AppUpdatePreferences.cs" Link="Services\AppUpdatePreferences.cs" />
+    <Compile Include="..\..\src\WinKit\Services\AppUpdateInstaller.cs" Link="Services\AppUpdateInstaller.cs" />
+    <Compile Include="..\..\src\WinKit\Services\AppUpdateInstallerNative.cs" Link="Services\AppUpdateInstallerNative.cs" />
+    <Compile Include="..\..\src\WinKit\Services\AppUpdateInstallerTransaction.cs" Link="Services\AppUpdateInstallerTransaction.cs" />
+    <Compile Include="..\..\src\WinKit\Services\AppUpdateInstallerProtocol.cs" Link="Services\AppUpdateInstallerProtocol.cs" />
+  </ItemGroup>
+</Project>
