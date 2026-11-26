@@ -27,6 +27,7 @@ internal static class Program
             var cases = new (string Name, Func<Task> Run)[]
             {
                 ("recovery paths are normalized, bounded and isolated", () => RecoveryPathsAsync(root)),
+                ("renamed handles retain exact path and file identity", () => RenameIdentityAsync(root)),
                 ("successful original-path replacement and complete cleanup", () => SuccessAsync(root, fixture)),
                 ("prepared handles prevent target, staging and ancestor mutation", () => PinsAsync(root, fixture)),
                 ("Dispose without Apply preserves original and cleans protection", () => AbandonAsync(root, fixture)),
@@ -55,6 +56,7 @@ internal static class Program
                 {
                     failures++;
                     Console.Error.WriteLine("FAIL " + name + Environment.NewLine + ex);
+                    WriteFailureDetails(ex);
                 }
             }
             Assert.Equal(fixture.Hash, await Fixture.HashAsync(fixture.Path), "The caller's original fixture remains unchanged");
@@ -74,6 +76,15 @@ internal static class Program
             }
         }
         return failures == 0 ? 0 : 1;
+    }
+
+    private static void WriteFailureDetails(Exception error)
+    {
+        foreach (System.Collections.DictionaryEntry entry in error.Data)
+            Console.Error.WriteLine($"  {entry.Key}: {entry.Value}");
+        if (error is AggregateException aggregate)
+            foreach (var inner in aggregate.InnerExceptions) WriteFailureDetails(inner);
+        else if (error.InnerException is not null) WriteFailureDetails(error.InnerException);
     }
 
     private static async Task RecoveryPathsAsync(string root)
@@ -99,6 +110,29 @@ internal static class Program
         await RejectAsync(message with { RecoveryPaths = AppUpdateInstallerTransaction.ProtectionPathsFor(target, Guid.NewGuid().ToString("N")) });
         await RejectAsync(message with { RecoveryPaths = [.. allowed, allowed[0]] });
         await RejectAsync(message with { RecoveryPaths = null! });
+    }
+
+    private static async Task RenameIdentityAsync(string root)
+    {
+        var directory = Path.Combine(root, "rename-identity");
+        Directory.CreateDirectory(directory);
+        var stage = Path.Combine(directory, ".winkit-update-" + Guid.NewGuid().ToString("N") + ".new");
+        var target = Path.Combine(directory, "WinKit renamed 中文.exe");
+        using var pins = new AppUpdateInstallerNative.DirectoryPins(stage);
+        using var staged = AppUpdateInstallerNative.CreateNewPinned(stage);
+        await staged.WriteAsync(new byte[] { 1, 2, 3, 4 });
+        staged.Flush(true);
+        var identity = AppUpdateInstallerNative.Inspect(staged, stage);
+        for (var i = 0; i < 128; i++)
+        {
+            var destination = i % 2 == 0 ? target : stage;
+            AppUpdateInstallerNative.RenamePinned(staged, destination);
+            Assert.Equal(identity, AppUpdateInstallerNative.Inspect(staged, destination), "Renaming retains the exact file and its expected path");
+            Assert.True(File.Exists(destination), "Renaming creates the expected destination entry");
+            Assert.True(!File.Exists(string.Equals(destination, target, StringComparison.Ordinal) ? stage : target),
+                "Renaming removes the prior directory entry instead of leaving an alias");
+        }
+        AppUpdateInstallerNative.DeletePinned(staged);
     }
 
     private static async Task SuccessAsync(string root, Fixture fixture)
