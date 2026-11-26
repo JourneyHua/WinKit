@@ -118,8 +118,8 @@ try {
     if ($ExpectedVersion -cnotmatch '\A(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)\z') {
         throw 'ExpectedVersion must be a canonical stable major.minor.patch value.'
     }
-    $expectedVersion = [version]$ExpectedVersion
-    if ($expectedVersion -le [version]'1.11.0') {
+    $parsedExpectedVersion = [version]$ExpectedVersion
+    if ($parsedExpectedVersion -le [version]'1.11.0') {
         throw 'ExpectedVersion must be newer than the isolated 1.11.0 probe.'
     }
 
@@ -210,6 +210,7 @@ try {
                     $foundWindow = $true
                 }
                 catch [System.ComponentModel.Win32Exception] { }
+                catch [System.InvalidOperationException] { }
                 finally { if ($null -ne $candidate -and $candidate -ne $newProcess) { $candidate.Dispose() } }
             }
         }
@@ -253,9 +254,9 @@ try {
     }
     $versionInfo = [System.Diagnostics.FileVersionInfo]::GetVersionInfo($target)
     if ($versionInfo.ProductVersion.Split('+')[0] -cne $ExpectedVersion -or
-        $versionInfo.FileMajorPart -ne $expectedVersion.Major -or
-        $versionInfo.FileMinorPart -ne $expectedVersion.Minor -or
-        $versionInfo.FileBuildPart -ne $expectedVersion.Build) {
+        $versionInfo.FileMajorPart -ne $parsedExpectedVersion.Major -or
+        $versionInfo.FileMinorPart -ne $parsedExpectedVersion.Minor -or
+        $versionInfo.FileBuildPart -ne $parsedExpectedVersion.Build) {
         throw "Replaced executable version does not match $ExpectedVersion (product '$($versionInfo.ProductVersion)')."
     }
 

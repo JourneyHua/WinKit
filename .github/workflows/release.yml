@@ -102,6 +102,21 @@ jobs:
           dotnet build tools/UpdateEndToEndProbe/UpdateEndToEndProbe.csproj -c Release --nologo -m:1
           if ($LASTEXITCODE -ne 0) { throw "Public-update probe build failed" }
 
+      - name: Validate public-update observer environment
+        timeout-minutes: 2
+        shell: pwsh
+        run: |
+          $tokens = $null
+          $parseErrors = $null
+          [void][System.Management.Automation.Language.Parser]::ParseFile(
+            "$PWD/tools/UpdateEndToEndProbe/Run-UpdateEndToEnd.ps1", [ref]$tokens, [ref]$parseErrors)
+          if ($parseErrors.Count -gt 0) { throw ($parseErrors | Out-String) }
+          Add-Type -AssemblyName UIAutomationClient
+          Add-Type -AssemblyName UIAutomationTypes
+          $root = [System.Windows.Automation.AutomationElement]::RootElement
+          if ($null -eq $root) { throw "Windows UI Automation desktop root is unavailable" }
+          Write-Host "Observer PowerShell parser and Windows UI Automation environment are ready."
+
       - name: UI smoke with assertions
         timeout-minutes: 10
         shell: pwsh
