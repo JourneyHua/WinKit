@@ -129,9 +129,17 @@ internal static class AppUpdateInstallerNative
     {
         if (!GetFileInformationByHandle(stream.SafeFileHandle, out var info))
             throw new Win32Exception(Marshal.GetLastWin32Error());
+        var actualPath = HandlePath(stream.SafeFileHandle);
         if ((info.Attributes & ((uint)FileAttributes.ReparsePoint | (uint)FileAttributes.Directory)) != 0 ||
-            (!allowHardLink && info.Links != 1) || !SamePath(HandlePath(stream.SafeFileHandle), path))
-            throw new InvalidDataException("更新拒绝链接、重解析点或身份不明确的文件。");
+            (!allowHardLink && info.Links != 1) || !SamePath(actualPath, path))
+        {
+            var failure = new InvalidDataException("更新拒绝链接、重解析点或身份不明确的文件。");
+            failure.Data["ExpectedPath"] = path;
+            failure.Data["HandlePath"] = actualPath;
+            failure.Data["Attributes"] = info.Attributes.ToString("X8");
+            failure.Data["Links"] = info.Links;
+            throw failure;
+        }
         return new(info.Volume, ((ulong)info.IndexHigh << 32) | info.IndexLow,
             ((long)info.SizeHigh << 32) | info.SizeLow);
     }
@@ -191,14 +199,19 @@ internal static class AppUpdateInstallerNative
         var name = Encoding.Unicode.GetBytes(destination);
         var nameOffset = IntPtr.Size == 8 ? 20 : 12;
         var rootOffset = IntPtr.Size == 8 ? 8 : 4;
-        var buffer = Marshal.AllocHGlobal(nameOffset + name.Length);
+        // The Win32 API normalizes a full DOS path before issuing the native rename. Supply a
+        // terminated WCHAR string as well as FileNameLength; otherwise that normalization reads
+        // past the buffer and can append arbitrary heap data to the destination filename.
+        var bufferSize = nameOffset + name.Length + sizeof(char);
+        var buffer = Marshal.AllocHGlobal(bufferSize);
         try
         {
             Marshal.WriteInt32(buffer, 0, 0); // Never replace a destination entry; concurrent injection must fail closed.
             Marshal.WriteIntPtr(buffer, rootOffset, IntPtr.Zero);
             Marshal.WriteInt32(buffer, rootOffset + IntPtr.Size, name.Length);
             Marshal.Copy(name, 0, IntPtr.Add(buffer, nameOffset), name.Length);
-            if (!SetFileInformationBuffer(source.SafeFileHandle, 22, buffer, nameOffset + name.Length))
+            Marshal.WriteInt16(buffer, nameOffset + name.Length, 0);
+            if (!SetFileInformationBuffer(source.SafeFileHandle, 22, buffer, bufferSize))
                 throw new Win32Exception(Marshal.GetLastWin32Error());
         }
         finally { Marshal.FreeHGlobal(buffer); }
