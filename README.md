@@ -34,15 +34,14 @@ Windows 11 上的一站式轻量系统管家：**体检与维护（一键体检�
 
 ## 运行要求
 
-- Windows 11
-- **.NET 10 Desktop Runtime**（框架依赖发布，需单独安装运行时）
-  → https://dotnet.microsoft.com/download/dotnet/10.0
+- Windows 11 x64
+- 官方发布为 **win-x64 自包含单 EXE**，已包含 .NET 运行时，无需安装器、解压或另装 Desktop Runtime
 - 以普通权限启动（`asInvoker`）；浏览页面不弹提权框，需要管理员的操作会说明原因，可按需点击「以管理员身份重新启动」（见下文「权限模型」）
 
 ## 快速开始
 
-1. 从本仓库 Releases 下载并解压发布包，确认已安装 .NET 10 Desktop Runtime。
-2. 双击 `WinKit.exe`，默认以普通权限启动。若 Windows 显示安全提示，请先核实下载来源，再参考下文的 SmartScreen 说明。
+1. 从[本仓库 Releases](https://github.com/JourneyHua/WinKit/releases) 下载 `WinKit-v1.12.0-win-x64.exe`，放到准备长期保留的位置。
+2. 双击下载的 EXE，默认以普通权限启动。若 Windows 显示安全提示，请先核实下载来源，再参考下文的 SmartScreen 说明。
 3. 左侧选模块浏览；需要管理员权限时，页面会给出说明。确认要执行对应操作后，再点击「以管理员身份重新启动」。
 4. 修改前阅读确认与范围说明；支持快照的操作可点「撤销上一步」，或在「备份与还原」回滚本次会话。PATH 编辑先保留为草稿，点击「应用 PATH 更改」才写入。部分资源管理器设置需重启资源管理器后可见。
 
@@ -50,10 +49,15 @@ Windows 11 上的一站式轻量系统管家：**体检与维护（一键体检�
 
 未建立声誉的程序可能触发「Windows 已保护你的电脑」。提示是否出现还受文件声誉、下载来源标记（MOTW）及本机安全策略影响，不能保证每台机器或每次运行的行为相同。参见 [Microsoft Defender SmartScreen 官方说明](https://learn.microsoft.com/en-us/windows/security/operating-system-security/virus-and-threat-protection/microsoft-defender-smartscreen/)。
 
-确认发布来源可信后，如果 `WinKit.exe` 的属性页提供「解除锁定」，可用它移除该文件的来源标记；这不等于关闭 Defender，也不保证组织策略或其它安全检测不再提示。winget 是另一种安装途径，不把其解包行为当作绕过安全提示的保证。
+确认发布来源可信后，如果下载 EXE 的属性页提供「解除锁定」，可用它移除该文件的来源标记；这不等于关闭 Defender，也不保证组织策略或其它安全检测不再提示。
 
-## 1.11.0 交互更新
+## 1.12.0 单 EXE 与应用更新
 
+- **直接运行**：下载 `WinKit-v1.12.0-win-x64.exe` 即可使用，运行时与原生依赖已打入单个 EXE。
+- **WinKit 自身更新**：默认在后台最多每 24 小时检查一次本仓库的正式稳定版，可在设置中关闭；左侧「检查 WinKit 更新」可随时手动检查。检查只读取发布信息，点击「下载更新」后才传输 EXE，显示进度并可取消、重试。下载完成核对大小、SHA-256、程序版本和自包含单文件结构。
+- **重启并更新**：看过发布说明后，点击「重启并更新」才替换当前程序。助手先就绪再关闭窗口；仅写入原位置确实需要权限时请求 UAC，取消或准备失败会保留当前窗口。成功后保持原文件路径、文件名和原来的使用身份，并清理更新期间的原文件保护副本，不保留长期旧版或提供手动回退。
+- **未完成的工作**：重启不会保存未应用更改；检测到 PATH 草稿时在更新面板内提醒，重启会丢弃草稿。应用管理中原有的 winget 与 Scoop 功能完整保留；本仓库仅停止向这些包管理器发行 WinKit。
+- **单文件运行时**：首次启动会由 .NET 将必要的原生组件释放到当前用户的临时缓存，更新也会短暂使用助手与同卷暂存文件；无需手动解压或安装运行时。
 - **权限与反馈**：页面内说明按需提权；支持快照的改动显示可撤销反馈，撤销/回滚失败保留记录供重试。忙时限制重复操作与导航，关闭窗口会延迟到当前操作结束，也可取消关闭。
 - **残留与还原**：应用和右键菜单的卸载残留在页内展示；备份还原先预览全部目标，确认时重新核对快照内容哈希。
 - **PATH 草稿**：用户与系统分别保留未应用更改，刷新、切换作用域不会悄悄丢稿；发现外部更改时先解决冲突。
@@ -351,14 +355,14 @@ SDK 装在用户目录（避免 UAC）：`%USERPROFILE%\dotnet-sdk\dotnet.exe`�
 # 编译
 dotnet build WinKit.slnx
 
-# 发布（框架依赖）
-dotnet publish src/WinKit/WinKit.csproj -c Release -o dist
+# 发布（win-x64 自包含单 EXE；项目仅在 publish 时启用）
+dotnet publish src/WinKit/WinKit.csproj -c Release -r win-x64 --self-contained true -p:PublishSingleFile=true -p:IncludeNativeLibrariesForSelfExtract=true -p:DebugType=embedded -p:PublishTrimmed=false -p:PublishAot=false -o dist/publish
 
-# 发布（自包含单目录，免装运行时，约 160 MB）
-dotnet publish src/WinKit/WinKit.csproj -c Release -r win-x64 --self-contained true -o dist-standalone
+# 生成带版本名的 EXE 和配套更新元数据（Windows）
+.\build.cmd
 
-# 界面离屏自检：逐模块渲染 PNG，不弹窗口
-dist\WinKit.exe --smoke C:\temp\smoke
+# 界面离屏自检：直接运行发布的单 EXE，逐模块渲染 PNG，不弹窗口
+dist\WinKit-v1.12.0-win-x64.exe --smoke C:\temp\smoke
 
 # 只读探测：枚举全部菜单项/节点/驱动器/快速访问，落一份报告
 dotnet run --project tools/Probe -- report.txt
@@ -366,9 +370,19 @@ dotnet run --project tools/Probe -- report.txt
 # 自测：快照/撤销/还原保真/32-64 视图、解析器、分类器与交互状态等；用例数随版本变化
 dotnet run --project tools/Probe -- --selftest
 
+# 更新协议与下载：使用已发布的自包含 EXE 作为只读夹具
+dotnet run --project tools/UpdateProbe -- --fixture dist/publish/WinKit.exe
+
+# Windows 文件替换事务：仅写入探针自己的临时目录，不执行夹具
+dotnet run --project tools/UpdateInstallerProbe -- --fixture dist/publish/WinKit.exe
+
 # 无人值守维护（计划任务用的就是这条命令）：清理 + 体检报告 + 写日志
 WinKit.exe --maintain
 ```
+
+`build.cmd` 在 `dist/` 生成 `WinKit-v1.12.0-win-x64.exe` 与 `WinKit-v1.12.0-win-x64.update.json`。Release 只上传这两个文件，不再提供 ZIP；普通 solution build 与 Probe 仍使用框架依赖构建，避免项目引用受自包含设置影响。
+
+更新元数据使用 UTF-8 JSON，固定字段为 `schemaVersion: 1`、字符串 `version`（如 `1.12.0`）、`rid: "win-x64"`、`fileName`（完整 EXE 文件名）、`sha256`（64 位十六进制 SHA-256）与 `size`（64 位整数，EXE 字节数）。哈希和大小都由最终上传的 EXE 计算，发布说明由 GitHub Release 正文提供。标签必须为 `v<项目版本>`，CI 会核对标签、项目版本以及 EXE 的 ProductVersion/FileVersion，并拒绝包含额外散件的发布目录。
 
 自测会在低完整性级别（受限令牌/沙箱）下自动跳过写入类用例并标注 `SKIP`，只读用例照常执行；
 要覆盖快照写入与撤销，请在正常桌面会话（中完整性以上）运行。
@@ -378,8 +392,10 @@ WinKit.exe --maintain
 GitHub Actions 对 `master` 推送、面向 `master` 的 pull request、`v*` 标签及手动触发运行构建与检查；只有标签触发创建 Release。以工作流中的断言和本次运行日志为准，以下不是当前工作树已通过测试的声明。
 
 1. **服务层自测**：`tools/Probe --selftest` 返回非零即失败；用例数随代码变化，不固定为某个总数。`--selftest` 属于 Probe，不是 `WinKit.exe` 的参数。
-2. **界面离屏自检**：发布同样采用 `asInvoker` 的预览程序，检查进程退出码、`SMOKE OK`、至少 24 个模块渲染及关键模块数据、空态/错误原因。另检查列宽拖动、子视图隐藏、应用操作列未挤压或横向溢出、拖放放行、非模态导航/可撤销反馈，以及 14 页错误提示均不遮挡操作按钮。
-3. **发布清单核对**：直接读取 exe 中嵌入的清单，要求 `level="asInvoker"`，拒绝 `level="requireAdministrator"`；这用于验证启动权限模型，不用于保证 SmartScreen 行为。
+2. **界面离屏自检**：直接运行 `asInvoker`、win-x64 自包含单 EXE；通过自检的同一个 EXE 才用于 Release。检查进程退出码、`SMOKE OK`、至少 24 个模块渲染及关键模块数据、空态/错误原因。另检查列宽拖动、子视图隐藏、应用操作列未挤压或横向溢出、拖放放行、非模态导航/可撤销反馈，以及 14 页错误提示均不遮挡操作按钮。
+3. **更新协议与替换事务**：更新探针检查正式版筛选、来源及重定向限制、24 小时节流、流式进度、取消/失败清理、版本与自包含单文件校验，并拒绝同版本的框架依赖 EXE；事务探针验证原路径替换、占用、取消、硬链接/目录重解析点防护、失败时保留原文件与成功后的临时保护清理。
+4. **发布清单核对**：直接读取 exe 中嵌入的清单，要求 `level="asInvoker"`，拒绝 `level="requireAdministrator"`；这用于验证启动权限模型，不用于保证 SmartScreen 行为。
+5. **公开包真实更新**：标签发行完成后，在独立 Windows job 中运行低版本单 EXE 探针，通过生产服务从本仓库正式 Release 下载新版，完成助手就绪、旧进程退出、同路径替换和新 GUI 启动；核对 SHA-256、版本、用户 SID、完整性级别、更新成功提示以及临时保护清理。探针仅在自己创建的 GUID 临时目录运行，不替换用户已有程序。
 
 可视树/状态断言的常见日志：
 
@@ -390,6 +406,7 @@ GitHub Actions 对 `master` 推送、面向 `master` 的 pull request、`v*` 标
 - `restore: ... result=OK` / `smart: ... result=OK`：有数据，或明确解释权限/数据源不可用的原因。
 - `elevation: ... navigation=nonmodal` / `ux-interactions: ... result=OK`：浏览走正常的非模态导航路径，并检查权限说明与可撤销反馈状态。
 - `ux-backup` / `ux-path` / `ux-diff` / `ux-close`：分别验证完整恢复预览与内容变化拒绝、分作用域草稿和冲突保留、结果与比较范围绑定，以及操作完成后安全关闭。
+- `ux-update: ... result=OK`：在真实更新面板操作按钮，验证手动检查失败重试、更新说明、下载取消/重试/校验、操作忙碌保护、助手就绪后才允许关闭，以及 PATH 草稿丢弃提醒；网络边界使用隔离夹具。
 - `ux-errors: pages=14 buttons=unobstructed result=OK`：逐页显示真实错误提示，检查其不遮挡任何可见操作按钮，并保留截图。
 - `theme: ... visual=True result=OK`：在同一真实窗口验证浅色/深色背景与已创建文本的前景同步切换。
 
@@ -418,8 +435,6 @@ src/WinKit/
   ViewModels/  24 个模块 + 卸载残留清理 / 任务栏两个子视图 + 壳
   Views/       24 个模块 UserControl、2 个子视图与对话框
   Themes/      颜色与控件样式
-packaging/     winget 清单模板（winget/manifests/）
-               winget/update.ps1 改版本号和哈希；winget/prepare-pr.ps1 铺出提 PR 用的目录结构
 tools/Probe/   只读探测 + 写入自测
 ```
 

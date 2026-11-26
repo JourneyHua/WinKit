@@ -12,6 +12,7 @@ namespace WinKit;
 
 public partial class App : Application
 {
+    internal static Services.AppUpdateInstallNotice? RestartNotice { get; set; }
     /// <summary>本程序认识的命令行开关。不在这张表里的开关一律当误用处理。</summary>
     private static readonly string[] KnownSwitches =
     [
@@ -26,10 +27,30 @@ public partial class App : Application
     {
         base.OnStartup(e);
 
+        var arguments = e.Args;
+        if (Services.AppUpdateInstaller.IsHelperInvocation(arguments))
+        {
+            StartupUri = null;
+            try { Shutdown(Services.AppUpdateInstaller.RunHelperAsync(arguments).GetAwaiter().GetResult()); }
+            catch { Shutdown(1); }
+            return;
+        }
+        if (Services.AppUpdateInstaller.TryReadRestartNotice(arguments, out var notice))
+        {
+            RestartNotice = notice;
+            arguments = [];
+        }
+        if (Services.AppUpdateInstaller.IsUpdateInProgressForCurrentExecutable())
+        {
+            StartupUri = null;
+            Shutdown(3);
+            return;
+        }
+
         // 这里以前没有 else 分支：随手传一个不认识的开关——最典型的是把 tools/Probe 的
         // --selftest 当成 WinKit.exe 的参数——不会报错，会静默启动完整 GUI 并弹 UAC，
         // 让人以为工具坏了或是自测跑起来了。宁可明确拒绝，也不要糊里糊涂跑起来。
-        var badSwitches = e.Args
+        var badSwitches = arguments
             .Where(a => a.StartsWith("-", StringComparison.Ordinal) && !KnownSwitches.Contains(a))
             .ToList();
 
@@ -40,25 +61,25 @@ public partial class App : Application
             return;
         }
 
-        if (e.Args.Contains("--help") || e.Args.Contains("-?"))
+        if (arguments.Contains("--help") || arguments.Contains("-?"))
         {
             ShowUsage([]);
             Shutdown(0);
             return;
         }
 
-        var smokeIndex = Array.IndexOf(e.Args, "--smoke");
+        var smokeIndex = Array.IndexOf(arguments, "--smoke");
         if (smokeIndex >= 0)
         {
-            var output = smokeIndex + 1 < e.Args.Length
-                ? e.Args[smokeIndex + 1]
+            var output = smokeIndex + 1 < arguments.Length
+                ? arguments[smokeIndex + 1]
                 : Path.Combine(AppContext.BaseDirectory, "smoke");
 
             Shutdown(RunSmoke(output));
             return;
         }
 
-        if (e.Args.Contains("--manifest-probe"))
+        if (arguments.Contains("--manifest-probe"))
         {
             RunManifestProbe();
             Shutdown(0);
@@ -66,7 +87,7 @@ public partial class App : Application
         }
 
         // 无人值守维护：由计划任务拉起，跑完即退，不建窗口
-        if (e.Args.Contains("--maintain"))
+        if (arguments.Contains("--maintain"))
         {
             var crashFile = Path.Combine(
                 Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
@@ -348,6 +369,7 @@ public partial class App : Application
             log.AppendLine($"  elevation: elevated={vm.IsElevated} banner={vm.ShowElevationBanner} navigation=nonmodal");
             RunUxInteractionChecks(window, vm, journal, outputDir, log);
             RunModuleStateChecks(outputDir, log);
+            RunUpdateUiChecks(outputDir, log);
             RunDeferredCloseCheck(outputDir, log);
             log.AppendLine($"  nav: groups={vm.NavGroups.Count} items={vm.NavItems.Count} expanded={vm.NavGroups.Count(g => g.IsExpanded)}");
 
@@ -401,7 +423,7 @@ public partial class App : Application
 
                 if (vm.CurrentViewModel is FileLockViewModel lockVm)
                 {
-                    lockVm.PathText = typeof(App).Assembly.Location;
+                    lockVm.PathText = Environment.ProcessPath ?? throw new InvalidOperationException("无法定位当前程序");
                     lockVm.Refresh();
                     WaitWhileBusy(() => lockVm.IsBusy, 40000);
                     if (lockVm.IsBusy) throw new TimeoutException("文件占用查询超时");

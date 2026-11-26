@@ -10,7 +10,9 @@
     <AssemblyName>WinKit</AssemblyName>
     <RootNamespace>WinKit</RootNamespace>
     <ApplicationManifest>app.manifest</ApplicationManifest>
-    <Version>1.11.0</Version>
+    <Version>1.12.0</Version>
+    <InformationalVersion>$(Version)</InformationalVersion>
+    <IncludeSourceRevisionInInformationalVersion>false</IncludeSourceRevisionInInformationalVersion>
     <Product>WinKit 系统管家</Product>
     <Company>WinKit</Company>
     <Description>Windows 11 体检与维护、系统概览、磁盘健康、环境变量、右键菜单、此电脑、导航栏与任务栏、应用管理（含 Scoop 与卸载残留清理）、驱动管理、启动与服务、系统清理、系统调优、文件占用解锁、文件与文件夹对比、重复文件检测、默认打开方式、事件日志诊断、Windows 更新、网络诊断与注册表体检工具</Description>
@@ -19,6 +21,17 @@
     <SatelliteResourceLanguages>zh-Hans;en</SatelliteResourceLanguages>
     <InvariantGlobalization>false</InvariantGlobalization>
     <EnableDefaultApplicationDefinition>false</EnableDefaultApplicationDefinition>
+  </PropertyGroup>
+
+  <!-- dotnet publish sets _IsPublishing; ordinary solution/Probe builds stay framework-dependent. -->
+  <PropertyGroup Condition="'$(_IsPublishing)' == 'true'">
+    <RuntimeIdentifier>win-x64</RuntimeIdentifier>
+    <SelfContained>true</SelfContained>
+    <PublishSingleFile>true</PublishSingleFile>
+    <IncludeNativeLibrariesForSelfExtract>true</IncludeNativeLibrariesForSelfExtract>
+    <DebugType>embedded</DebugType>
+    <PublishTrimmed>false</PublishTrimmed>
+    <PublishAot>false</PublishAot>
   </PropertyGroup>
 
   <ItemGroup>

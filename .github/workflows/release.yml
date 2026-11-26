@@ -14,6 +14,8 @@ permissions:
 jobs:
   build:
     runs-on: windows-latest
+    outputs:
+      release_version: ${{ steps.release_version.outputs.version }}
     env:
       PACKAGE_REF: ${{ github.event_name == 'pull_request' && format('pr-{0}', github.event.pull_request.number) || github.ref_name }}
 
@@ -24,6 +26,21 @@ jobs:
         uses: actions/setup-dotnet@v4
         with:
           dotnet-version: '10.0.x'
+
+      - name: Resolve release version
+        id: release_version
+        shell: pwsh
+        run: |
+          [xml]$project = Get-Content -LiteralPath src/WinKit/WinKit.csproj -Raw
+          $version = $project.SelectSingleNode("/Project/PropertyGroup/Version").InnerText
+          if ($version -notmatch '^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$') { throw "Invalid release version: $version" }
+          if ($env:GITHUB_REF.StartsWith("refs/tags/") -and $env:GITHUB_REF_NAME -cne "v$version") {
+            throw "Release tag $env:GITHUB_REF_NAME does not match project version v$version"
+          }
+          "RELEASE_VERSION=$version" >> $env:GITHUB_ENV
+          "version=$version" >> $env:GITHUB_OUTPUT
+          "RELEASE_EXE=WinKit-v$version-win-x64.exe" >> $env:GITHUB_ENV
+          "RELEASE_METADATA=WinKit-v$version-win-x64.update.json" >> $env:GITHUB_ENV
 
       - name: Restore & build
         run: dotnet build WinKit.slnx -c Release --nologo -m:1
@@ -38,13 +55,25 @@ jobs:
       # ---- 质量门槛 2：界面离屏渲染 + 每个模块的数据断言 ----
       # 主清单本身就是 asInvoker（见 src/WinKit/app.manifest 的注释），
       # 所以界面自检和发布用的是同一份权限模型，不再需要为 smoke 单独换清单。
-      - name: Publish for smoke (asInvoker)
+      - name: Publish single EXE for smoke and release (asInvoker)
         shell: pwsh
         run: |
           dotnet publish src/WinKit/WinKit.csproj -c Release -m:1 `
-            -t:Rebuild `
+            -t:Rebuild -r win-x64 --self-contained true `
+            -p:Version=$env:RELEASE_VERSION -p:PublishSingleFile=true `
+            -p:IncludeNativeLibrariesForSelfExtract=true -p:DebugType=embedded `
+            -p:PublishTrimmed=false -p:PublishAot=false `
             -o publish/preview --nologo
           if ($LASTEXITCODE -ne 0) { throw "Publish for smoke failed" }
+
+          $publishedFiles = @(Get-ChildItem -LiteralPath publish/preview -Recurse -File)
+          if ($publishedFiles.Count -ne 1 -or $publishedFiles[0].Name -cne "WinKit.exe") {
+            throw "Publish output must contain only WinKit.exe"
+          }
+          $versionInfo = [System.Diagnostics.FileVersionInfo]::GetVersionInfo($publishedFiles[0].FullName)
+          if ($versionInfo.ProductVersion -cne $env:RELEASE_VERSION -or $versionInfo.FileVersion -cne "$env:RELEASE_VERSION.0") {
+            throw "Published EXE version does not match $env:RELEASE_VERSION"
+          }
 
           # 清单必须嵌入 asInvoker，确保浏览不主动请求 UAC；此检查不保证 SmartScreen 行为。
           # 直接检查 apphost 字节中的属性形态，避免把注释里的裸词误认为执行级别。
@@ -52,6 +81,26 @@ jobs:
           $exeText = [System.Text.Encoding]::UTF8.GetString([System.IO.File]::ReadAllBytes($exePath))
           if ($exeText -notmatch 'level="asInvoker"') { throw "清单没有嵌入 asInvoker，启动权限模型不符合预期" }
           if ($exeText -match 'level="requireAdministrator"') { throw "exe 的清单仍然要求提权" }
+
+      - name: Update protocol self test
+        timeout-minutes: 5
+        shell: pwsh
+        run: |
+          dotnet run --project tools/UpdateProbe/UpdateProbe.csproj -c Release -- --fixture "$PWD/publish/preview/WinKit.exe" --framework-dependent-fixture "$PWD/src/WinKit/bin/Release/net10.0-windows/WinKit.exe"
+          if ($LASTEXITCODE -ne 0) { throw "Update protocol selftest failed with exit code $LASTEXITCODE" }
+
+      - name: Update installer transaction self test
+        timeout-minutes: 5
+        shell: pwsh
+        run: |
+          dotnet run --project tools/UpdateInstallerProbe/UpdateInstallerProbe.csproj -c Release -- --fixture "$PWD/publish/preview/WinKit.exe"
+          if ($LASTEXITCODE -ne 0) { throw "Update installer selftest failed with exit code $LASTEXITCODE" }
+
+      - name: Build public-update acceptance probe
+        shell: pwsh
+        run: |
+          dotnet build tools/UpdateEndToEndProbe/UpdateEndToEndProbe.csproj -c Release --nologo -m:1
+          if ($LASTEXITCODE -ne 0) { throw "Public-update probe build failed" }
 
       - name: UI smoke with assertions
         timeout-minutes: 10
@@ -187,7 +236,7 @@ jobs:
           if ($log -notmatch 'ux-interactions: .*result=OK') {
             $failures += "导航、权限说明或可撤销反馈的交互回归检查失败"
           }
-          foreach ($check in @('ux-backup', 'ux-path', 'ux-diff', 'ux-close')) {
+          foreach ($check in @('ux-backup', 'ux-path', 'ux-diff', 'ux-close', 'ux-update')) {
             if ($log -notmatch "${check}: .*result=OK") { $failures += "$check 交互回归缺失或失败" }
           }
           if ($log -notmatch 'ux-errors: pages=14 buttons=unobstructed result=OK') {
@@ -217,22 +266,32 @@ jobs:
             smoke.stderr.txt
           if-no-files-found: warn
 
-      - name: Publish (framework-dependent)
-        run: dotnet publish src/WinKit/WinKit.csproj -c Release -o publish/framework-dependent --nologo
-
-      - name: Package
+      - name: Prepare verified EXE and update metadata
         shell: pwsh
         run: |
-          # 包里只放程序本体：1.10.2 起不再附带解除锁定脚本，改用 Windows 自带的
-          # 「右键属性 → 解除锁定」勾选框（做的事完全一样，还少两个文件的编码坑）。
-          Compress-Archive -Path publish/framework-dependent/* -DestinationPath WinKit-${{ env.PACKAGE_REF }}-framework-dependent.zip -Force
+          # 发布通过上述原生 smoke 的同一个单 EXE，不再二次 publish。
+          $assetPath = Join-Path $PWD $env:RELEASE_EXE
+          Copy-Item -LiteralPath publish/preview/WinKit.exe -Destination $assetPath -Force
+          $asset = Get-Item -LiteralPath $assetPath
+          $metadata = [ordered]@{
+            schemaVersion = 1
+            version = $env:RELEASE_VERSION
+            rid = "win-x64"
+            fileName = $asset.Name
+            sha256 = (Get-FileHash -LiteralPath $assetPath -Algorithm SHA256).Hash.ToLowerInvariant()
+            size = [long]$asset.Length
+          }
+          $metadataPath = Join-Path $PWD $env:RELEASE_METADATA
+          [System.IO.File]::WriteAllText($metadataPath, ($metadata | ConvertTo-Json), [System.Text.UTF8Encoding]::new($false))
 
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
         with:
           name: WinKit-${{ env.PACKAGE_REF }}
           path: |
-            WinKit-${{ env.PACKAGE_REF }}-framework-dependent.zip
+            ${{ env.RELEASE_EXE }}
+            ${{ env.RELEASE_METADATA }}
+          if-no-files-found: error
 
       - name: Create GitHub Release
         if: startsWith(github.ref, 'refs/tags/v')
@@ -240,8 +299,13 @@ jobs:
         with:
           generate_release_notes: true
           body: |
-            ### 1.11.0 交互更新
+            ### 1.12.0 单 EXE 与应用更新
 
+            - **单 EXE**：Windows 11 x64 自包含发布，直接下载 EXE 运行，无需解压或另装 .NET 运行时。
+            - **检查更新**：默认后台最多 24 小时检查一次正式稳定版，可在设置中关闭；手动检查不受频率限制。发现新版只提示，更新说明来自本仓库 Release 正文。
+            - **下载与安装**：点击后才下载，支持进度、取消和重试；校验来源、SHA-256、字节数、程序版本及自包含格式。点击「重启并更新」后，助手就绪才关闭窗口，按需请求 UAC，保留原路径、文件名及原运行身份。
+            - **重启前提醒**：不保存未完成工作；发现 PATH 草稿时在更新面板提醒重启会丢弃。替换期间临时保护原文件，成功后清理，不保留长期旧版。
+            - **分发渠道**：仅从本仓库下载 WinKit；已移除向 winget/Scoop 发行的资料，应用内原有 winget/Scoop 管理功能完整保留。
             - **按需提权与操作反馈**：浏览页面不再弹模态提权确认；受限操作在页内说明权限。支持快照的改动显示可撤销反馈，撤销/回滚失败保留记录供重试。
             - **忙碌状态**：限制重复操作与导航；关闭窗口会等待当前操作结束，可点「取消关闭」。
             - **卸载残留**：应用与右键菜单的等待、结果和失败在页内卡片呈现，按需清理注册表残留或定位目录/注册表。
@@ -251,9 +315,51 @@ jobs:
 
             ### 运行要求与下载说明
 
-            - **框架依赖包**（`framework-dependent`）不附带运行时，需 Windows 11 与 [.NET 10 Desktop Runtime](https://dotnet.microsoft.com/download/dotnet/10.0)。
-            - 双击默认以普通权限启动；需要管理员时可点击「以管理员身份重新启动」。下载请使用本页发布包；winget 社区源收录后方可通过其安装。
-            - SmartScreen 提示受文件声誉、下载标记和本机策略影响。核实来源后，可在文件属性提供该选项时「解除锁定」；不保证解除标记或 winget 安装后不再出现安全提示。详见 README。
+            - 下载 `${{ env.RELEASE_EXE }}`，适用于 Windows 11 x64，已包含 .NET 运行时。配套 `${{ env.RELEASE_METADATA }}` 供应用更新与手动校验使用，包含 EXE 的 SHA-256 和字节数。
+            - 双击默认以普通权限启动；需要管理员时可点击「以管理员身份重新启动」。
+            - SmartScreen 提示受文件声誉、下载标记和本机策略影响。核实来源后，可在文件属性提供该选项时「解除锁定」；不保证解除标记后不再出现安全提示。详见 README。
             - 仓库配置 Probe 服务层自测与界面离屏自检门禁；本次结果以对应 Actions 日志为准，用例数随版本变化。
+          fail_on_unmatched_files: true
           files: |
-            WinKit-${{ env.PACKAGE_REF }}-framework-dependent.zip
+            ${{ env.RELEASE_EXE }}
+            ${{ env.RELEASE_METADATA }}
+
+  verify-public-update:
+    needs: build
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: windows-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup .NET 10
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.x'
+
+      - name: Publish isolated older-version probe
+        shell: pwsh
+        run: |
+          dotnet publish tools/UpdateEndToEndProbe/UpdateEndToEndProbe.csproj -c Release -r win-x64 --self-contained true -o artifacts/update-e2e-probe --nologo -m:1
+          if ($LASTEXITCODE -ne 0) { throw "Public-update probe publish failed" }
+
+      - name: Verify the public release through the production updater
+        id: public_update
+        timeout-minutes: 10
+        shell: pwsh
+        env:
+          EXPECTED_VERSION: ${{ needs.build.outputs.release_version }}
+        run: |
+          & ./tools/UpdateEndToEndProbe/Run-UpdateEndToEnd.ps1 -PublishedProbe "$PWD/artifacts/update-e2e-probe/WinKit.exe" -ExpectedVersion $env:EXPECTED_VERSION
+          if (-not $?) { throw "Public-update end-to-end acceptance failed" }
+
+      - name: Upload public-update acceptance evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: public-update-evidence
+          path: |
+            ${{ steps.public_update.outputs.artifact_directory }}/*.json
+          if-no-files-found: warn

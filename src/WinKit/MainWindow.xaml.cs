@@ -23,6 +23,7 @@ public partial class MainWindow : Window
 
         Loaded += OnLoaded;
         Closing += OnClosing;
+        Closed += (_, _) => _vm.OnWindowClosed();
         SourceInitialized += OnSourceInitialized;
 
         _vm.ShowSettingsRequested += ShowSettingsPopup;
@@ -42,6 +43,11 @@ public partial class MainWindow : Window
     {
         ApplyWindowBounds();
         _vm.Initialize();
+        if (App.RestartNotice is { } notice)
+        {
+            App.RestartNotice = null;
+            _vm.Updater.ShowRestartNotice(notice);
+        }
         SyncSettingsToggles();
         _vm.PropertyChanged += (_, args) =>
         {
@@ -82,6 +88,12 @@ public partial class MainWindow : Window
 
     private void OnClosing(object? sender, System.ComponentModel.CancelEventArgs e)
     {
+        if (_vm.Updater.IsPreparing && !_vm.Updater.IsRestartCommitted)
+        {
+            e.Cancel = true;
+            _vm.Updater.CancelPendingRestart();
+            return;
+        }
         if (_vm.IsGlobalBusy)
         {
             e.Cancel = true;
@@ -94,6 +106,8 @@ public partial class MainWindow : Window
 
         _vm.SaveWindowState(bounds.Width, bounds.Height, bounds.Left, bounds.Top, maximized);
     }
+
+    private void CheckUpdates_Click(object sender, RoutedEventArgs e) => SettingsPopup.IsOpen = false;
 
     // ---------- 导航选中态 ----------
 
