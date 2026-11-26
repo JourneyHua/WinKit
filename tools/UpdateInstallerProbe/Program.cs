@@ -129,6 +129,8 @@ internal static class Program
             AppUpdateInstallerNative.RenamePinned(staged, destination);
             Assert.Equal(identity, AppUpdateInstallerNative.Inspect(staged, destination), "Renaming retains the exact file and its expected path");
             Assert.True(File.Exists(destination), "Renaming creates the expected destination entry");
+            Assert.True(!File.Exists(string.Equals(destination, target, StringComparison.Ordinal) ? stage : target),
+                "Renaming removes the prior directory entry instead of leaving an alias");
         }
         AppUpdateInstallerNative.DeletePinned(staged);
     }
