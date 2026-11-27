@@ -13,6 +13,7 @@ public sealed class EventLogViewModel : ObservableObject, IModule
     private bool _isBusy;
     private string _summary = "";
     private string _errorText = "";
+    private string _loadingText = "";
     private EventLogGroup? _selected;
 
     public EventLogViewModel(Action<string> status)
@@ -21,7 +22,7 @@ public sealed class EventLogViewModel : ObservableObject, IModule
         Groups = new ObservableCollection<EventLogGroup>();
         Filtered = new ObservableCollection<EventLogGroup>();
 
-        RefreshCommand = new RelayCommand(() => _ = LoadAsync(_days));
+        RefreshCommand = new RelayCommand(Refresh, () => !IsBusy);
         SetDaysCommand = new RelayCommand(p => SetDays(p));
         CopyCommand = new RelayCommand(p => Copy(p as EventLogGroup));
         OpenEventViewerCommand = new RelayCommand(OpenEventViewer);
@@ -44,7 +45,16 @@ public sealed class EventLogViewModel : ObservableObject, IModule
     public bool IsBusy
     {
         get => _isBusy;
-        private set => Set(ref _isBusy, value);
+        private set
+        {
+            if (Set(ref _isBusy, value)) RefreshCommand.RaiseCanExecuteChanged();
+        }
+    }
+
+    public string LoadingText
+    {
+        get => _loadingText;
+        private set => Set(ref _loadingText, value);
     }
 
     public bool Is7Days => _days == 7;
@@ -67,84 +77,91 @@ public sealed class EventLogViewModel : ObservableObject, IModule
 
     public bool HasError => !string.IsNullOrWhiteSpace(_errorText);
 
-    public void Refresh() => _ = LoadAsync(_days);
+    public void Refresh() => _ = LoadAsync();
 
     private void SetDays(object? parameter)
     {
         var days = parameter?.ToString() == "30" ? 30 : 7;
-        if (days == _days) return;
-
+        var changed = days != _days;
         _days = days;
+        // 点按已选中的范围也保持选中。
         OnPropertyChanged(nameof(Is7Days));
         OnPropertyChanged(nameof(Is30Days));
+        if (!changed) return;
 
-        if (IsBusy)
-        {
-            // 正在加载时切换：记下来，等这次结束后补一次，否则界面会用旧数据配新标签
-            _pendingDays = days;
-            return;
-        }
-
-        _ = LoadAsync(days);
+        if (IsBusy) LoadingText = $"将读取近 {days} 天的事件…";
+        else Refresh();
     }
 
-    private int? _pendingDays;
-
-    private async Task LoadAsync(int days)
+    private async Task LoadAsync()
     {
-        if (IsBusy)
-        {
-            _pendingDays = days;
-            return;
-        }
-
+        if (IsBusy) return;
         IsBusy = true;
+        ErrorText = "";
 
         try
         {
-            _status($"正在读取近 {days} 天的系统事件…");
-            var (groups, error) = await Task.Run(() => _service.Load(days));
-
-            Groups.Clear();
-            foreach (var group in groups) Groups.Add(group);
-
-            Filtered.Clear();
-            foreach (var group in groups) Filtered.Add(group);
-
-            ErrorText = error ?? "";
-
-            var blueScreen = groups.Count(g => g.Category == "蓝屏 / 意外关机");
-            var crashes = groups.Count(g => g.Category == "应用崩溃");
-            _loadedDays = days;
-
-            SummaryText = groups.Count == 0
-                ? $"近 {days} 天没有错误或严重级别事件"
-                : $"近 {days} 天共 {groups.Sum(g => g.Count)} 条错误事件，归并为 {groups.Count} 种（蓝屏相关 {blueScreen} 种，应用崩溃 {crashes} 种）";
-
-            _status($"事件日志：{groups.Count} 种错误");
-        }
-        catch (Exception ex)
-        {
-            ErrorText = $"读取事件日志失败：{ex.Message}";
-            _status(ErrorText);
+            while (true)
+            {
+                var days = _days;
+                LoadingText = $"正在读取近 {days} 天的事件…";
+                try
+                {
+                    var result = await Task.Run(() => _service.Read(days));
+                    // 不将旧查询的结果贴上新范围标签；合并快速切换，仅读取最后选中的范围。
+                    if (days != _days) continue;
+                    ShowResult(days, result);
+                }
+                catch (Exception ex)
+                {
+                    if (days != _days) continue;
+                    ShowReadFailure(days, ex.Message);
+                }
+                break;
+            }
         }
         finally
         {
+            LoadingText = "";
             IsBusy = false;
-        }
-
-        if (_pendingDays is { } pending && pending != _loadedDays)
-        {
-            _pendingDays = null;
-            _ = LoadAsync(pending);
-        }
-        else
-        {
-            _pendingDays = null;
         }
     }
 
-    private int _loadedDays;
+    private void ShowResult(int days, EventLogReadResult result)
+    {
+        if (result.SuccessfulLogs == 0)
+        {
+            ShowReadFailure(days, result.Error);
+            return;
+        }
+
+        SelectedGroup = null;
+        Groups.Clear();
+        Filtered.Clear();
+        foreach (var group in result.Groups)
+        {
+            Groups.Add(group);
+            Filtered.Add(group);
+        }
+
+        var partial = result.Error is not null;
+        ErrorText = partial ? $"部分日志未能读取：{result.Error}" : "";
+        var groups = result.Groups;
+        var scope = partial || result.LimitedLogs > 0 ? $"近 {days} 天已读取的日志" : $"近 {days} 天";
+        SummaryText = groups.Count == 0
+            ? $"{scope}中未发现错误或严重事件。"
+            : $"{scope}中发现 {groups.Sum(g => g.Count)} 条错误或严重事件，归并为 {groups.Count} 组。";
+        if (result.LimitedLogs > 0)
+            SummaryText += $" {result.LimitedLogs} 个日志已达到读取上限（每个最多 {result.MaxPerLog} 条），仅显示最近记录。";
+        _status(partial ? "事件日志：部分日志未能读取" : "事件日志已更新");
+    }
+
+    private void ShowReadFailure(int days, string? error)
+    {
+        var preserved = string.IsNullOrEmpty(SummaryText) ? "" : "，下方仍显示上一次结果";
+        ErrorText = $"未能读取近 {days} 天的事件{preserved}。{error}";
+        _status("事件日志读取失败");
+    }
 
     private void Copy(EventLogGroup? group)
     {

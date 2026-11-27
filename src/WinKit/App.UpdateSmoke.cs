@@ -31,13 +31,14 @@ public partial class App
         using var client = new HttpClient(handler);
         var busy = false;
         var draft = true;
+        var draftReviewed = false;
         var allowed = false;
         var closeRequested = false;
         var prepareCount = 0;
         using var model = new AppUpdateViewModel(new AppUpdateService(Path.Combine(outputDir, "update-ui"), client),
             () => busy, () => draft,
             (_, _) => { prepareCount++; return Task.FromResult(allowed); },
-            () => closeRequested = true, previous);
+            () => closeRequested = true, previous, reviewDrafts: () => draftReviewed = true);
         var window = new Window
         {
             Content = new Views.AppUpdateView { DataContext = model }, Width = 960, Height = 560,
@@ -87,6 +88,16 @@ public partial class App
             Invoke(model.DownloadCommand);
             Finish();
             Require(model.IsReady && !model.HasError && model.DownloadPercent == 100 && model.ShowDraftWarning, "完整下载未就绪或缺草稿丢弃提示");
+            Capture(window, outputDir, "update-ready-with-draft", log);
+            Require(!model.RestartCommand.CanExecute(null)
+                && FindVisibleButton(window, b => b.Command == model.RestartCommand) is null,
+                "PATH 草稿未处理时仍显示重启操作");
+            Invoke(model.ReviewDraftsCommand);
+            Require(draftReviewed && !model.IsVisible, "查看 PATH 更改未返回草稿所在页");
+            draft = false;
+            model.NotifyHostStateChanged();
+            model.EntryCommand.Execute(null);
+            Pump();
             Capture(window, outputDir, "update-ready", log);
             busy = true;
             model.NotifyHostStateChanged();
@@ -103,8 +114,6 @@ public partial class App
             Invoke(model.RestartCommand);
             Finish();
             Require(prepareCount == 2 && closeRequested && model.IsRestartCommitted, "助手就绪后未提交重启");
-            draft = false;
-            model.NotifyHostStateChanged();
             Require(!model.ShowDraftWarning, "草稿提示未同步");
             Invoke(model.DismissCommand);
             Require(!model.IsVisible, "更新卡无法关闭");

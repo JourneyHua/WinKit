@@ -17,6 +17,7 @@ public partial class App : Application
     private static readonly string[] KnownSwitches =
     [
         "--smoke",
+        "--motion-smoke",
         "--manifest-probe",
         "--maintain",
         "--help",
@@ -30,7 +31,6 @@ public partial class App : Application
         var arguments = e.Args;
         if (Services.AppUpdateInstaller.IsHelperInvocation(arguments))
         {
-            StartupUri = null;
             try { Shutdown(Services.AppUpdateInstaller.RunHelperAsync(arguments).GetAwaiter().GetResult()); }
             catch { Shutdown(1); }
             return;
@@ -42,7 +42,6 @@ public partial class App : Application
         }
         if (Services.AppUpdateInstaller.IsUpdateInProgressForCurrentExecutable())
         {
-            StartupUri = null;
             Shutdown(3);
             return;
         }
@@ -75,7 +74,19 @@ public partial class App : Application
                 ? arguments[smokeIndex + 1]
                 : Path.Combine(AppContext.BaseDirectory, "smoke");
 
+            ShutdownMode = ShutdownMode.OnExplicitShutdown;
             Shutdown(RunSmoke(output));
+            return;
+        }
+
+        var motionIndex = Array.IndexOf(arguments, "--motion-smoke");
+        if (motionIndex >= 0)
+        {
+            var output = motionIndex + 1 < arguments.Length
+                ? arguments[motionIndex + 1]
+                : Path.Combine(AppContext.BaseDirectory, "smoke-motion");
+            ShutdownMode = ShutdownMode.OnExplicitShutdown;
+            Shutdown(RunMotionSmoke(output));
             return;
         }
 
@@ -130,6 +141,9 @@ public partial class App : Application
         var settings = Services.UiSettingsService.Load();
         Services.ThemeService.Apply(settings.Theme);
         WinKit.MainWindow.ApplyDensity(settings.Density);
+        // Only normal startup creates the main window; smoke, maintenance and update-helper modes never do.
+        MainWindow = new MainWindow();
+        MainWindow.Show();
     }
 
     private void OnDispatcherUnhandledException(object sender, DispatcherUnhandledExceptionEventArgs e)
@@ -205,6 +219,7 @@ public partial class App : Application
         sb.AppendLine("可用参数：");
         sb.AppendLine("  （无参数）            正常启动");
         sb.AppendLine("  --smoke <输出目录>    界面离屏自检：逐模块渲染 PNG 后退出");
+        sb.AppendLine("  --motion-smoke <目录> 动效专项：长表滚动、减少动态效果、截图与渲染记录");
         sb.AppendLine("  --manifest-probe      枚举菜单项 / 快速访问 / 驱动器并输出报告");
         sb.AppendLine("  --maintain            无人值守维护（计划任务用），跑完即退");
         sb.AppendLine("  --help                显示这段说明");
@@ -301,6 +316,7 @@ public partial class App : Application
 
         // 目录和日志必须在任何可能失败的操作之前就绪：
         // CI 的无交互桌面会话里窗口可能起不来，但数据 dump 仍要能落盘。
+        outputDir = Path.GetFullPath(outputDir);
         Directory.CreateDirectory(outputDir);
         var logPath = Path.Combine(outputDir, "smoke.log");
 
@@ -370,6 +386,8 @@ public partial class App : Application
             RunUxInteractionChecks(window, vm, journal, outputDir, log);
             RunModuleStateChecks(outputDir, log);
             RunUpdateUiChecks(outputDir, log);
+            RunMotionChecks(outputDir, log);
+            RunShellMotionChecks(window, outputDir, log);
             RunDeferredCloseCheck(outputDir, log);
             log.AppendLine($"  nav: groups={vm.NavGroups.Count} items={vm.NavItems.Count} expanded={vm.NavGroups.Count(g => g.IsExpanded)}");
 
@@ -385,7 +403,7 @@ public partial class App : Application
                     {
                         UpdateLayoutSafe(window);
                         Pump();
-                        Capture(window, outputDir, nav.Key, log);
+                        Capture(window, outputDir, nav.Key, log, "MODULE OK");
                     }
                     catch (Exception ex)
                     {
@@ -586,8 +604,10 @@ public partial class App : Application
 
                 if (vm.CurrentViewModel is ReportViewModel reportVm)
                 {
-                    reportVm.Refresh();
-                    Pump(14000);
+                    WaitWhileBusy(() => reportVm.IsBusy, 45000);
+                    InvokeButton(FindVisibleButton(window, b => ReferenceEquals(b.Command, reportVm.GenerateCommand))
+                        ?? throw new InvalidOperationException("找不到体检操作"));
+                    WaitWhileBusy(() => reportVm.IsBusy, 45000);
                     UpdateLayoutSafe(window);
                     Pump();
                     if (shown) Capture(window, outputDir, "report-loaded", log);
@@ -640,11 +660,22 @@ public partial class App : Application
                         appVm.UninstallCenter.ClipboardTextReader = () => $"\"{smokeTarget}\"\r\n";
                         appVm.UninstallCenter.ClearCommand.Execute(null);
                         Pump();
+                        if (FindVisibleButton(window, b => ReferenceEquals(b.Command, appVm.UninstallCenter.ScanCommand)) is not null)
+                            throw new InvalidOperationException("没有有效目标时仍显示残留扫描");
                         InvokeButton(FindVisibleButton(window, b => ReferenceEquals(b.Command, appVm.UninstallCenter.PastePathCommand))
                             ?? throw new InvalidOperationException("没有找到粘贴路径按钮"));
                         var same = string.Equals(appVm.UninstallCenter.TargetPath, smokeTarget, StringComparison.OrdinalIgnoreCase);
                         if (!same) throw new InvalidOperationException("粘贴动作没有重新识别夹具路径");
                         log.AppendLine($"  paste: ok=True source=isolated-input target=\"{OneLine(appVm.UninstallCenter.TargetPath)}\" kind=\"{OneLine(appVm.UninstallCenter.TargetKindText)}\" same={same}");
+                        InvokeButton(FindVisibleButton(window, b => ReferenceEquals(b.Command, appVm.UninstallCenter.ScanCommand))
+                            ?? throw new InvalidOperationException("找不到有效目标的残留扫描操作"));
+                        WaitWhileBusy(() => appVm.UninstallCenter.IsScanning, 45000);
+                        if (appVm.UninstallCenter.IsScanning || appVm.UninstallCenter.ScanSummary.StartsWith("扫描失败", StringComparison.Ordinal)
+                            || appVm.UninstallCenter.HasSelection
+                            || FindVisibleButton(window, b => ReferenceEquals(b.Command, appVm.UninstallCenter.CleanSelectedCommand)) is not null)
+                            throw new InvalidOperationException("残留扫描未完成，或结果未经用户选择即可清理");
+                        Capture(window, outputDir, "ux-uninstall-scan", log);
+                        log.AppendLine("  ux-uninstall: scan=invoked selection=opt-in cleanup=hidden result=OK");
                     }
                     finally
                     {
@@ -1294,7 +1325,7 @@ public partial class App : Application
         }
     }
 
-    private static void Capture(Window window, string outputDir, string name, StringBuilder log)
+    private static void Capture(Window window, string outputDir, string name, StringBuilder log, string marker = "OK")
     {
         var target = (FrameworkElement)window.Content;
         var width = Math.Max(1, (int)target.ActualWidth);
@@ -1316,6 +1347,6 @@ public partial class App : Application
         var file = Path.Combine(outputDir, $"{name}.png");
         using (var stream = File.Create(file)) encoder.Save(stream);
 
-        log.AppendLine($"OK {name} -> {file} ({width}x{height})");
+        log.AppendLine($"{marker} {name} -> {file} ({width}x{height})");
     }
 }

@@ -3,8 +3,7 @@
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
              xmlns:core="clr-namespace:WinKit.Core"
              xmlns:vm="clr-namespace:WinKit.ViewModels"
-             xmlns:views="clr-namespace:WinKit.Views"
-             StartupUri="MainWindow.xaml">
+             xmlns:views="clr-namespace:WinKit.Views">
     <Application.Resources>
         <ResourceDictionary>
             <ResourceDictionary.MergedDictionaries>

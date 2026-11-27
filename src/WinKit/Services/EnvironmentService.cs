@@ -1,6 +1,5 @@
 using System.IO;
 using System.Runtime.InteropServices;
-using System.Text;
 using Microsoft.Win32;
 using WinKit.Core;
 
@@ -63,8 +62,8 @@ public sealed class EnvironmentService
         {
             foreach (var name in Reg.ValueNames(path))
             {
-                if (string.Equals(name, "Path", StringComparison.OrdinalIgnoreCase) && list.Any(v => v.IsPath))
-                    continue; // 用户 PATH 与系统 PATH 合并展示一次即可
+                if (IsPathName(name) && list.Any(v => v.IsPath))
+                    continue; // 左侧仅保留一个 PATH 入口，两个作用域在右侧分别显示。
 
                 var raw = Reg.GetString(path, name, expand: false) ?? "";
                 list.Add(new EnvVarItem
@@ -72,12 +71,12 @@ public sealed class EnvironmentService
                     Name = name,
                     Value = raw,
                     Scope = scope,
-                    IsPath = string.Equals(name, "Path", StringComparison.OrdinalIgnoreCase)
+                    IsPath = IsPathName(name)
                 });
             }
         }
 
-        // PATH 单独合并：用户 + 系统，按实际生效顺序（用户在前）
+        // PATH 行置顶；不把其中一个作用域显示成两个作用域的合并值。
         return list
             .OrderByDescending(v => v.IsPath)
             .ThenBy(v => v.Scope)
@@ -164,42 +163,72 @@ public sealed class EnvironmentService
         BroadcastChange();
     }
 
-    public void SetVariable(EnvScope scope, string name, string value, string? oldName = null)
+    private static bool IsPathName(string name) => name.Equals("PATH", StringComparison.OrdinalIgnoreCase);
+
+    internal static string? ValidateVariableName(string name)
     {
-        if (string.IsNullOrWhiteSpace(name))
-            throw new ArgumentException("变量名不能为空", nameof(name));
+        if (string.IsNullOrWhiteSpace(name)) return "请输入变量名。";
+        if (IsPathName(name)) return "请在右侧的 PATH 面板单独管理 PATH。";
+        if (name.Contains('=') || name.Any(char.IsControl)) return "变量名不能包含等号或控制字符。";
+        return null;
+    }
 
-        var subKey = scope == EnvScope.User ? UserEnvKey : MachineEnvKey;
-        var hive = scope == EnvScope.User ? HiveKind.CurrentUser : HiveKind.LocalMachine;
-        var path = RegPath.Of(hive, subKey);
+    private static RegistryKey? ReadVariableKey(RegPath path)
+    {
+        var (key, status) = Reg.TryOpen(path, false);
+        if (status == Reg.OpenStatus.Denied) throw new UnauthorizedAccessException("无法读取现有环境变量，未执行更改。");
+        return key;
+    }
 
-        _journal.Record($"{(string.IsNullOrEmpty(oldName) ? "新增" : "修改")}环境变量：{name}",
-            new[] { (hive, subKey) },
-            () =>
-            {
-                using var key = Reg.Create(path);
-                if (key is null) throw new InvalidOperationException("无法写入环境变量键");
+    public void CreateUserVariable(string name, string value)
+    {
+        name = name.Trim();
+        if (ValidateVariableName(name) is { } error) throw new ArgumentException(error);
+        var path = RegPath.Hkcu(UserEnvKey);
+        using (var key = ReadVariableKey(path))
+        {
+            // 不用页面缓存，也不把空值或非字符串类型误判成不存在。
+            if (key?.GetValueNames().Contains(name, StringComparer.OrdinalIgnoreCase) == true)
+                throw new InvalidOperationException($"当前用户已存在变量「{name}」。要修改它，请刷新列表后选择「编辑」。");
+        }
+        WriteVariable(path, name, value, RegistryValueKind.ExpandString, "新增");
+    }
 
-                if (!string.IsNullOrEmpty(oldName) &&
-                    !string.Equals(oldName, name, StringComparison.OrdinalIgnoreCase))
-                {
-                    key.DeleteValue(oldName, false);
-                }
+    public void UpdateVariable(EnvScope scope, string name, string value)
+    {
+        if (ValidateVariableName(name) is { } error) throw new ArgumentException(error);
+        var path = scope == EnvScope.User ? RegPath.Hkcu(UserEnvKey) : RegPath.Hklm(MachineEnvKey);
+        RegistryValueKind kind;
+        using (var key = ReadVariableKey(path))
+        {
+            if (key is null || !key.GetValueNames().Contains(name, StringComparer.OrdinalIgnoreCase))
+                throw new InvalidOperationException($"变量「{name}」已不存在。请刷新列表。");
+            kind = key.GetValueKind(name);
+        }
+        if (kind is not (RegistryValueKind.String or RegistryValueKind.ExpandString))
+            throw new InvalidOperationException($"变量「{name}」不是文本，未执行更改。");
+        WriteVariable(path, name, value, kind, "修改");
+    }
 
-                key.SetValue(name, value, RegistryValueKind.ExpandString);
-            });
-
+    private void WriteVariable(RegPath path, string name, string value, RegistryValueKind kind, string action)
+    {
+        _journal.Record($"{action}环境变量：{name}", [(path.Hive, path.SubKey)], () =>
+        {
+            using var key = Reg.Create(path) ?? throw new InvalidOperationException("无法写入环境变量键。");
+            key.SetValue(name, value, kind);
+        });
         BroadcastChange();
     }
 
     public void DeleteVariable(EnvScope scope, string name)
     {
-        var subKey = scope == EnvScope.User ? UserEnvKey : MachineEnvKey;
-        var hive = scope == EnvScope.User ? HiveKind.CurrentUser : HiveKind.LocalMachine;
-
-        _journal.Record($"删除环境变量：{name}", new[] { (hive, subKey) },
-            () => Reg.DeleteValue(RegPath.Of(hive, subKey), name));
-
+        if (ValidateVariableName(name) is { } error) throw new ArgumentException(error);
+        var path = scope == EnvScope.User ? RegPath.Hkcu(UserEnvKey) : RegPath.Hklm(MachineEnvKey);
+        _journal.Record($"删除环境变量：{name}", [(path.Hive, path.SubKey)], () =>
+        {
+            using var key = Reg.Open(path, true) ?? throw new InvalidOperationException("无法写入环境变量键。");
+            key.DeleteValue(name, true);
+        });
         BroadcastChange();
     }
 

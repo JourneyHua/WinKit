@@ -1,5 +1,5 @@
 using System.Collections.ObjectModel;
-using System.Diagnostics;
+using System.ComponentModel;
 using System.IO;
 using System.Text;
 using System.Windows;
@@ -20,6 +20,7 @@ public sealed class UninstallCenterViewModel : ObservableObject
 {
     private readonly ChangeJournal _journal;
     private readonly Action<string> _status;
+    private readonly Action<bool>? _setGlobalBusy;
 
     // 自检可替换读取边界，无需覆盖当前桌面的剪贴板。正常操作始终使用系统读取器。
     internal Func<string> ClipboardTextReader { get; set; } =
@@ -36,38 +37,43 @@ public sealed class UninstallCenterViewModel : ObservableObject
     private string _identifySummary = "";
     private string _scanStatus = "";
     private string _scanSummary = "";
+    private string _cleanupFeedback = "";
     private string _archivePath = "";
     private string _archiveStatusFile = "";
     private bool _isScanning;
     private bool _isBusy;
+    private ResidualScanService.DirectoryTarget? _folderAtSelection;
 
-    public UninstallCenterViewModel(ChangeJournal journal, Action<string> status)
+    private sealed record TargetSnapshot(string Path, string Folder, string Kind, string Name,
+        UninstallEntry[] Matches, CandidateUninstaller[] Candidates, ResidualItem[] Residuals);
+
+    public UninstallCenterViewModel(ChangeJournal journal, Action<string> status, Action<bool>? setGlobalBusy = null)
     {
         _journal = journal;
         _status = status;
+        _setGlobalBusy = setGlobalBusy;
 
         Matches = new ObservableCollection<UninstallEntry>();
         Candidates = new ObservableCollection<CandidateUninstaller>();
         Residuals = new ObservableCollection<ResidualItem>();
 
-        PickFolderCommand = new RelayCommand(PickFolder);
-        PickShortcutCommand = new RelayCommand(PickShortcut);
-        ClearCommand = new RelayCommand(Clear);
-        RunMatchedCommand = new RelayCommand(p => RunMatched(p as UninstallEntry));
-        RunCandidateCommand = new RelayCommand(p => RunCandidate(p as CandidateUninstaller));
-        ScanCommand = new RelayCommand(() => _ = ScanAsync(false));
-        DeepScanCommand = new RelayCommand(() => _ = ScanAsync(true));
-        CancelScanCommand = new RelayCommand(CancelScan, () => IsScanning);
-        CleanSelectedCommand = new RelayCommand(() => CleanSelected(), () => HasResiduals && !IsBusy);
-        ForceDeleteCommand = new RelayCommand(() => ForceDeleteFolder(), () => HasTargetFolder && !IsBusy);
-        MeasureCommand = new RelayCommand(() => _ = MeasureAsync(), () => HasResiduals && !IsScanning);
-        SelectConfirmedCommand = new RelayCommand(() => SetSelection(true));
-        ClearSelectionCommand = new RelayCommand(() => SetSelection(false));
+        PickFolderCommand = new RelayCommand(PickFolder, () => CanChangeTarget);
+        PickShortcutCommand = new RelayCommand(PickShortcut, () => CanChangeTarget);
+        ClearCommand = new RelayCommand(Clear, () => HasTarget && CanChangeTarget);
+        RunMatchedCommand = new RelayCommand(p => RunMatched((UninstallEntry)p!), p => CanChangeTarget && p is UninstallEntry entry && Matches.Contains(entry));
+        RunCandidateCommand = new RelayCommand(p => RunCandidate((CandidateUninstaller)p!), p => CanChangeTarget && p is CandidateUninstaller entry && Candidates.Contains(entry));
+        ScanCommand = new RelayCommand(() => _ = ScanAsync(false), () => HasScanTarget && CanChangeTarget);
+        DeepScanCommand = new RelayCommand(() => _ = ScanAsync(true), () => HasScanTarget && CanChangeTarget);
+        CancelScanCommand = new RelayCommand(CancelScan, () => IsScanning && _scanCts is { IsCancellationRequested: false });
+        CleanSelectedCommand = new RelayCommand(CleanSelected, () => HasSelection && CanChangeTarget);
+        RecycleTargetCommand = new RelayCommand(RecycleTargetFolder, () => CanRecycleTarget && CanChangeTarget);
+        MeasureCommand = new RelayCommand(() => _ = MeasureAsync(), () => HasDirectorySelection && CanChangeTarget);
+        ClearSelectionCommand = new RelayCommand(ClearSelection, () => HasSelection && CanChangeTarget);
         OpenTargetCommand = new RelayCommand(OpenTarget);
         OpenResidualCommand = new RelayCommand(p => OpenResidual(p as ResidualItem));
         OpenArchiveCommand = new RelayCommand(OpenArchive, () => File.Exists(_archiveStatusFile));
         CopyTargetCommand = new RelayCommand(CopyTarget);
-        PastePathCommand = new RelayCommand(PastePath);
+        PastePathCommand = new RelayCommand(PastePath, () => CanChangeTarget);
     }
 
     // ---------- 集合 ----------
@@ -87,9 +93,8 @@ public sealed class UninstallCenterViewModel : ObservableObject
     public RelayCommand DeepScanCommand { get; }
     public RelayCommand CancelScanCommand { get; }
     public RelayCommand CleanSelectedCommand { get; }
-    public RelayCommand ForceDeleteCommand { get; }
+    public RelayCommand RecycleTargetCommand { get; }
     public RelayCommand MeasureCommand { get; }
-    public RelayCommand SelectConfirmedCommand { get; }
     public RelayCommand ClearSelectionCommand { get; }
     public RelayCommand OpenTargetCommand { get; }
     public RelayCommand OpenResidualCommand { get; }
@@ -122,7 +127,6 @@ public sealed class UninstallCenterViewModel : ObservableObject
         {
             if (!Set(ref _targetFolder, value)) return;
             OnPropertyChanged(nameof(HasTargetFolder));
-            OnPropertyChanged(nameof(TargetFolderName));
         }
     }
 
@@ -141,11 +145,13 @@ public sealed class UninstallCenterViewModel : ObservableObject
     public string ScanSummary
     {
         get => _scanSummary;
-        private set
-        {
-            if (!Set(ref _scanSummary, value)) return;
-            OnPropertyChanged(nameof(HasResiduals));
-        }
+        private set => Set(ref _scanSummary, value);
+    }
+
+    public string CleanupFeedback
+    {
+        get => _cleanupFeedback;
+        private set => Set(ref _cleanupFeedback, value);
     }
 
     public string ArchivePath
@@ -160,7 +166,7 @@ public sealed class UninstallCenterViewModel : ObservableObject
         private set
         {
             if (!Set(ref _isScanning, value)) return;
-            OnPropertyChanged(nameof(ScanHint));
+            OnPropertyChanged(nameof(CanChangeTarget));
             RaiseCommandStates();
         }
     }
@@ -171,21 +177,33 @@ public sealed class UninstallCenterViewModel : ObservableObject
         private set
         {
             if (!Set(ref _isBusy, value)) return;
+            OnPropertyChanged(nameof(CanChangeTarget));
             RaiseCommandStates();
         }
     }
 
     public bool HasTarget => !string.IsNullOrWhiteSpace(_targetPath);
     public bool HasTargetFolder => !string.IsNullOrWhiteSpace(_targetFolder) && Directory.Exists(_targetFolder);
-    public bool HasMatches => Matches.Count > 0;
     public bool HasCandidates => Candidates.Count > 0;
+    public bool HasUninstallers => Matches.Count > 0 || HasCandidates;
     public bool HasResiduals => Residuals.Count > 0;
-    public bool ShowEmptyOverall => !HasTarget && !HasResiduals;
+    public bool HasScanTarget => _folderAtSelection is not null;
+    public bool CanRecycleTarget => HasScanTarget && HasTargetFolder;
+    public bool CanChangeTarget => !IsScanning && !IsBusy;
+    public bool HasSelection => Residuals.Any(IsSelectedForCleanup);
+    public bool HasDirectorySelection => Residuals.Any(item => IsSelectedForCleanup(item) && item.Kind == ResidualKind.Directory);
 
-    /// <summary>强制删除要用户照着敲的文件夹名。</summary>
-    public string TargetFolderName => Path.GetFileName(_targetFolder.TrimEnd('\\'));
+    public string ResidualEmptyText => !HasTarget ? "先选择软件的安装文件夹或快捷方式。"
+        : !HasScanTarget ? "未识别到可扫描的软件目录。"
+        : string.IsNullOrEmpty(ScanSummary) ? "软件卸载完成后，可扫描相关项目。"
+        : "没有可显示的扫描结果。";
 
     public string ScanHint => IsScanning ? "正在扫描…" : "";
+
+    private static bool IsSelectedForCleanup(ResidualItem item) => item.IsSelected && item.CanClean;
+
+    private TargetSnapshot CaptureTarget() => new(TargetPath, TargetFolder, TargetKindText,
+        Path.GetFileName(TargetFolder), Matches.ToArray(), Candidates.ToArray(), Residuals.ToArray());
 
     public string SelectedSummary
     {
@@ -202,6 +220,7 @@ public sealed class UninstallCenterViewModel : ObservableObject
 
     public void AcceptPath(string path)
     {
+        if (!CanChangeTarget) return;
         if (string.IsNullOrWhiteSpace(path))
         {
             _status("没有拿到可识别的路径");
@@ -215,7 +234,7 @@ public sealed class UninstallCenterViewModel : ObservableObject
         if (Directory.Exists(raw))
         {
             kind = "文件夹";
-            folder = raw.TrimEnd('\\');
+            folder = Path.TrimEndingDirectorySeparator(raw);
         }
         else if (raw.EndsWith(".lnk", StringComparison.OrdinalIgnoreCase) && File.Exists(raw))
         {
@@ -230,43 +249,49 @@ public sealed class UninstallCenterViewModel : ObservableObject
         }
         else
         {
-            IdentifySummary = $"路径不存在：{raw}";
-            _status("拖入的路径不存在");
+            CleanupFeedback = $"路径不存在：{raw}。当前目标没有改变。";
+            _status("选择的路径不存在");
             return;
         }
 
         ResetResiduals();
+        ResetArchive();
+        CleanupFeedback = "";
+        Matches.Clear();
+        Candidates.Clear();
+        _folderAtSelection = null;
 
         TargetPath = raw;
         TargetKindText = kind;
         TargetFolder = folder;
-
-        var leaf = Path.GetFileName(folder.TrimEnd('\\'));
-        var entries = _uninstall.LoadAll();
-        var matches = _uninstall.Match(folder, leaf, entries);
-
-        Matches.Clear();
-        foreach (var entry in matches) Matches.Add(entry);
-
-        Candidates.Clear();
-        foreach (var candidate in _uninstall.FindCandidateUninstallers(folder)) Candidates.Add(candidate);
-
-        OnPropertyChanged(nameof(HasMatches));
-        OnPropertyChanged(nameof(HasCandidates));
-        OnPropertyChanged(nameof(ShowEmptyOverall));
-
-        IdentifySummary = matches.Count switch
+        if (!ResidualScanService.TryGetDirectoryTarget(folder, out _folderAtSelection, out var reason))
         {
-            0 when Candidates.Count > 0 =>
-                $"没有对应的卸载登记，但在目录里找到 {Candidates.Count} 个候选卸载器——" +
-                "这类软件通常把卸载记录写在自己的配置里，直接运行候选卸载器即可。",
-            0 =>
-                $"没有对应的卸载登记，也没找到卸载器。「{leaf}」可能是绿色软件，或安装记录已被别的工具清理。" +
-                "可以继续做残留扫描，或直接强制删除这个文件夹。",
-            1 => $"已匹配到卸载登记：{matches[0].Name}",
-            _ => $"匹配到 {matches.Count} 个卸载登记，请确认要运行哪一个。"
-        };
+            IdentifySummary = string.IsNullOrWhiteSpace(folder)
+                ? "无法从这个快捷方式识别软件目录。请选择安装文件夹。"
+                : $"不能将此位置作为软件目录。{reason}";
+            UpdateTargetState();
+            return;
+        }
 
+        TargetFolder = _folderAtSelection!.Path;
+        var leaf = Path.GetFileName(TargetFolder);
+        var entries = _uninstall.LoadAll();
+        var byPath = entries.Where(entry => ResidualScanService.NormalizeLocalPath(entry.InstallLocation) is { } location &&
+            (string.Equals(location, TargetFolder, StringComparison.OrdinalIgnoreCase) ||
+             location.StartsWith(TargetFolder + '\\', StringComparison.OrdinalIgnoreCase))).ToList();
+        if (byPath.Count == 0)
+        {
+            byPath = entries.Where(entry => string.IsNullOrWhiteSpace(entry.InstallLocation) &&
+                string.Equals(entry.Name, leaf, StringComparison.OrdinalIgnoreCase)).ToList();
+        }
+        foreach (var entry in byPath) Matches.Add(entry);
+        if (Matches.Count == 0)
+            foreach (var candidate in _uninstall.FindCandidateUninstallers(TargetFolder)) Candidates.Add(candidate);
+
+        IdentifySummary = Matches.Count > 0 ? $"找到 {Matches.Count} 个卸载登记。请核对程序名称后再运行。"
+            : Candidates.Count > 0 ? $"找到 {Candidates.Count} 个候选卸载器。文件名仅作线索，请确认来源后再运行。"
+            : "未找到卸载程序。若软件已经卸载，可以继续扫描残留。";
+        UpdateTargetState();
         _status($"已识别：{kind} {leaf}");
     }
 
@@ -296,6 +321,14 @@ public sealed class UninstallCenterViewModel : ObservableObject
 
     private void Clear()
     {
+        ClearTarget();
+        ResetArchive();
+        CleanupFeedback = "";
+    }
+
+    private void ClearTarget()
+    {
+        _folderAtSelection = null;
         TargetPath = "";
         TargetKindText = "";
         TargetFolder = "";
@@ -303,18 +336,54 @@ public sealed class UninstallCenterViewModel : ObservableObject
         Matches.Clear();
         Candidates.Clear();
         ResetResiduals();
-        OnPropertyChanged(nameof(HasMatches));
+        UpdateTargetState();
+    }
+
+    private void UpdateTargetState()
+    {
         OnPropertyChanged(nameof(HasCandidates));
-        OnPropertyChanged(nameof(ShowEmptyOverall));
+        OnPropertyChanged(nameof(HasUninstallers));
+        OnPropertyChanged(nameof(HasScanTarget));
+        OnPropertyChanged(nameof(CanRecycleTarget));
+        OnPropertyChanged(nameof(ResidualEmptyText));
+        RaiseCommandStates();
+    }
+
+    private void ResetArchive()
+    {
+        _archiveStatusFile = "";
+        ArchivePath = "";
+        OpenArchiveCommand.RaiseCanExecuteChanged();
     }
 
     private void ResetResiduals()
     {
+        foreach (var item in Residuals) item.PropertyChanged -= OnResidualChanged;
         Residuals.Clear();
         ScanSummary = "";
         ScanStatus = "";
+        NotifyResidualState();
+    }
+
+    private void OnResidualChanged(object? sender, PropertyChangedEventArgs args)
+    {
+        if (args.PropertyName is nameof(ResidualItem.IsSelected) or nameof(ResidualItem.SizeText))
+            NotifySelection();
+    }
+
+    private void NotifyResidualState()
+    {
         OnPropertyChanged(nameof(HasResiduals));
+        OnPropertyChanged(nameof(ResidualEmptyText));
+        NotifySelection();
+    }
+
+    private void NotifySelection()
+    {
         OnPropertyChanged(nameof(SelectedSummary));
+        OnPropertyChanged(nameof(HasSelection));
+        OnPropertyChanged(nameof(HasDirectorySelection));
+        RaiseCommandStates();
     }
 
     // ---------- 运行卸载器 ----------
@@ -337,17 +406,16 @@ public sealed class UninstallCenterViewModel : ObservableObject
         }
     }
 
-    private void RunCandidate(CandidateUninstaller? candidate)
+    private void RunCandidate(CandidateUninstaller candidate)
     {
-        if (candidate is null) return;
-
-        if (!Confirm($"这个卸载器没有登记在系统卸载列表里，请确认它属于「{TargetFolderName}」：\n\n{candidate.FilePath}"))
+        var target = CaptureTarget();
+        if (!Confirm($"文件名看起来像卸载程序，但 WinKit 无法验证它属于「{target.Name}」。仅在信任来源时运行：\n\n{candidate.FilePath}"))
             return;
 
         if (Native.OpenPath(candidate.FilePath, workingDirectory: candidate.Folder))
-            _status($"已调起候选卸载器：{candidate.Name}");
+            _status($"已打开候选卸载器：{candidate.Name}");
         else
-            Warn($"启动卸载器失败：{candidate.FilePath}");
+            CleanupFeedback = $"无法打开卸载器：{candidate.FilePath}";
     }
 
     // ---------- 残留扫描 ----------
@@ -355,112 +423,86 @@ public sealed class UninstallCenterViewModel : ObservableObject
     private void CancelScan()
     {
         _scanCts?.Cancel();
-        ScanStatus = "正在取消…";
+        ScanStatus = "正在停止扫描…";
+        CancelScanCommand.RaiseCanExecuteChanged();
     }
 
     private async Task ScanAsync(bool deep)
     {
-        if (IsScanning) return;
+        if (!CanChangeTarget || !HasScanTarget) return;
+        var target = CaptureTarget();
+        var request = BuildRequest(target, deep);
 
-        if (!HasTarget)
-        {
-            Warn("请先拖入或选择要卸载的文件夹 / 快捷方式。");
-            return;
-        }
-
-        var request = BuildRequest(deep);
-
-        _scanCts = new CancellationTokenSource();
+        using var source = new CancellationTokenSource();
+        _scanCts = source;
         IsScanning = true;
         ResetResiduals();
-        ScanStatus = deep
-            ? "深度扫描：递归遍历所有目录，可能需要几分钟…"
-            : "正在扫描（目录 + 快捷方式 + 服务 + 计划任务 + 启动项 + 文件关联）…";
+        ScanStatus = deep ? $"正在深度扫描「{target.Name}」的相关项目，可能需要几分钟…"
+            : $"正在扫描「{target.Name}」的相关项目…";
 
-        var token = _scanCts.Token;
-
+        var token = source.Token;
+        IProgress<string> progress = new Progress<string>(message =>
+        {
+            if (ReferenceEquals(_scanCts, source) && !token.IsCancellationRequested) ScanStatus = message;
+        });
         try
         {
-            var result = await Task.Run(() => _residual.Scan(request,
-                p => ScanStatus = p, token), token);
+            var result = await Task.Run(() => _residual.Scan(request, progress.Report, token), token);
+            token.ThrowIfCancellationRequested();
+            foreach (var item in result.Items)
+            {
+                item.PropertyChanged += OnResidualChanged;
+                Residuals.Add(item);
+            }
 
-            foreach (var item in result.Items) Residuals.Add(item);
-
-            OnPropertyChanged(nameof(HasResiduals));
-            OnPropertyChanged(nameof(SelectedSummary));
-
-            ScanStatus = "";
-            ScanSummary = result.Cancelled
-                ? $"扫描已取消，已找到 {result.Items.Count} 项。"
-                : $"扫描完成：{result.ConfirmedCount} 项确定、{result.PossibleCount} 项可能，" +
-                  $"检查了 {result.ScannedDirectories} 个目录，用时 {result.Elapsed.TotalSeconds:F1} 秒。";
-
-            foreach (var warning in result.Warnings.Take(3))
-                ScanSummary += "\n" + warning;
-
+            ScanSummary = result.Items.Count == 0 ? "未找到与目标有关的项目。"
+                : $"找到 {result.Items.Count} 个待核对的项目：{result.PathReferenceCount} 项引用目标路径，{result.PossibleCount} 项名称相似。默认不勾选。";
+            foreach (var warning in result.Warnings.Take(3)) ScanSummary += "\n" + warning;
             _status(ScanSummary.Replace("\n", " "));
         }
         catch (OperationCanceledException)
         {
-            ScanStatus = "";
-            ScanSummary = $"扫描已取消，已找到 {Residuals.Count} 项。";
-            _status("扫描已取消");
+            ScanSummary = "已停止扫描，没有更改任何内容。";
+            _status(ScanSummary);
         }
         catch (Exception ex)
         {
-            ScanStatus = "";
             ScanSummary = $"扫描失败：{ex.Message}";
             _status("残留扫描失败");
         }
         finally
         {
-            IsScanning = false;
-            _scanCts?.Dispose();
             _scanCts = null;
+            ScanStatus = "";
+            IsScanning = false;
+            OnPropertyChanged(nameof(CanRecycleTarget));
+            NotifyResidualState();
         }
     }
 
-    private ResidualScanRequest BuildRequest(bool deep)
+    private static ResidualScanRequest BuildRequest(TargetSnapshot target, bool deep)
     {
-        var leaf = Path.GetFileName(TargetFolder.TrimEnd('\\'));
-
-        var exact = new List<string>();
-        if (!string.IsNullOrWhiteSpace(leaf)) exact.Add(leaf);
-        foreach (var match in Matches) exact.Add(match.Name);
-
-        var partial = new List<string>();
-        if (!string.IsNullOrWhiteSpace(leaf)) partial.Add(leaf);
-        // 「QuarkUpdater」这种带后缀的目录名，去掉常见后缀后再当一次模糊词
+        var partial = new List<string> { target.Name };
         foreach (var suffix in new[] { "updater", "update", "bin", "app" })
         {
-            if (leaf.EndsWith(suffix, StringComparison.OrdinalIgnoreCase) && leaf.Length > suffix.Length + 2)
-                partial.Add(leaf[..^suffix.Length].TrimEnd(' ', '-', '_'));
+            if (target.Name.EndsWith(suffix, StringComparison.OrdinalIgnoreCase) && target.Name.Length > suffix.Length + 2)
+                partial.Add(target.Name[..^suffix.Length].TrimEnd(' ', '-', '_'));
         }
-
-        // 服务/计划任务/启动项/文件关联靠路径片段，安装目录与卸载器路径都是硬证据
-        var fragments = new List<string>();
-        if (HasTargetFolder) fragments.Add(TargetFolder);
-        foreach (var match in Matches)
-            if (!string.IsNullOrWhiteSpace(match.InstallLocation)) fragments.Add(match.InstallLocation.Trim());
-        foreach (var candidate in Candidates.Take(4)) fragments.Add(candidate.FilePath);
 
         return new ResidualScanRequest
         {
-            ExactNames = exact,
+            ExactNames = [target.Name, .. target.Matches.Select(match => match.Name)],
             PartialNames = partial,
-            PathFragments = fragments,
-            // 拖进来的目录本身作为额外根，这样装在非系统盘（如 D:\Quark）也能扫到同级残留
-            ExtraRoots = HasTargetFolder ? new[] { Path.GetDirectoryName(TargetFolder) ?? "" } : Array.Empty<string>(),
+            PathFragments = [target.Folder],
+            ExtraRoots = [Path.GetDirectoryName(target.Folder) ?? ""],
+            ExcludedPaths = [target.Folder],
             MaxDepth = deep ? 64 : 3
         };
     }
 
-    private void SetSelection(bool confirmedOnly)
+    private void ClearSelection()
     {
-        foreach (var item in Residuals)
-            item.IsSelected = confirmedOnly && item.CanClean && item.IsConfirmed;
-
-        OnPropertyChanged(nameof(SelectedSummary));
+        foreach (var item in Residuals) item.IsSelected = false;
     }
 
     private async Task MeasureAsync()
@@ -500,139 +542,121 @@ public sealed class UninstallCenterViewModel : ObservableObject
 
     private async void CleanSelected()
     {
-        if (Native.RequireAdmin("清理残留") is { } adminNeeded)
+        if (!CanChangeTarget) return;
+        var target = CaptureTarget();
+        var selected = target.Residuals.Where(IsSelectedForCleanup).ToArray();
+        if (selected.Length == 0) return;
+        var registryItems = selected.Where(item => item.Kind is ResidualKind.Service or ResidualKind.Startup).ToArray();
+        if (registryItems.Any(item => item.Hive == HiveKind.LocalMachine) &&
+            Native.RequireAdmin("清理所选系统项") is { } adminNeeded)
         {
-            Warn(adminNeeded);
+            CleanupFeedback = adminNeeded;
             return;
         }
 
-        var selected = Residuals.Where(i => i.IsSelected && i.CanClean).ToList();
-        if (selected.Count == 0)
-        {
-            Warn("没有选中任何可清理的项。");
-            return;
-        }
-
-        var directories = selected.Where(i => i.Kind == ResidualKind.Directory).ToList();
-        var shortcuts = selected.Where(i => i.Kind == ResidualKind.Shortcut).ToList();
-        var services = selected.Where(i => i.Kind == ResidualKind.Service).ToList();
-        var tasks = selected.Where(i => i.Kind == ResidualKind.ScheduledTask).ToList();
-        var startups = selected.Where(i => i.Kind == ResidualKind.Startup).ToList();
-
-        var message = new StringBuilder("将要清理：\n");
-        if (directories.Count > 0) message.AppendLine($"· {directories.Count} 个目录（移到回收站）");
-        if (shortcuts.Count > 0) message.AppendLine($"· {shortcuts.Count} 个快捷方式（移到回收站）");
-        if (services.Count > 0) message.AppendLine($"· {services.Count} 个服务注册项（写注册表快照，可撤销）");
-        if (tasks.Count > 0) message.AppendLine($"· {tasks.Count} 个计划任务（备份任务文件，可撤销）");
-        if (startups.Count > 0) message.AppendLine($"· {startups.Count} 个开机启动项（写注册表快照，可撤销）");
-        message.AppendLine();
-        message.AppendLine("目录和快捷方式走回收站，需要手工从回收站还原；注册表与计划任务可以在「备份与快照」里一键撤销。");
-
-        if (!Confirm(message.ToString())) return;
+        var files = selected.Length - registryItems.Length;
+        var message = new StringBuilder($"目标：{target.Folder}\n将处理你勾选的 {selected.Length} 项。\n\n");
+        if (files > 0) message.AppendLine($"· {files} 个文件夹或快捷方式：请求移入回收站。若 Windows 提示永久删除，请取消。");
+        if (registryItems.Length > 0) message.AppendLine($"· {registryItems.Length} 个服务或启动项：备份后移除注册表设置。停止的服务不会因撤销而自动重启。");
+        message.AppendLine("\n扫描只提供线索，请仅清理你确认不再使用的项目。");
 
         IsBusy = true;
+        var confirmed = false;
+        var completed = new List<ResidualItem>();
+        var failures = new List<string>();
         try
         {
-            var tracked = services.Select(i => (i.Hive ?? HiveKind.LocalMachine, i.SubKey))
-                .Concat(startups.Select(i => (i.Hive ?? HiveKind.CurrentUser, i.SubKey)))
-                .Where(t => !string.IsNullOrWhiteSpace(t.Item2))
-                .Distinct()
-                .ToList();
+            if (!Confirm(message.ToString())) return;
+            confirmed = true;
+            _setGlobalBusy?.Invoke(true);
+            CleanupFeedback = $"正在处理「{target.Name}」的 {selected.Length} 个所选项目…";
+            if (registryItems.Length > 0)
+                await Task.Run(() => CleanRegistryItems(target.Name, registryItems, completed, failures));
 
-            var trackedFiles = shortcuts.Select(i => i.Path)
-                .Concat(tasks.Select(i => i.Path))
-                .Where(p => File.Exists(p))
-                .ToList();
-
-            var failures = new List<string>();
-            var done = 0;
-
-            // 停服务最多等 20 × 250ms，还要叠加 sc.exe 每次几百毫秒的启动开销，多服务串行能拖到分钟级。
-            // 这段留在 UI 线程上就是整窗口假死、进度也刷不出来，所以整体搬到线程池。
-            await Task.Run(() =>
+            // Windows 的回收界面依赖 STA；这部分在界面线程交给系统处理。
+            foreach (var item in selected.Where(item => item.Kind == ResidualKind.Shortcut))
             {
-                _journal.Record($"清理「{TargetFolderName}」的卸载残留（{selected.Count} 项）",
-                    tracked, () =>
-                    {
-                        foreach (var service in services)
-                        {
-                            if (TryStopService(service, out var error))
-                            {
-                                TryRegistryAction(() => Reg.DeleteTree(RegPath.Of(
-                                    service.Hive ?? HiveKind.LocalMachine, service.SubKey)), failures, service.Path);
-                            }
-                            else
-                            {
-                                failures.Add($"{service.Path}：{error}");
-                            }
-                        }
+                if (RecycleFile(item, out var error)) completed.Add(item);
+                else failures.Add($"{item.Path}：{error}");
+            }
+            string[] excludedDirectories = [target.Folder];
+            foreach (var item in selected.Where(item => item.Kind == ResidualKind.Directory).OrderByDescending(item => item.Path.Length))
+            {
+                if (RecycleDirectory(item.DirectoryTarget!, out var error, excludedDirectories)) completed.Add(item);
+                else failures.Add($"{item.Path}：{error}");
+            }
 
-                        foreach (var task in tasks)
-                            DeleteScheduledTask(task, failures);
-
-                        foreach (var startup in startups)
-                            TryRegistryAction(() => Reg.DeleteValue(
-                                RegPath.Of(startup.Hive ?? HiveKind.CurrentUser, startup.SubKey),
-                                startup.ValueName), failures, startup.Path);
-                    },
-                    trackedFiles);
-
-                done += services.Count + tasks.Count + startups.Count;
-            });
-
-            // 文件与目录不进 journal 的还原闭环（回收站里的东西由用户自己决定要不要还原）。
-            // 这两个循环必须留在 UI 线程：回收站走 SHFileOperation，依赖 STA，换到线程池会直接失败。
-            foreach (var shortcut in shortcuts)
-                if (RecycleFile(shortcut.Path, out var error)) done++;
-                else failures.Add($"{shortcut.Path}：{error}");
-
-            foreach (var directory in directories)
-                if (RecycleDirectory(directory.Path, out var error)) done++;
-                else failures.Add($"{directory.Path}：{error}");
-
-            _archiveStatusFile = WriteArchive(selected, failures);
+            ResetArchive();
+            _archiveStatusFile = WriteArchive(target, selected, completed, failures);
             ArchivePath = _archiveStatusFile;
-
-            foreach (var item in selected) item.IsSelected = false;
-
-            if (failures.Count > 0)
-            {
-                Warn($"清理完成，但有 {failures.Count} 项失败（不会假装成功）：\n\n" +
-                     string.Join("\n", failures.Take(8)) +
-                     (failures.Count > 8 ? $"\n… 其余 {failures.Count - 8} 项见存档" : "") +
-                     $"\n\n存档：{_archiveStatusFile}");
-            }
-            else
-            {
-                _status($"已清理 {done} 项残留，存档：{_archiveStatusFile}");
-            }
-
-            OnPropertyChanged(nameof(SelectedSummary));
             OpenArchiveCommand.RaiseCanExecuteChanged();
-
-            // 清理完立刻重扫一遍，让列表反映真实情况，而不是留着刚删掉的行
-            _ = ScanAsync(false);
+            foreach (var item in completed) item.IsSelected = false;
+            var archiveNote = string.IsNullOrEmpty(ArchivePath) ? "未能保存清理记录。" : "可在「清理记录」查看详情。";
+            CleanupFeedback = failures.Count == 0 ? $"已处理 {completed.Count} 项。{archiveNote}"
+                : $"已处理 {completed.Count} 项；{failures.Count} 项未完成。{archiveNote}\n" + string.Join("\n", failures.Take(3));
+            _status($"已处理 {completed.Count} 项，{failures.Count} 项未完成");
         }
         catch (Exception ex)
         {
-            Warn($"清理失败：{ex.Message}");
+            CleanupFeedback = $"清理未完成：{ex.Message}";
         }
         finally
         {
-            IsBusy = false;
+            try
+            {
+                IsBusy = false;
+                // 保留失败项供核对；只从当前结果中移除已完成的项目。
+                foreach (var item in completed)
+                {
+                    item.PropertyChanged -= OnResidualChanged;
+                    Residuals.Remove(item);
+                }
+                if (completed.Count > 0)
+                    ScanSummary = Residuals.Count == 0 ? "当前结果已处理完毕。" : $"扫描结果中还剩 {Residuals.Count} 项。";
+                NotifyResidualState();
+            }
+            finally
+            {
+                if (confirmed) _setGlobalBusy?.Invoke(false);
+            }
         }
     }
 
-    private static void TryRegistryAction(Action action, List<string> failures, string label)
+    private void CleanRegistryItems(string targetName, ResidualItem[] items, List<ResidualItem> completed, List<string> failures)
     {
-        try
+        RegPath RegistryPath(ResidualItem item) => RegPath.Of(item.Hive!.Value, item.SubKey);
+        bool IsStillSame(ResidualItem item) => string.Equals(Reg.GetString(RegistryPath(item),
+            item.Kind == ResidualKind.Service ? "ImagePath" : item.ValueName), item.Detail, StringComparison.Ordinal);
+        var unchanged = items.Where(item =>
         {
-            action();
-        }
-        catch (Exception ex)
+            if (IsStillSame(item)) return true;
+            failures.Add($"{item.Path}：扫描后已变化，未处理。请重新扫描。");
+            return false;
+        }).ToArray();
+        if (unchanged.Length == 0) return;
+
+        var processed = new List<ResidualItem>();
+        _journal.Record($"清理「{targetName}」的残留注册表设置", unchanged.Select(item => (item.Hive!.Value, item.SubKey)), () =>
         {
-            failures.Add($"{label}：{ex.Message}");
-        }
+            foreach (var item in unchanged)
+            {
+                try
+                {
+                    if (!IsStillSame(item)) throw new IOException("扫描后已变化，未处理。请重新扫描。");
+                    var path = RegistryPath(item);
+                    if (item.Kind == ResidualKind.Service)
+                    {
+                        if (!TryStopService(item, out var error)) throw new IOException(error);
+                        if (!IsStillSame(item)) throw new IOException("服务配置已变化，未删除注册项。");
+                        Reg.DeleteTree(path);
+                    }
+                    else Reg.DeleteValue(path, item.ValueName);
+                    processed.Add(item);
+                }
+                catch (Exception ex) { failures.Add($"{item.Path}：{ex.Message}"); }
+            }
+        });
+        completed.AddRange(processed);
     }
 
     private bool TryStopService(ResidualItem item, out string error)
@@ -675,171 +699,125 @@ public sealed class UninstallCenterViewModel : ObservableObject
         }
     }
 
-    private void DeleteScheduledTask(ResidualItem item, List<string> failures)
-    {
-        var tasksRoot = Path.Combine(
-            Environment.GetFolderPath(Environment.SpecialFolder.Windows), "System32", "Tasks");
-
-        var name = Path.GetRelativePath(tasksRoot, item.Path);
-        if (name.EndsWith(".xml", StringComparison.OrdinalIgnoreCase)) name = name[..^4];
-        name = name.Replace('/', '\\');
-
-        try
-        {
-            RunProcess("schtasks.exe", $"/Delete /TN \"{name}\" /F", out var code);
-
-            // schtasks 成功或任务文件已不存在都算干净；否则退回直接删文件
-            if (code != 0 && File.Exists(item.Path))
-                File.Delete(item.Path);
-        }
-        catch (Exception ex)
-        {
-            failures.Add($"{item.Path}：{ex.Message}");
-        }
-    }
-
-    private static bool RecycleFile(string path, out string error)
+    private static bool RecycleFile(ResidualItem item, out string error)
     {
         error = "";
         try
         {
-            if (!File.Exists(path)) return true;
-
+            var path = ResidualScanService.NormalizeLocalPath(item.Path);
+            if (path is null || new DriveInfo(path[..3]).DriveType != DriveType.Fixed ||
+                (File.GetAttributes(path) & FileAttributes.ReparsePoint) != 0 ||
+                !string.Equals(Shortcuts.ResolveLinkTarget(path), item.ObservedShortcutTarget, StringComparison.OrdinalIgnoreCase))
+                throw new IOException("快捷方式位置不受支持，或扫描后已变化。请重新扫描。");
             Microsoft.VisualBasic.FileIO.FileSystem.DeleteFile(path,
-                Microsoft.VisualBasic.FileIO.UIOption.OnlyErrorDialogs,
+                Microsoft.VisualBasic.FileIO.UIOption.AllDialogs,
                 Microsoft.VisualBasic.FileIO.RecycleOption.SendToRecycleBin);
-
+            if (File.Exists(path)) throw new IOException("原路径仍有文件，未确认操作完成。");
             return true;
         }
-        catch (Exception ex)
-        {
-            error = ex.Message;
-            return false;
-        }
+        catch (OperationCanceledException) { error = "已取消。"; return false; }
+        catch (Exception ex) { error = ex.Message; return false; }
     }
 
-    private static bool RecycleDirectory(string path, out string error)
+    private static bool RecycleDirectory(ResidualScanService.DirectoryTarget expected, out string error,
+        IReadOnlyList<string>? excludedPaths = null)
     {
-        error = "";
+        if (!ResidualScanService.TryGetDirectoryTarget(expected.Path, out var actual, out error, excludedPaths)) return false;
+        if (actual != expected)
+        {
+            error = "这个位置的文件夹已变化，请重新选择或扫描。";
+            return false;
+        }
         try
         {
-            if (!Directory.Exists(path)) return true;
-
-            Microsoft.VisualBasic.FileIO.FileSystem.DeleteDirectory(path,
-                Microsoft.VisualBasic.FileIO.UIOption.OnlyErrorDialogs,
+            Microsoft.VisualBasic.FileIO.FileSystem.DeleteDirectory(expected.Path,
+                Microsoft.VisualBasic.FileIO.UIOption.AllDialogs,
                 Microsoft.VisualBasic.FileIO.RecycleOption.SendToRecycleBin);
-
+            if (Directory.Exists(expected.Path)) throw new IOException("原路径仍有文件夹，未确认操作完成。");
             return true;
         }
-        catch (Exception ex)
-        {
-            error = ex.Message;
-            return false;
-        }
+        catch (OperationCanceledException) { error = "已取消。"; return false; }
+        catch (Exception ex) { error = ex.Message; return false; }
     }
 
-    // ---------- 强制删除 ----------
+    // ---------- 整目录回收 ----------
 
-    private void ForceDeleteFolder()
+    private async void RecycleTargetFolder()
     {
-        if (Native.RequireAdmin("强制删除文件夹") is { } adminNeeded)
-        {
-            Warn(adminNeeded);
-            return;
-        }
-
-        if (!HasTargetFolder)
-        {
-            Warn("没有可删除的文件夹。");
-            return;
-        }
-
-        var folder = TargetFolder.TrimEnd('\\');
-        var name = Path.GetFileName(folder);
-
-        // 只删一层，不递归到父目录；防止用户拖了盘符根目录过来
-        if (folder.Length <= 3 || string.IsNullOrWhiteSpace(name))
-        {
-            Warn($"拒绝删除「{folder}」：这看起来是盘符根目录或系统目录。");
-            return;
-        }
-
-        var typed = InputDialog.Prompt(Application.Current.MainWindow,
-            "确认强制删除",
-            $"强制删除会把整个文件夹移入回收站，且不经过软件自己的卸载流程。\n" +
-            $"要删除的是：{folder}\n\n请输入文件夹名「{name}」以确认：",
-            "");
-
-        if (typed is null) return;
-
-        if (!string.Equals(typed.Trim(), name, StringComparison.Ordinal))
-        {
-            Warn($"输入的名称与文件夹名不一致，已取消。");
-            return;
-        }
-
+        if (!CanChangeTarget || _folderAtSelection is not { } expected) return;
+        var target = CaptureTarget();
         IsBusy = true;
+        var confirmed = false;
         try
         {
-            var (bytes, files) = _residual.MeasureDirectory(folder);
-
-            if (!RecycleDirectory(folder, out var error))
+            if (!ResidualScanService.TryGetDirectoryTarget(target.Folder, out var actual, out var reason) || actual != expected)
             {
-                Warn($"删除失败：{error}\n\n可能被正在运行的进程占用，可以先在「文件占用解锁」里查一下。");
+                CleanupFeedback = string.IsNullOrEmpty(reason) ? "这个位置的文件夹已变化，请重新选择。" : reason;
+                return;
+            }
+
+            var typed = InputDialog.Prompt(Application.Current.MainWindow,
+                "将整个文件夹移入回收站",
+                $"这不是卸载。将处理这个文件夹内的所有数据：\n{target.Folder}\n\n" +
+                $"若 Windows 提示永久删除，请取消。请输入文件夹名「{target.Name}」继续：", "");
+            if (typed is null) return;
+            if (!string.Equals(typed.Trim(), target.Name, StringComparison.OrdinalIgnoreCase))
+            {
+                CleanupFeedback = "输入的名称不一致，没有处理任何内容。";
+                return;
+            }
+
+            confirmed = true;
+            _setGlobalBusy?.Invoke(true);
+            CleanupFeedback = "正在准备将文件夹移入回收站…";
+            var (bytes, files) = await Task.Run(() => _residual.MeasureDirectory(target.Folder));
+            if (!RecycleDirectory(expected, out var error))
+            {
+                CleanupFeedback = $"未能处理文件夹：{error}";
                 return;
             }
 
             var lines = new List<string>
             {
-                $"# 强制删除 {name}",
+                $"# 处理整个文件夹：{target.Name}",
                 "",
                 $"- 时间：{DateTime.Now:yyyy-MM-dd HH:mm:ss}",
-                $"- 路径：{folder}",
-                $"- 规模：{files} 个文件 / {ThisPcService.FormatSize(bytes)}",
-                $"- 目标类型：{TargetKindText}",
-                $"- 原路径来源：{TargetPath}",
+                $"- 路径：{target.Folder}",
+                $"- 估算：{files} 个文件 / {ThisPcService.FormatSize(bytes)}",
+                $"- 目标类型：{target.Kind}",
+                $"- 原路径来源：{target.Path}",
                 "",
-                "删除方式：移入回收站（未永久删除）。需要还原请到回收站。",
+                "已请求移入系统回收站；没有运行卸载程序。只有仍在回收站的项目可以从那里还原。",
                 "",
-                "## 当时识别到的卸载登记",
-                ""
+                "## 识别到的卸载登记及候选卸载器（未运行）"
             };
-
-            lines.AddRange(Matches.Count == 0
-                ? new[] { "（没有匹配到卸载登记）" }
-                : Matches.Select(m => $"- {m.Name} {m.Version} · {m.InstallLocation}"));
-
+            lines.AddRange(target.Matches.Select(match => $"- {match.Name} {match.Version} · {match.InstallLocation}"));
+            lines.AddRange(target.Candidates.Select(candidate => $"- {candidate.FilePath}"));
             lines.Add("");
-            lines.Add("## 当时识别到的候选卸载器");
-            lines.Add("");
-            lines.AddRange(Candidates.Count == 0
-                ? new[] { "（没有找到候选卸载器）" }
-                : Candidates.Select(c => $"- {c.FilePath}"));
-
-            if (Residuals.Count > 0)
-            {
-                lines.Add("");
-                lines.Add("## 删除时仍存在的残留项（未处理）");
-                lines.Add("");
-                lines.AddRange(Residuals.Select(r => $"- [{r.ConfidenceText}] {r.KindText}：{r.Path}"));
-            }
-
-            _archiveStatusFile = WriteArchiveFile(name, lines);
+            lines.Add("## 之前扫描到的其他项目（未处理）");
+            lines.AddRange(target.Residuals.Select(item => $"- [{item.ConfidenceText}] {item.KindText}：{item.Path}"));
+            ResetArchive();
+            _archiveStatusFile = WriteArchiveFile(target.Name, lines);
             ArchivePath = _archiveStatusFile;
             OpenArchiveCommand.RaiseCanExecuteChanged();
 
-            Clear();
-            ArchivePath = _archiveStatusFile;
-
-            _status($"已把「{name}」移入回收站（{ThisPcService.FormatSize(bytes)}），存档：{_archiveStatusFile}");
+            ClearTarget();
+            CleanupFeedback = $"「{target.Name}」已从原位置移除，未运行卸载程序。可在回收站查找仍保留的文件。" +
+                (string.IsNullOrEmpty(ArchivePath) ? "未能保存清理记录。" : "");
+            _status(CleanupFeedback);
         }
-        catch (Exception ex)
-        {
-            Warn($"强制删除失败：{ex.Message}");
-        }
+        catch (Exception ex) { CleanupFeedback = $"未能处理文件夹：{ex.Message}"; }
         finally
         {
-            IsBusy = false;
+            try
+            {
+                IsBusy = false;
+                OnPropertyChanged(nameof(CanRecycleTarget));
+            }
+            finally
+            {
+                if (confirmed) _setGlobalBusy?.Invoke(false);
+            }
         }
     }
 
@@ -849,58 +827,39 @@ public sealed class UninstallCenterViewModel : ObservableObject
         Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
         "WinKit", "UninstallLogs");
 
-    private string WriteArchive(IReadOnlyList<ResidualItem> cleaned, IReadOnlyList<string> failures)
+    private static string WriteArchive(TargetSnapshot target, IReadOnlyList<ResidualItem> selected,
+        IReadOnlyList<ResidualItem> completed, IReadOnlyList<string> failures)
     {
         var lines = new List<string>
         {
-            $"# 卸载残留清理：{TargetFolderName}",
+            $"# 残留清理：{target.Name}",
             "",
             $"- 时间：{DateTime.Now:yyyy-MM-dd HH:mm:ss}",
-            $"- 目标：{TargetPath}",
-            $"- 安装目录：{(HasTargetFolder ? TargetFolder : "（未确定）")}",
+            $"- 原路径来源：{target.Path}",
+            $"- 目标文件夹：{target.Folder}",
             "",
-            "## 识别到的卸载登记",
-            ""
+            "## 识别到的卸载登记"
         };
-
-        lines.AddRange(Matches.Count == 0
-            ? new[] { "（没有匹配到卸载登记）" }
-            : Matches.Select(m => $"- {m.Name} {m.Version} · {m.InstallLocation}"));
-
+        lines.AddRange(target.Matches.Select(match => $"- {match.Name} {match.Version} · {match.InstallLocation}"));
         lines.Add("");
-        lines.Add("## 已清理");
-        lines.Add("");
-
-        foreach (var item in cleaned)
+        lines.Add("## 已处理");
+        foreach (var item in completed)
         {
-            var how = item.Kind switch
-            {
-                ResidualKind.Directory => "移入回收站",
-                ResidualKind.Shortcut => "移入回收站",
-                ResidualKind.Service => "已停止并删除服务注册项（注册表快照）",
-                ResidualKind.ScheduledTask => "已注销计划任务（任务文件已备份）",
-                ResidualKind.Startup => "已删除启动项值（注册表快照）",
-                _ => "已处理"
-            };
-
+            var how = item.Kind is ResidualKind.Directory or ResidualKind.Shortcut ? "已从原位置移除（请求移入回收站）"
+                : "已备份并移除注册表设置";
             lines.Add($"- [{item.ConfidenceText}] {item.KindText}：{item.Path} —— {how}");
         }
-
         if (failures.Count > 0)
         {
             lines.Add("");
-            lines.Add("## 失败项（未完成，不假装成功）");
-            lines.Add("");
-            lines.AddRange(failures.Select(f => $"- {f}"));
+            lines.Add("## 未完成");
+            lines.AddRange(failures.Select(failure => $"- {failure}"));
         }
-
         lines.Add("");
-        lines.Add("## 未清理的残留（可能项，需人工判断）");
-        lines.Add("");
-        lines.AddRange(Residuals.Where(r => !cleaned.Contains(r))
-            .Select(r => $"- [{r.ConfidenceText}] {r.KindText}：{r.Path}"));
-
-        return WriteArchiveFile(TargetFolderName, lines);
+        lines.Add("## 未选择");
+        lines.AddRange(target.Residuals.Except(selected)
+            .Select(item => $"- [{item.ConfidenceText}] {item.KindText}：{item.Path}"));
+        return WriteArchiveFile(target.Name, lines);
     }
 
     private static string WriteArchiveFile(string name, IReadOnlyList<string> lines)
@@ -910,9 +869,11 @@ public sealed class UninstallCenterViewModel : ObservableObject
             Directory.CreateDirectory(LogDirectory);
 
             var safeName = string.Join("_", name.Split(Path.GetInvalidFileNameChars()));
-            var file = Path.Combine(LogDirectory, $"{DateTime.Now:yyyyMMdd-HHmmss}-{safeName}.md");
+            var file = Path.Combine(LogDirectory, $"{DateTime.Now:yyyyMMdd-HHmmss}-{Guid.NewGuid():N}-{safeName}.md");
 
-            File.WriteAllText(file, string.Join(Environment.NewLine, lines), new UTF8Encoding(false));
+            using var stream = new FileStream(file, FileMode.CreateNew, FileAccess.Write, FileShare.Read);
+            using var writer = new StreamWriter(stream, new UTF8Encoding(false));
+            writer.Write(string.Join(Environment.NewLine, lines));
             return file;
         }
         catch (Exception)
@@ -944,21 +905,14 @@ public sealed class UninstallCenterViewModel : ObservableObject
     {
         if (item is null) return;
 
-        var target = item.Kind switch
+        var opened = item.Kind switch
         {
-            ResidualKind.Directory => item.Path,
-            ResidualKind.Shortcut or ResidualKind.ScheduledTask => Path.GetDirectoryName(item.Path) ?? "",
-            _ => null
+            ResidualKind.Directory => Native.OpenPath(item.Path),
+            ResidualKind.Shortcut => Native.OpenPath(Path.GetDirectoryName(item.Path) ?? ""),
+            ResidualKind.ScheduledTask => Native.OpenPath("taskschd.msc"),
+            _ => Native.OpenInRegedit(item.Path)
         };
-
-        if (target is null || string.IsNullOrWhiteSpace(target))
-        {
-            _status("注册表项请在「注册表审查」里查看");
-            return;
-        }
-
-        if (!Native.OpenPath(target))
-            _status("打开失败：路径可能已被移动或删除");
+        if (!opened) CleanupFeedback = "未能打开该位置。项目可能已被移动、删除，或需要系统权限。";
     }
 
     /// <summary>
@@ -1038,7 +992,7 @@ public sealed class UninstallCenterViewModel : ObservableObject
     private void RaiseCommandStates()
     {
         CleanSelectedCommand.RaiseCanExecuteChanged();
-        ForceDeleteCommand.RaiseCanExecuteChanged();
+        RecycleTargetCommand.RaiseCanExecuteChanged();
         CancelScanCommand.RaiseCanExecuteChanged();
         MeasureCommand.RaiseCanExecuteChanged();
     }

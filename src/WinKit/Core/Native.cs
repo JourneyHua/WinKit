@@ -79,37 +79,49 @@ public static class Native
         }
     }
 
-    public static int RestartExplorer()
+    [DllImport("user32.dll")]
+    private static extern IntPtr GetShellWindow();
+
+    [DllImport("user32.dll")]
+    private static extern uint GetWindowThreadProcessId(IntPtr hwnd, out uint processId);
+
+    private static uint ShellProcessId()
+        => GetWindowThreadProcessId(GetShellWindow(), out var pid) != 0 ? pid : 0;
+
+    public static async Task RestartExplorerAsync()
     {
-        var killed = 0;
-        foreach (var process in Process.GetProcessesByName("explorer"))
+        var previous = ShellProcessId();
+        if (previous == 0) throw new InvalidOperationException("未找到当前桌面的资源管理器。");
+
+        using var shell = Process.GetProcessById((int)previous);
+        using var current = Process.GetCurrentProcess();
+        if (!string.Equals(shell.ProcessName, "explorer", StringComparison.OrdinalIgnoreCase)
+            || shell.SessionId != current.SessionId || ShellProcessId() != previous)
+            throw new InvalidOperationException("无法确认当前桌面的资源管理器，未结束任何进程。");
+
+        shell.Kill();
+        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(4));
+        try { await shell.WaitForExitAsync(timeout.Token).ConfigureAwait(false); }
+        catch (OperationCanceledException) { throw new TimeoutException("资源管理器未在预期时间内退出。"); }
+
+        async Task<bool> WaitForShellAsync(int attempts)
         {
-            try
+            for (var attempt = 0; attempt < attempts; attempt++)
             {
-                process.Kill();
-                killed++;
+                if (ShellProcessId() is var pid && pid != 0 && pid != previous) return true;
+                await Task.Delay(250).ConfigureAwait(false);
             }
-            catch (Exception)
-            {
-                // 忽略单个进程失败
-            }
+            return false;
         }
 
-        Thread.Sleep(600);
-        try
+        if (await WaitForShellAsync(8).ConfigureAwait(false)) return;
+        using var launched = Process.Start(new ProcessStartInfo
         {
-            Process.Start(new ProcessStartInfo
-            {
-                FileName = "explorer.exe",
-                UseShellExecute = true
-            });
-        }
-        catch (Exception)
-        {
-            // 系统一般会自动重启外壳
-        }
-
-        return killed;
+            FileName = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.Windows), "explorer.exe"),
+            UseShellExecute = true
+        });
+        if (!await WaitForShellAsync(16).ConfigureAwait(false))
+            throw new InvalidOperationException("未能确认资源管理器已重新启动。");
     }
 
     public static bool OpenInRegedit(string? rawRegistryPath)

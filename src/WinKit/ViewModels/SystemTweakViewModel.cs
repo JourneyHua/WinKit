@@ -35,7 +35,6 @@ public sealed class SystemTweakViewModel : ObservableObject, IModule
         ShowPanelsViewCommand = new RelayCommand(() => SubView = "panels");
 
         RefreshCommand = new RelayCommand(RefreshCurrent);
-        RestartExplorerCommand = new RelayCommand(RestartExplorer);
         OpenTweakRegeditCommand = new RelayCommand(p => OpenTweakRegedit(p as TweakSwitchItem));
 
         RefreshPortsCommand = new RelayCommand(() => _ = LoadPortsAsync());
@@ -66,7 +65,6 @@ public sealed class SystemTweakViewModel : ObservableObject, IModule
     public RelayCommand ShowPanelsViewCommand { get; }
 
     public RelayCommand RefreshCommand { get; }
-    public RelayCommand RestartExplorerCommand { get; }
     public RelayCommand OpenTweakRegeditCommand { get; }
 
     public RelayCommand RefreshPortsCommand { get; }
@@ -195,16 +193,6 @@ public sealed class SystemTweakViewModel : ObservableObject, IModule
         if (item is null) return;
         if (Native.OpenInRegedit(item.RegistryPath))
             _status($"已在注册表编辑器中定位：{item.ValueName}");
-    }
-
-    private void RestartExplorer()
-    {
-        var result = MessageBox.Show("将重启资源管理器使界面改动立即生效，确定继续吗？",
-            "重启资源管理器", MessageBoxButton.OKCancel, MessageBoxImage.Warning);
-        if (result != MessageBoxResult.OK) return;
-
-        Native.RestartExplorer();
-        _status("已重启资源管理器");
     }
 
     private async Task LoadPortsAsync()

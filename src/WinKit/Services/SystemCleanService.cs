@@ -19,6 +19,7 @@ public sealed class CleanupTargetItem : ObservableObject
     public bool Recursive { get; init; } = true;
     public bool DefaultSelected { get; init; } = true;
     public bool IsRecycleBin { get; init; }
+    public bool RequiresAdmin { get; init; }
 
     public bool IsSelected
     {
@@ -53,10 +54,11 @@ public sealed class CleanupTargetItem : ObservableObject
     }
 
     public string SizeText => SizeBytes > 0 ? ThisPcService.FormatSize(SizeBytes) : "0 B";
-    public string CountText => FileCount > 0 ? $"{FileCount} 个文件" : "干净";
+    public string CountText => FileCount > 0 ? $"{FileCount} 个文件" : "—";
     public string PrimaryPath => Paths.FirstOrDefault() ?? "";
     public bool HasDirectory => !IsRecycleBin && !string.IsNullOrWhiteSpace(PrimaryPath) && Directory.Exists(PrimaryPath);
-    public string SafetyTag => DefaultSelected ? "安全推荐" : "可选清理";
+    public bool CanSelect { get; internal set; } = true;
+    public string SelectionHint => CanSelect ? "将此类文件加入清理范围" : "此项清理需要管理员权限";
 }
 
 public sealed class LargeFileItem : ObservableObject
@@ -75,6 +77,8 @@ public sealed class LargeFileItem : ObservableObject
 
 public sealed class SystemCleanService
 {
+    public const int DefaultMinAgeMinutes = 120;
+
     [StructLayout(LayoutKind.Sequential, Pack = 4)]
     private struct SHQUERYRBINFO
     {
@@ -116,8 +120,9 @@ public sealed class SystemCleanService
                 Id = "win_temp",
                 Category = "系统临时文件",
                 Title = "Windows 系统级临时目录",
-                Description = @"C:\Windows\Temp 下的系统服务与安装器临时文件",
+                Description = "系统服务和安装程序的临时文件。清理需要管理员权限。",
                 Paths = new[] { Path.Combine(winDir, "Temp") },
+                RequiresAdmin = true,
                 DefaultSelected = true,
                 IsSelected = true
             },
@@ -126,17 +131,19 @@ public sealed class SystemCleanService
                 Id = "wu_cache",
                 Category = "系统更新缓存",
                 Title = "Windows Update 更新下载缓存",
-                Description = @"C:\Windows\SoftwareDistribution\Download 已下载完的补丁安装包缓存",
+                Description = "Windows 可能会重新下载所需更新。清理需要管理员权限。",
                 Paths = new[] { Path.Combine(winDir, "SoftwareDistribution", "Download") },
-                DefaultSelected = true,
-                IsSelected = true
+                RequiresAdmin = true,
+                DefaultSelected = false,
+                IsSelected = false
             },
             new()
             {
                 Id = "crash_dumps",
                 Category = "崩溃转储与报告",
                 Title = "程序崩溃转储 (CrashDumps / Minidump / WER)",
-                Description = "应用崩溃产生的 .dmp 内存转储与 Windows 错误报告队列文件",
+                Description = "删除后无法再用这些转储和报告排查崩溃。清理需要管理员权限。",
+                RequiresAdmin = true,
                 Paths = new[]
                 {
                     Path.Combine(localApp, "CrashDumps"),
@@ -144,8 +151,8 @@ public sealed class SystemCleanService
                     @"C:\ProgramData\Microsoft\Windows\WER\ReportArchive",
                     @"C:\ProgramData\Microsoft\Windows\WER\ReportQueue"
                 },
-                DefaultSelected = true,
-                IsSelected = true
+                DefaultSelected = false,
+                IsSelected = false
             },
             new()
             {
@@ -167,16 +174,17 @@ public sealed class SystemCleanService
             {
                 Id = "win_logs",
                 Category = "系统日志文件",
-                Title = "Windows CBS 组件日志与安装日志",
-                Description = @"C:\Windows\Logs\CBS 与 Panther 下的旧安装诊断日志",
+                Title = "Windows CBS 与 DISM 日志",
+                Description = "删除后无法再用这些日志排查组件或更新问题。清理需要管理员权限。",
                 Paths = new[]
                 {
                     Path.Combine(winDir, "Logs", "CBS"),
                     Path.Combine(winDir, "Logs", "DISM")
                 },
                 FilePattern = "*.log",
-                DefaultSelected = true,
-                IsSelected = true
+                RequiresAdmin = true,
+                DefaultSelected = false,
+                IsSelected = false
             },
             new()
             {
@@ -232,75 +240,56 @@ public sealed class SystemCleanService
 
     public async Task ScanTargetsAsync(IReadOnlyList<CleanupTargetItem> targets)
     {
-        await Task.Run(() =>
+        var cutoff = CutoffUtc(DefaultMinAgeMinutes);
+        var measured = await Task.Run(() => targets.Select(item =>
         {
-            foreach (var item in targets)
+            if (item.IsRecycleBin) return QueryRecycleBin();
+
+            long bytes = 0;
+            var count = 0;
+            foreach (var dir in item.Paths)
             {
-                if (item.IsRecycleBin)
-                {
-                    var (bytes, count) = QueryRecycleBin();
-                    item.SizeBytes = bytes;
-                    item.FileCount = count;
-                    continue;
-                }
-
-                long totalBytes = 0;
-                var totalFiles = 0;
-
-                foreach (var dir in item.Paths)
-                {
-                    if (string.IsNullOrWhiteSpace(dir) || !Directory.Exists(dir)) continue;
-                    var (b, c, _) = MeasureDirectory(dir, item.FilePattern, item.Recursive);
-                    totalBytes += b;
-                    totalFiles += c;
-                }
-
-                item.SizeBytes = totalBytes;
-                item.FileCount = totalFiles;
+                if (!IsCleanupRoot(dir)) continue;
+                var (b, c, _) = MeasureDirectory(dir, item.FilePattern, item.Recursive, cutoff);
+                bytes += b;
+                count += c;
             }
-        });
+            return (bytes, count);
+        }).ToArray());
+
+        for (var i = 0; i < measured.Length; i++)
+            (targets[i].SizeBytes, targets[i].FileCount) = measured[i];
     }
 
     public async Task<(long FreedBytes, int DeletedFiles, int SkippedItems)> CleanTargetsAsync(
         IReadOnlyList<CleanupTargetItem> selectedTargets,
         Action<string>? progress = null,
-        int minAgeMinutes = 0)
+        int minAgeMinutes = DefaultMinAgeMinutes)
     {
+        var targets = selectedTargets.ToArray();
+        if (targets.Any(item => item.IsRecycleBin))
+            throw new InvalidOperationException("回收站不属于普通清理，请使用单独的清空回收站入口。");
+
+        var cutoff = CutoffUtc(minAgeMinutes);
         return await Task.Run(() =>
         {
             long freedBytes = 0;
             var deletedFiles = 0;
             var skippedItems = 0;
 
-            foreach (var item in selectedTargets)
+            foreach (var item in targets)
             {
                 progress?.Invoke($"正在清理：{item.Title}…");
-
-                if (item.IsRecycleBin)
-                {
-                    var before = item.SizeBytes;
-                    var beforeCount = item.FileCount;
-                    var hr = SHEmptyRecycleBin(IntPtr.Zero, null, SHERB_NOCONFIRMATION | SHERB_NOPROGRESSUI | SHERB_NOSOUND);
-
-                    // 返回 HRESULT 且不会抛异常：失败（被占用/策略限制）时不能把体积算进"已释放"
-                    if (hr == 0)
-                    {
-                        freedBytes += before;
-                        deletedFiles += beforeCount;
-                    }
-                    else
-                    {
-                        progress?.Invoke($"回收站未能清空（HRESULT 0x{hr:X8}），已跳过统计");
-                        skippedItems++;
-                    }
-
-                    continue;
-                }
-
                 foreach (var dir in item.Paths)
                 {
-                    if (string.IsNullOrWhiteSpace(dir) || !Directory.Exists(dir)) continue;
-                    var (b, c, s) = CleanDirectory(dir, item.FilePattern, item.Recursive, minAgeMinutes);
+                    if (!Directory.Exists(dir)) continue;
+                    if (!IsCleanupRoot(dir))
+                    {
+                        skippedItems++;
+                        continue;
+                    }
+
+                    var (b, c, s) = CleanDirectory(dir, item.FilePattern, item.Recursive, cutoff);
                     freedBytes += b;
                     deletedFiles += c;
                     skippedItems += s;
@@ -310,6 +299,44 @@ public sealed class SystemCleanService
             return (freedBytes, deletedFiles, skippedItems);
         });
     }
+
+    internal Task<(bool Success, string Message)> EmptyRecycleBinAsync() => Task.Run(() =>
+    {
+        var hr = SHEmptyRecycleBin(IntPtr.Zero, null, SHERB_NOCONFIRMATION | SHERB_NOPROGRESSUI | SHERB_NOSOUND);
+        if (hr == 0) return (true, "回收站已清空。");
+        return (false, $"未能确认回收站已清空（错误 0x{hr:X8}）。请重新扫描后查看剩余项目。");
+    });
+
+    private static DateTime CutoffUtc(int minAgeMinutes) => minAgeMinutes > 0
+        ? DateTime.UtcNow.AddMinutes(-minAgeMinutes)
+        : DateTime.MinValue;
+
+    private static bool IsCleanupRoot(string path)
+    {
+        if (!Path.IsPathFullyQualified(path) || !Directory.Exists(path)) return false;
+        try
+        {
+            var directory = new DirectoryInfo(path);
+            if (directory.Parent is null) return false; // 不允许把整块盘作为缓存清理目标。
+            for (DirectoryInfo? part = directory; part is not null; part = part.Parent)
+                if ((part.Attributes & FileAttributes.ReparsePoint) != 0) return false;
+            return true;
+        }
+        catch (Exception) { return false; }
+    }
+
+    private static bool CanDelete(FileInfo file, DateTime cutoff) =>
+        (file.Attributes & (FileAttributes.ReparsePoint | FileAttributes.ReadOnly)) == 0 &&
+        IsOlderThan(file, cutoff);
+
+    private static bool CanTraverse(string path, int depth, DateTime cutoff)
+    {
+        var directory = new DirectoryInfo(path);
+        return (directory.Attributes & FileAttributes.ReparsePoint) == 0 && (depth == 0 || IsOlderThan(directory, cutoff));
+    }
+
+    private static bool IsOlderThan(FileSystemInfo entry, DateTime cutoff) => cutoff == DateTime.MinValue ||
+        (entry.CreationTimeUtc < cutoff && entry.LastWriteTimeUtc < cutoff);
 
     private static (long Bytes, int Count) QueryRecycleBin()
     {
@@ -339,7 +366,7 @@ public sealed class SystemCleanService
     ///    静默吞掉会让用户以为体积已经算全了。
     /// </summary>
     private static (long Bytes, int Count, int Skipped) MeasureDirectory(
-        string rootDir, string pattern, bool recursive)
+        string rootDir, string pattern, bool recursive, DateTime cutoff)
     {
         long bytes = 0;
         var count = 0;
@@ -353,11 +380,13 @@ public sealed class SystemCleanService
             var (current, depth) = stack.Pop();
             try
             {
+                if (!CanTraverse(current, depth, cutoff)) continue;
                 foreach (var file in Directory.EnumerateFiles(current, pattern))
                 {
                     try
                     {
                         var fi = new FileInfo(file);
+                        if (!CanDelete(fi, cutoff)) continue;
                         bytes += fi.Length;
                         count++;
                     }
@@ -376,18 +405,7 @@ public sealed class SystemCleanService
                 }
 
                 foreach (var sub in Directory.EnumerateDirectories(current))
-                {
-                    try
-                    {
-                        var attr = File.GetAttributes(sub);
-                        if ((attr & FileAttributes.ReparsePoint) == 0)
-                            stack.Push((sub, depth + 1));
-                    }
-                    catch (Exception)
-                    {
-                        skipped++;
-                    }
-                }
+                    stack.Push((sub, depth + 1));
             }
             catch (Exception)
             {
@@ -399,21 +417,13 @@ public sealed class SystemCleanService
         return (bytes, count, skipped);
     }
 
-    /// <summary>
-    /// 清理目录内容。
-    /// minAgeMinutes &gt; 0 时只删「最后写入时间早于该阈值」的文件与子目录——
-    /// 避免把其它进程（包括本工具自己、构建工具、沙箱）刚创建、正在用的临时目录当成垃圾删掉。
-    /// </summary>
+    /// <summary>只清理超过时间阈值的文件；不修改只读属性，不跟随重解析点。</summary>
     private static (long FreedBytes, int DeletedCount, int Skipped) CleanDirectory(
-        string rootDir, string pattern, bool recursive, int minAgeMinutes = 0)
+        string rootDir, string pattern, bool recursive, DateTime cutoff)
     {
         long freed = 0;
         var deleted = 0;
         var skipped = 0;
-
-        var cutoff = minAgeMinutes > 0
-            ? DateTime.Now.AddMinutes(-minAgeMinutes)
-            : DateTime.MinValue;
 
         var dirs = new List<string>();
         var stack = new Stack<(string Path, int Depth)>();
@@ -422,20 +432,18 @@ public sealed class SystemCleanService
         while (stack.Count > 0)
         {
             var (current, depth) = stack.Pop();
-            dirs.Add(current);
             try
             {
+                if (!CanTraverse(current, depth, cutoff)) continue;
+                dirs.Add(current);
                 foreach (var file in Directory.EnumerateFiles(current, pattern))
                 {
                     try
                     {
                         var fi = new FileInfo(file);
-
-                        // 太新的文件可能是别人正在写的，跳过
-                        if (cutoff != DateTime.MinValue && fi.LastWriteTime > cutoff) continue;
+                        if (!CanDelete(fi, cutoff)) continue;
 
                         var len = fi.Length;
-                        fi.Attributes = FileAttributes.Normal;
                         fi.Delete();
                         freed += len;
                         deleted++;
@@ -457,23 +465,7 @@ public sealed class SystemCleanService
                 }
 
                 foreach (var sub in Directory.EnumerateDirectories(current))
-                {
-                    try
-                    {
-                        var attr = File.GetAttributes(sub);
-                        if ((attr & FileAttributes.ReparsePoint) != 0) continue;
-
-                        // 新目录不递归进去：里面大概率是活跃会话的数据
-                        if (cutoff != DateTime.MinValue &&
-                            Directory.GetLastWriteTime(sub) > cutoff) continue;
-
-                        stack.Push((sub, depth + 1));
-                    }
-                    catch (Exception)
-                    {
-                        skipped++;
-                    }
-                }
+                    stack.Push((sub, depth + 1));
             }
             catch (Exception)
             {
@@ -489,8 +481,7 @@ public sealed class SystemCleanService
             {
                 try
                 {
-                    // 新目录不删：可能属于正在运行的进程
-                    if (cutoff != DateTime.MinValue && Directory.GetLastWriteTime(dirs[i]) > cutoff) continue;
+                    if (!CanTraverse(dirs[i], 1, cutoff)) continue;
 
                     if (!Directory.EnumerateFileSystemEntries(dirs[i]).Any())
                         Directory.Delete(dirs[i], false);

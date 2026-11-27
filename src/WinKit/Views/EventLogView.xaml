@@ -19,12 +19,12 @@
             </Grid.ColumnDefinitions>
 
             <StackPanel Grid.Column="0" Orientation="Horizontal" VerticalAlignment="Center">
-                <ToggleButton Content="近 7 天" Style="{StaticResource Chip}" Margin="0,0,6,0"
-                              IsChecked="{Binding Is7Days, Mode=OneWay}"
-                              Command="{Binding SetDaysCommand}" CommandParameter="7" />
-                <ToggleButton Content="近 30 天" Style="{StaticResource Chip}"
-                              IsChecked="{Binding Is30Days, Mode=OneWay}"
-                              Command="{Binding SetDaysCommand}" CommandParameter="30" />
+                <RadioButton Content="近 7 天" GroupName="EventLogRange" Style="{StaticResource Chip}" Margin="0,0,6,0"
+                             IsChecked="{Binding Is7Days, Mode=OneWay}"
+                             Command="{Binding SetDaysCommand}" CommandParameter="7" />
+                <RadioButton Content="近 30 天" GroupName="EventLogRange" Style="{StaticResource Chip}"
+                             IsChecked="{Binding Is30Days, Mode=OneWay}"
+                             Command="{Binding SetDaysCommand}" CommandParameter="30" />
             </StackPanel>
 
             <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Center">
@@ -37,10 +37,14 @@
 
         <Grid Grid.Row="1" Margin="0,0,0,10">
             <StackPanel>
-                <TextBlock Text="{Binding SummaryText}" Style="{StaticResource Muted}" />
-                <TextBlock Text="{Binding ErrorText}" Style="{StaticResource Muted}"
-                           Foreground="{DynamicResource Brush.Danger}"
+                <TextBlock Text="{Binding LoadingText}" Style="{StaticResource Muted}" TextWrapping="Wrap"
+                           AutomationProperties.LiveSetting="Polite"
+                           Visibility="{Binding LoadingText, Converter={StaticResource EmptyToVis}, ConverterParameter=invert}" />
+                <TextBlock Text="{Binding ErrorText}" Style="{StaticResource Muted}" TextWrapping="Wrap"
+                           Foreground="{DynamicResource Brush.Danger}" AutomationProperties.LiveSetting="Polite"
                            Visibility="{Binding HasError, Converter={StaticResource BoolToVis}}" />
+                <TextBlock Text="{Binding SummaryText}" Style="{StaticResource Muted}" TextWrapping="Wrap"
+                           Visibility="{Binding SummaryText, Converter={StaticResource EmptyToVis}, ConverterParameter=invert}" />
             </StackPanel>
         </Grid>
 

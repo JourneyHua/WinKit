@@ -43,8 +43,6 @@
 
             <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Center"
                         Visibility="{Binding ShowTweaksView, Converter={StaticResource BoolToVis}}">
-                <Button Content="重启资源管理器" Style="{StaticResource BtnBase}" Margin="0,0,8,0"
-                        Command="{Binding RestartExplorerCommand}" />
                 <Button Content="刷新状态" Style="{StaticResource BtnBase}"
                         Command="{Binding RefreshCommand}" />
             </StackPanel>

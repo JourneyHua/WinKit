@@ -1,18 +1,23 @@
+using System.Globalization;
 using System.IO;
+using System.Runtime.InteropServices;
 using System.Text;
+using System.Xml.Linq;
 
 namespace WinKit.Services;
 
 public sealed class MaintenanceStatus
 {
+    public bool Known { get; init; }
+    public bool AccessDenied { get; init; }
     public bool TaskExists { get; init; }
-    public string TaskName { get; init; } = MaintenanceService.TaskName;
-    public string LastRunText { get; init; } = "";
+    public bool IsEnabled { get; init; }
+    public bool IsRunning { get; init; }
+    public DateTime? LastRunAt { get; init; }
+    public string LastRunText => LastRunAt?.ToString("g") ?? "";
     public string LastResultText { get; init; } = "";
     public string NextRunText { get; init; } = "";
-    public bool LastRunFailed { get; init; }
-    public string LogPath { get; init; } = MaintenanceService.LogPath;
-    public string LastLogLine { get; init; } = "";
+    public string LastOutcome { get; init; } = "";
     public string Note { get; init; } = "";
 }
 
@@ -35,156 +40,185 @@ public sealed class MaintenanceService
         Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
         "WinKit", "TaskBackups");
 
-    public bool TaskExists()
-    {
-        var (code, _, _) = RunSchtasks($"/Query /TN \"{TaskName}\"", TimeSpan.FromSeconds(15));
-        return code == 0;
-    }
+    private const int TaskQueued = 2, TaskRunning = 4;
+    private const int SchedulerNotRun = 0x41303;
+    private const int TaskNotFound = unchecked((int)0x80070002);
 
     public MaintenanceStatus LoadStatus()
     {
-        var exists = TaskExists();
-        var status = new MaintenanceStatus { TaskExists = exists };
-
-        if (!exists)
+        try
         {
-            return new MaintenanceStatus
+            return WithTask<MaintenanceStatus>((_, taskObject) =>
             {
-                TaskExists = false,
-                LastLogLine = ReadLastLogLine(),
-                Note = "尚未注册定期维护任务"
-            };
+                var lastOutcome = LastOutcomeText();
+                if (taskObject is null) return new MaintenanceStatus { Known = true, LastOutcome = lastOutcome };
+
+                dynamic task = taskObject;
+                int state = task.State;
+                bool enabled = task.Enabled;
+                DateTime last = task.LastRunTime;
+                DateTime next = task.NextRunTime;
+                int result = task.LastTaskResult;
+                return new MaintenanceStatus
+                {
+                    Known = true, TaskExists = true, IsEnabled = enabled,
+                    IsRunning = state is TaskQueued or TaskRunning,
+                    LastRunAt = result == SchedulerNotRun || last.Year < 2000 ? null : last,
+                    NextRunText = enabled && next.Year >= 2000 ? next.ToString("g") : "",
+                    LastResultText = result switch
+                    {
+                        SchedulerNotRun => "",
+                        0 => "已完成",
+                        0x41301 => "正在运行",
+                        _ => $"未成功（0x{result:X8}）"
+                    },
+                    LastOutcome = lastOutcome
+                };
+            });
         }
-
-        var (code, output, _) = RunSchtasks($"/Query /TN \"{TaskName}\" /FO LIST /V", TimeSpan.FromSeconds(15));
-
-        string Read(string key)
+        catch (Exception ex) when (ex is UnauthorizedAccessException || ex.HResult == unchecked((int)0x80070005))
         {
-            foreach (var line in output.Split('\n'))
-            {
-                var trimmed = line.Trim();
-                if (!trimmed.StartsWith(key, StringComparison.OrdinalIgnoreCase)) continue;
-
-                var idx = trimmed.IndexOf(':');
-                if (idx < 0) continue;
-                return trimmed[(idx + 1)..].Trim();
-            }
-
-            return "";
+            return new MaintenanceStatus { AccessDenied = true, Note = "Windows 拒绝读取维护安排。请以管理员身份重新启动后查看。" };
         }
-
-        var lastRun = Read("上次运行时间");
-        if (string.IsNullOrWhiteSpace(lastRun)) lastRun = Read("Last Run Time");
-
-        var lastResult = Read("上次结果");
-        if (string.IsNullOrWhiteSpace(lastResult)) lastResult = Read("Last Result");
-
-        var nextRun = Read("下次运行时间");
-        if (string.IsNullOrWhiteSpace(nextRun)) nextRun = Read("Next Run Time");
-
-        // 0 = 成功；267011 = 任务尚未运行过；其它非零视为失败
-        var failed = lastResult.Length > 0
-                     && lastResult != "0"
-                     && lastResult != "267011"
-                     && lastResult != "1"; // 1 = 正在运行
-
-        return new MaintenanceStatus
+        catch (Exception ex)
         {
-            TaskExists = true,
-            LastRunText = lastRun,
-            LastResultText = lastResult,
-            NextRunText = nextRun,
-            LastRunFailed = failed,
-            LastLogLine = ReadLastLogLine(),
-            Note = code == 0 ? "" : "无法读取任务详情（可能需要管理员权限）"
-        };
+            // 查询失败不等于任务不存在，避免给出覆盖或误清理入口。
+            return new MaintenanceStatus { Note = $"未能读取维护状态。{ex.Message}" };
+        }
+    }
+
+    private static T WithTask<T>(Func<object, object?, T> action)
+    {
+        var schedulerType = Type.GetTypeFromProgID("Schedule.Service")
+            ?? throw new InvalidOperationException("Windows 任务计划程序不可用。");
+        dynamic scheduler = Activator.CreateInstance(schedulerType)!;
+        scheduler.Connect();
+        dynamic folder = scheduler.GetFolder(@"\");
+        object? task;
+        try { task = (object)folder.GetTask(TaskName); }
+        // COM interop can translate ERROR_FILE_NOT_FOUND into FileNotFoundException rather than COMException.
+        catch (Exception ex) when (ex.HResult == TaskNotFound) { task = null; }
+        return action((object)folder, task);
     }
 
     public (bool Ok, string Message) Register(string? exePath = null)
     {
         var exe = exePath ?? Environment.ProcessPath;
         if (string.IsNullOrWhiteSpace(exe)) return (false, "无法定位 WinKit.exe 路径");
+        var before = LoadStatus();
+        if (!before.Known) return (false, before.Note);
+        if (before.TaskExists) return (false, "维护安排已变化，未覆盖现有任务。");
 
-        // /TR 需要整体加引号，路径里有空格时必须再套一层
+        // /TR 需要整体加引号，路径里有空格时必须再套一层。
         var target = $"\\\"{exe}\\\" --maintain";
         var (code, output, err) = RunSchtasks(
-            $"/Create /TN \"{TaskName}\" /TR \"{target}\" /SC WEEKLY /D SUN /ST 03:00 /RL HIGHEST /F",
+            $"/Create /TN \"{TaskName}\" /TR \"{target}\" /SC WEEKLY /D SUN /ST 03:00 /RL HIGHEST",
             TimeSpan.FromSeconds(20));
 
         if (code != 0)
         {
             var text = string.IsNullOrWhiteSpace(err) ? output.Trim() : err.Trim();
-
-            // 以最高权限运行的任务必须由管理员创建，给出可执行的提示而不是原始英文错误
-            if (text.Contains("Access is denied", StringComparison.OrdinalIgnoreCase) ||
-                text.Contains("拒绝访问", StringComparison.OrdinalIgnoreCase))
-            {
-                return (false, "创建计划任务被拒绝：需要以管理员身份运行 WinKit 才能注册「以最高权限运行」的定期维护任务。");
-            }
-
-            return (false, text);
+            if (text.Contains("Access is denied", StringComparison.OrdinalIgnoreCase) || text.Contains("拒绝访问", StringComparison.OrdinalIgnoreCase))
+                return (false, "启用每周维护需要管理员权限。");
+            return (false, string.IsNullOrWhiteSpace(text) ? "Windows 未能创建维护任务。" : text);
         }
 
-        // schtasks 偶尔返回 0 但任务并未落地，必须复查
-        if (!TaskExists())
-            return (false, "schtasks 报告成功，但查询不到该任务，请重试或以管理员身份运行。");
-
-        return (true, "已注册每周维护任务（每周日 03:00 运行：安全清理 + 生成体检报告）");
+        var state = LoadStatus();
+        return state.Known && state.TaskExists && state.IsEnabled
+            ? (true, "已启用每周维护。")
+            : (false, "Windows 已接受创建请求，但暂未确认维护已启用。请刷新维护状态。");
     }
 
-    public (bool Ok, string Message) Delete(bool exportBackup = true)
+    public (bool Ok, string Message) Delete() => RunExistingTaskAction((folderObject, taskObject) =>
     {
-        string? backupPath = null;
+        dynamic folder = folderObject;
+        dynamic task = taskObject;
+        int state = task.State;
+        if (state is TaskQueued or TaskRunning) return (false, "维护正在运行，等完成后再关闭每周维护。");
 
-        if (exportBackup)
-        {
-            try
-            {
-                var (code, xml, _) = RunSchtasks($"/Query /TN \"{TaskName}\" /XML", TimeSpan.FromSeconds(15));
-                if (code == 0 && !string.IsNullOrWhiteSpace(xml))
-                {
-                    Directory.CreateDirectory(TaskBackupDirectory);
-                    backupPath = Path.Combine(TaskBackupDirectory, $"{TaskName}_{DateTime.Now:yyyyMMdd_HHmmss}.xml");
-                    File.WriteAllText(backupPath, xml, new UTF8Encoding(true));
-                }
-            }
-            catch (Exception)
-            {
-                // 备份失败不阻断删除，但会如实报告
-            }
-        }
+        return BackupThenDelete(() => (string)task.Xml, TaskBackupDirectory, () => folder.DeleteTask(TaskName, 0));
+    });
 
-        var (delCode, output, err) = RunSchtasks($"/Delete /TN \"{TaskName}\" /F", TimeSpan.FromSeconds(15));
-
-        if (delCode != 0)
-            return (false, string.IsNullOrWhiteSpace(err) ? output.Trim() : err.Trim());
-
-        return (true, backupPath is null
-            ? "已删除定期维护任务（未能导出 XML 备份）"
-            : $"已删除定期维护任务，任务 XML 已备份到：{backupPath}");
-    }
-
-    public (bool Ok, string Message) RunNow()
-    {
-        var (code, output, err) = RunSchtasks($"/Run /TN \"{TaskName}\"", TimeSpan.FromSeconds(15));
-        return code == 0
-            ? (true, "已触发定期维护任务，稍后可在日志里查看结果")
-            : (false, string.IsNullOrWhiteSpace(err) ? output.Trim() : err.Trim());
-    }
-
-    /// <summary>维护任务写入的一行结果；界面打开时用它提示“上次有失败”。</summary>
-    public static string ReadLastLogLine()
+    internal static (bool Ok, string Message) BackupThenDelete(Func<string> readXml, string directory, Action delete)
     {
         try
         {
-            if (!File.Exists(LogPath)) return "";
+            var doc = XDocument.Parse(readXml().TrimStart('﻿'), LoadOptions.PreserveWhitespace);
+            if (doc.Root?.Name != XName.Get("Task", "http://schemas.microsoft.com/windows/2004/02/mit/task"))
+                return (false, "Windows 未提供有效的任务备份；维护安排未更改。");
 
-            var lines = File.ReadAllLines(LogPath);
-            return lines.LastOrDefault(l => !string.IsNullOrWhiteSpace(l)) ?? "";
+            Directory.CreateDirectory(directory);
+            var path = Path.Combine(directory, $"{TaskName}_{DateTime.Now:yyyyMMdd_HHmmss}_{Guid.NewGuid():N}.xml");
+            using (var file = new FileStream(path, FileMode.CreateNew, FileAccess.Write, FileShare.None))
+            {
+                var settings = new System.Xml.XmlWriterSettings { Encoding = Encoding.Unicode, Indent = false };
+                using (var writer = System.Xml.XmlWriter.Create(file, settings)) doc.Save(writer);
+                file.Flush(flushToDisk: true);
+            }
         }
-        catch (Exception)
+        catch (Exception ex)
         {
-            return "";
+            return (false, $"未能保存任务备份，维护安排未更改。{ex.Message}");
+        }
+
+        delete();
+        return (true, "已关闭每周维护，原安排已备份。");
+    }
+
+    public (bool Ok, string Message) Enable() => RunExistingTaskAction((_, taskObject) =>
+    {
+        dynamic task = taskObject;
+        if (!TargetsCurrentWinKit((string)task.Xml))
+            return (false, "已有安排未指向当前 WinKit。请在 Windows 任务计划程序中确认原安排；未启用任务。");
+        task.Enabled = true;
+        return (true, "已恢复 Windows 中的维护安排。");
+    });
+
+    public (bool Ok, string Message) RunNow() => RunExistingTaskAction((_, taskObject) =>
+    {
+        dynamic task = taskObject;
+        if (!(bool)task.Enabled) return (false, "每周维护已被停用，未启动维护。");
+        if (!TargetsCurrentWinKit((string)task.Xml))
+            return (false, "维护任务未指向当前 WinKit。请在 Windows 任务计划程序中核对，未运行任务。");
+        int state = task.State;
+        if (state is TaskQueued or TaskRunning) return (false, "维护已经在运行，无需再启动。");
+        task.Run(null);
+        return (true, "已请求立即维护，正在等待结果…");
+    });
+
+    internal static bool TargetsCurrentWinKit(string xml, string? processPath = null)
+    {
+        var executable = processPath ?? Environment.ProcessPath;
+        if (string.IsNullOrWhiteSpace(executable)) return false;
+        try
+        {
+            XNamespace ns = "http://schemas.microsoft.com/windows/2004/02/mit/task";
+            var actions = XDocument.Parse(xml.TrimStart('﻿')).Root?.Element(ns + "Actions")?.Elements().ToArray();
+            if (actions is not [var action] || action.Name != ns + "Exec") return false;
+            var command = ((string?)action.Element(ns + "Command"))?.Trim().Trim('"');
+            var arguments = ((string?)action.Element(ns + "Arguments"))?.Trim();
+            return !string.IsNullOrWhiteSpace(command) && Path.IsPathFullyQualified(command)
+                && string.Equals(Path.GetFullPath(command), Path.GetFullPath(executable), StringComparison.OrdinalIgnoreCase)
+                && arguments == "--maintain";
+        }
+        catch (Exception) { return false; }
+    }
+
+    private static (bool Ok, string Message) RunExistingTaskAction(Func<object, object, (bool, string)> action)
+    {
+        try
+        {
+            return WithTask<(bool, string)>((folder, task) => task is not null
+                ? action(folder, task)
+                : (false, "维护安排已变化，未找到该任务。"));
+        }
+        catch (UnauthorizedAccessException)
+        {
+            return (false, "Windows 拒绝更改维护安排。请以管理员身份重新启动 WinKit 后重试。");
+        }
+        catch (Exception ex)
+        {
+            return (false, $"Windows 未能完成维护操作：{ex.Message}");
         }
     }
 

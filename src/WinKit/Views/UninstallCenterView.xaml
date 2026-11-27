@@ -128,22 +128,17 @@
                     </StackPanel>
                 </Border>
 
-                <!-- ③ 强制删除 -->
-                <Border Style="{StaticResource HintCard.Danger}" Padding="14,12" Margin="0,10,0,0"
-                        Visibility="{Binding HasTargetFolder, Converter={StaticResource BoolToVis}}">
-                    <StackPanel>
-                        <TextBlock Text="③ 强制删除整个文件夹" Style="{StaticResource H2}"
-                                   Foreground="{DynamicResource Brush.Danger}" />
-                        <TextBlock Text="卸载程序跑完、残留也清完了，但文件夹还在时用这个。整目录进回收站，删除前自动写一份存档。"
-                                   Style="{StaticResource HintText.Danger}" TextWrapping="Wrap" Margin="0,4,0,8" />
-                        <StackPanel Orientation="Horizontal">
-                            <Button Content="计算大小" Style="{StaticResource BtnSmall}" Margin="0,0,6,0"
-                                    Command="{Binding MeasureCommand}" />
-                            <Button Content="强制删除文件夹" Style="{StaticResource BtnDanger}"
-                                    Command="{Binding ForceDeleteCommand}" />
+                <Expander Header="处理整个文件夹" Margin="0,10,0,0"
+                          Visibility="{Binding CanRecycleTarget, Converter={StaticResource BoolToVis}}">
+                    <Border Style="{StaticResource HintCard.Danger}" Padding="14,12" Margin="0,6,0,0">
+                        <StackPanel>
+                            <TextBlock Text="这不是卸载。只有确认不再需要此文件夹及其中的数据后，才移入回收站。"
+                                       Style="{StaticResource HintText.Danger}" TextWrapping="Wrap" Margin="0,0,0,8" />
+                            <Button Content="将整个文件夹移入回收站…" Style="{StaticResource BtnDanger}"
+                                    HorizontalAlignment="Left" Command="{Binding RecycleTargetCommand}" />
                         </StackPanel>
-                    </StackPanel>
-                </Border>
+                    </Border>
+                </Expander>
 
                 <Border Style="{StaticResource Card}" Padding="14,10" Margin="0,10,0,0"
                         Visibility="{Binding ArchivePath, Converter={StaticResource EmptyToVis}, ConverterParameter=invert}" >
@@ -167,29 +162,39 @@
                 <RowDefinition Height="*" />
             </Grid.RowDefinitions>
 
-            <WrapPanel Grid.Row="0" Margin="0,0,0,8">
+            <WrapPanel Grid.Row="0" Margin="0,0,0,8"
+                       Visibility="{Binding HasScanTarget, Converter={StaticResource BoolToVis}}">
                 <Button Content="扫描残留" Style="{StaticResource BtnPrimary}" Margin="0,0,6,6"
+                        Visibility="{Binding IsScanning, Converter={StaticResource BoolToVis}, ConverterParameter=invert}"
                         Command="{Binding ScanCommand}" />
                 <Button Content="深度扫描" Style="{StaticResource BtnBase}" Margin="0,0,6,6"
-                        ToolTip="递归扫到 64 层，慢但更全；装得很深的软件（如 scoop 的 persist 目录）只有深度扫描才找得到"
+                        ToolTip="检查更多层文件夹，可能需要几分钟。常规扫描没找到时再用。"
+                        Visibility="{Binding IsScanning, Converter={StaticResource BoolToVis}, ConverterParameter=invert}"
                         Command="{Binding DeepScanCommand}" />
                 <Button Content="停止扫描" Style="{StaticResource BtnBase}" Margin="0,0,6,6"
                         Visibility="{Binding IsScanning, Converter={StaticResource BoolToVis}}"
                         Command="{Binding CancelScanCommand}" />
-                <Button Content="计算大小" Style="{StaticResource BtnSmall}" Margin="0,0,6,6"
+                <Button Content="计算所选目录大小" Style="{StaticResource BtnSmall}" Margin="0,0,6,6"
+                        Visibility="{Binding HasDirectorySelection, Converter={StaticResource BoolToVis}}"
                         Command="{Binding MeasureCommand}" />
-                <Button Content="全选确定项" Style="{StaticResource BtnSmall}" Margin="0,0,6,6"
-                        Command="{Binding SelectConfirmedCommand}" />
-                <Button Content="清空选择" Style="{StaticResource BtnSmall}" Margin="0,0,6,6"
+                <Button Content="取消勾选" Style="{StaticResource BtnSmall}" Margin="0,0,6,6"
+                        Visibility="{Binding HasSelection, Converter={StaticResource BoolToVis}}"
                         Command="{Binding ClearSelectionCommand}" />
-                <Button Content="清理选中" Style="{StaticResource BtnDanger}" Margin="0,0,6,6"
+                <Button Content="清理所选项目…" Style="{StaticResource BtnDanger}" Margin="0,0,6,6"
+                        Visibility="{Binding HasSelection, Converter={StaticResource BoolToVis}}"
                         Command="{Binding CleanSelectedCommand}" />
             </WrapPanel>
 
             <StackPanel Grid.Row="1" Margin="0,0,0,8">
-                <TextBlock Text="{Binding ScanStatus}" Style="{StaticResource Muted}" TextWrapping="Wrap" />
-                <TextBlock Text="{Binding ScanSummary}" Style="{StaticResource Muted}" TextWrapping="Wrap" />
-                <TextBlock Text="{Binding SelectedSummary}" Style="{StaticResource Muted}" TextWrapping="Wrap" />
+                <TextBlock Text="{Binding ScanStatus}" Style="{StaticResource Muted}" TextWrapping="Wrap"
+                           Visibility="{Binding ScanStatus, Converter={StaticResource EmptyToVis}, ConverterParameter=invert}" />
+                <TextBlock Text="{Binding ScanSummary}" Style="{StaticResource Muted}" TextWrapping="Wrap"
+                           Visibility="{Binding ScanSummary, Converter={StaticResource EmptyToVis}, ConverterParameter=invert}" />
+                <TextBlock Text="{Binding SelectedSummary}" Style="{StaticResource Muted}" TextWrapping="Wrap"
+                           Visibility="{Binding HasSelection, Converter={StaticResource BoolToVis}}" />
+                <TextBlock Text="{Binding CleanupFeedback}" Style="{StaticResource Muted}" TextWrapping="Wrap"
+                           Visibility="{Binding CleanupFeedback, Converter={StaticResource EmptyToVis}, ConverterParameter=invert}"
+                           AutomationProperties.LiveSetting="Polite" />
             </StackPanel>
 
             <Border Grid.Row="2" Style="{StaticResource Card}" Padding="0">
@@ -200,7 +205,8 @@
                                 <DataGridTemplateColumn.CellTemplate>
                                     <DataTemplate>
                                         <CheckBox IsChecked="{Binding IsSelected, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
-                                                  IsEnabled="{Binding CanClean}"
+                                                  Visibility="{Binding CanClean, Converter={StaticResource BoolToVis}}"
+                                                  IsEnabled="{Binding DataContext.CanChangeTarget, RelativeSource={RelativeSource AncestorType=UserControl}}"
                                                   HorizontalAlignment="Center" VerticalAlignment="Center" Cursor="Hand" />
                                     </DataTemplate>
                                 </DataGridTemplateColumn.CellTemplate>
@@ -212,22 +218,11 @@
                                     </DataTemplate>
                                 </DataGridTemplateColumn.CellTemplate>
                             </DataGridTemplateColumn>
-                            <DataGridTemplateColumn Header="判定" Width="62" SortMemberPath="Confidence">
+                            <DataGridTemplateColumn Header="关联线索" Width="90" SortMemberPath="Confidence">
                                 <DataGridTemplateColumn.CellTemplate>
                                     <DataTemplate>
-                                        <TextBlock Text="{Binding ConfidenceText}" FontSize="12"
-                                                   VerticalAlignment="Center">
-                                            <TextBlock.Style>
-                                                <Style TargetType="TextBlock">
-                                                    <Setter Property="Foreground" Value="{DynamicResource Brush.TextMuted}" />
-                                                    <Style.Triggers>
-                                                        <DataTrigger Binding="{Binding IsConfirmed}" Value="True">
-                                                            <Setter Property="Foreground" Value="{DynamicResource Brush.Success}" />
-                                                        </DataTrigger>
-                                                    </Style.Triggers>
-                                                </Style>
-                                            </TextBlock.Style>
-                                        </TextBlock>
+                                        <TextBlock Text="{Binding ConfidenceText}" Style="{StaticResource CellMuted}"
+                                                   ToolTip="名称或路径匹配不代表项目可以安全删除。" />
                                     </DataTemplate>
                                 </DataGridTemplateColumn.CellTemplate>
                             </DataGridTemplateColumn>
@@ -268,19 +263,21 @@
                         </DataGrid.Columns>
                     </DataGrid>
 
-                    <TextBlock Style="{StaticResource EmptyState}"
-                               Visibility="{Binding HasResiduals, Converter={StaticResource BoolToVis}, ConverterParameter=invert}">
-                        左边拖入软件的安装文件夹或快捷方式。<LineBreak />
-                        点「扫描残留」后，这里会列出卸载后没清干净的目录、快捷方式、服务、计划任务、启动项与文件关联。
+                    <TextBlock Text="{Binding ResidualEmptyText}">
+                        <TextBlock.Style>
+                            <Style TargetType="TextBlock" BasedOn="{StaticResource EmptyState}">
+                                <Style.Triggers>
+                                    <DataTrigger Binding="{Binding HasResiduals}" Value="True">
+                                        <Setter Property="Visibility" Value="Collapsed" />
+                                    </DataTrigger>
+                                    <DataTrigger Binding="{Binding IsScanning}" Value="True">
+                                        <Setter Property="Visibility" Value="Collapsed" />
+                                    </DataTrigger>
+                                </Style.Triggers>
+                            </Style>
+                        </TextBlock.Style>
                     </TextBlock>
                 </Grid>
-            </Border>
-
-            <Border Grid.Row="2" Style="{StaticResource BusyOverlay}"
-                    Visibility="{Binding IsScanning, Converter={StaticResource BoolToVis}}">
-                <StackPanel HorizontalAlignment="Center" VerticalAlignment="Center">
-                    <TextBlock Text="{Binding ScanHint}" Style="{StaticResource BusyText}" />
-                </StackPanel>
             </Border>
         </Grid>
     </Grid>

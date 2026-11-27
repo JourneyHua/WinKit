@@ -50,7 +50,7 @@ public sealed class AppManagerViewModel : ObservableObject, IModule
         Apps = new ObservableCollection<InstalledAppItem>();
         Runtimes = new ObservableCollection<RuntimeComponentItem>();
         Tools = new ObservableCollection<SystemToolItem>();
-        UninstallCenter = new UninstallCenterViewModel(journal, status);
+        UninstallCenter = new UninstallCenterViewModel(journal, status, setBusy);
 
         RefreshCommand = new RelayCommand(ManualRefresh, () => !IsBusy);
         CheckUpdatesCommand = new RelayCommand(() => _ = CheckUpdatesAsync(), () => !IsBusy);

@@ -12,6 +12,7 @@ public sealed class EnvironmentViewModel : ObservableObject, IModule
     private readonly EnvironmentService _service;
     private readonly Action<string> _status;
     private readonly Action<bool>? _setBusy;
+    private readonly bool _canEditMachinePath = Native.IsElevated();
     private readonly Func<EnvScope, string> _readPath;
     private readonly Func<List<EnvVarItem>> _readVariables;
     private readonly Dictionary<EnvScope, PathDraft> _pathDrafts = new();
@@ -62,7 +63,7 @@ public sealed class EnvironmentViewModel : ObservableObject, IModule
         RefreshCommand = new RelayCommand(Refresh, () => !IsBusy);
         EditCommand = new RelayCommand(p => Edit(p as EnvVarItem), p => !IsBusy && p is EnvVarItem);
         AddCommand = new RelayCommand(Add, () => !IsBusy);
-        DeleteCommand = new RelayCommand(p => Delete(p as EnvVarItem), p => !IsBusy && p is EnvVarItem);
+        DeleteCommand = new RelayCommand(p => Delete(p as EnvVarItem), p => !IsBusy && p is EnvVarItem { IsPath: false });
         CopyCommand = new RelayCommand(p => Copy(p as EnvVarItem));
 
         ShowUserPathCommand = new RelayCommand(() => SetPathScope(EnvScope.User), () => !IsBusy);
@@ -145,7 +146,7 @@ public sealed class EnvironmentViewModel : ObservableObject, IModule
 
     private PathDraft? CurrentPathDraft => _pathDrafts.GetValueOrDefault(_pathScope);
     private string PathScopeText => IsUserPath ? "用户" : "系统";
-    public bool CanEditPath => !IsBusy && CurrentPathDraft is not null;
+    public bool CanEditPath => !IsBusy && CurrentPathDraft is not null && (IsUserPath || _canEditMachinePath);
     public bool HasPathChanges => CurrentPathDraft?.IsDirty == true;
     public bool HasPathConflict => CurrentPathDraft?.HasConflict == true;
     public bool CanApplyPath => CanEditPath && HasPathChanges && !HasPathConflict;
@@ -156,8 +157,10 @@ public sealed class EnvironmentViewModel : ObservableObject, IModule
                 + (p.Value.HasConflict ? "（外部已更改）" : "")));
     public string PathDraftStatus => CurrentPathDraft is null ? "PATH 尚未读取。"
         : HasPathConflict ? $"{PathScopeText} PATH 已在外部更改。草稿已保留；请先放弃草稿并读取最新值，再重新编辑。"
-        : HasPathChanges ? $"{PathScopeText} PATH 有未应用更改（{PathEntries.Count} 条）。切换作用域或刷新会保留草稿，点击“应用 PATH 更改”后才写入。"
-        : $"{PathScopeText} PATH 已与读取值同步（{PathEntries.Count} 条），暂无更改。";
+        : HasPathChanges ? $"{PathScopeText} PATH 有未应用更改（{PathEntries.Count} 条）。切换作用域或刷新会保留草稿，点击「应用 PATH 更改」后才写入。"
+        : IsMachinePath && !_canEditMachinePath
+            ? $"系统 PATH（{PathEntries.Count} 条）可以查看。要编辑，请以管理员身份重新启动 WinKit。"
+            : $"{PathScopeText} PATH（{PathEntries.Count} 条），暂无更改。";
 
     public void Refresh()
     {
@@ -218,6 +221,16 @@ public sealed class EnvironmentViewModel : ObservableObject, IModule
             OnPropertyChanged(nameof(IsUserPath));
             OnPropertyChanged(nameof(IsMachinePath));
         }
+    }
+
+    /// <summary>打开仍有草稿的作用域，不因重新读取失败而拦住查看。</summary>
+    internal void ReviewPendingPathDrafts()
+    {
+        if (IsBusy || HasPathChanges) return;
+        var other = IsUserPath ? EnvScope.Machine : EnvScope.User;
+        if (_pathDrafts.GetValueOrDefault(other) is not { IsDirty: true }) return;
+        PathScope = other;
+        DisplayPathDraft();
     }
 
     private void LoadPath()
@@ -313,46 +326,41 @@ public sealed class EnvironmentViewModel : ObservableObject, IModule
 
     private void Add()
     {
-        var owner = Application.Current.MainWindow;
-
-        var name = InputDialog.Prompt(owner, "新增环境变量", "变量名（例如 JAVA_HOME）", "");
-        if (string.IsNullOrWhiteSpace(name)) return;
-
-        var value = InputDialog.Prompt(owner, "新增环境变量", $"「{name.Trim()}」的值（支持 %SystemRoot% 这类引用）", "");
-        if (value is null) return;
-
-        try
+        var name = EnvironmentVariableDialog.Show(Application.Current.MainWindow, async (variableName, value) =>
         {
-            _service.SetVariable(EnvScope.User, name.Trim(), value);
-            _status($"已新增环境变量：{name.Trim()}");
-            Refresh();
-        }
-        catch (Exception ex)
-        {
-            SetError($"新增失败：{ex.Message}");
-        }
+            IsBusy = true;
+            try { await Task.Run(() => _service.CreateUserVariable(variableName, value)); }
+            finally { IsBusy = false; }
+        });
+        if (name is null) return;
+        Refresh();
+        if (!HasError) _status($"已新增当前用户变量：{name}");
     }
 
     private void Edit(EnvVarItem? item)
     {
+        if (item is null) return;
+        if (item.IsPath)
+        {
+            SetPathScope(item.Scope);
+            return;
+        }
         // 用户级变量写在 HKCU，不需要管理员；系统级写在 HKLM，必须提权
-        if (item is { Scope: not EnvScope.User } && Native.RequireAdmin("修改系统环境变量") is { } adminNeeded)
+        if (item.Scope == EnvScope.Machine && Native.RequireAdmin("修改系统环境变量") is { } adminNeeded)
         {
             SetError(adminNeeded);
             return;
         }
-        if (item is null) return;
 
-        var value = InputDialog.Prompt(Application.Current.MainWindow, "修改环境变量",
+        var value = InputDialog.Prompt(Application.Current.MainWindow, "编辑环境变量",
             $"{item.Name}（{item.ScopeText}）的新值", item.Value);
-
-        if (value is null) return;
+        if (value is null || value == item.Value) return;
 
         try
         {
-            _service.SetVariable(item.Scope, item.Name, value);
-            _status($"已修改：{item.Name}");
+            _service.UpdateVariable(item.Scope, item.Name, value);
             Refresh();
+            if (!HasError) _status($"已修改{item.ScopeText}变量：{item.Name}");
         }
         catch (Exception ex)
         {
@@ -362,12 +370,12 @@ public sealed class EnvironmentViewModel : ObservableObject, IModule
 
     private void Delete(EnvVarItem? item)
     {
-        if (item is { Scope: not EnvScope.User } && Native.RequireAdmin("删除系统环境变量") is { } adminNeeded)
+        if (item is null || item.IsPath) return;
+        if (item.Scope == EnvScope.Machine && Native.RequireAdmin("删除系统环境变量") is { } adminNeeded)
         {
             SetError(adminNeeded);
             return;
         }
-        if (item is null) return;
 
         var confirm = MessageBox.Show(
             $"确定删除环境变量「{item.Name}」（{item.ScopeText}）吗？\n\n删除前会存快照，可用「撤销上一步」恢复。",

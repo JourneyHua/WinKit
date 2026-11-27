@@ -15,6 +15,7 @@
 
   <ItemGroup>
     <Compile Include="Program.cs" />
+    <Compile Include="QuickAccessChecks.cs" />
     <Compile Include="..\..\src\WinKit\Core\Registry.cs" Link="Core\Registry.cs" />
     <Compile Include="..\..\src\WinKit\Core\Snapshots.cs" Link="Core\Snapshots.cs" />
     <Compile Include="..\..\src\WinKit\Core\Native.cs" Link="Core\Native.cs" />
@@ -26,6 +27,7 @@
     <Compile Include="..\..\src\WinKit\Services\NewMenuService.cs" Link="Services\NewMenuService.cs" />
     <Compile Include="..\..\src\WinKit\Services\ThisPcService.cs" Link="Services\ThisPcService.cs" />
     <Compile Include="..\..\src\WinKit\Services\NavPaneService.cs" Link="Services\NavPaneService.cs" />
+    <Compile Include="..\..\src\WinKit\Services\QuickAccessOrder.cs" Link="Services\QuickAccessOrder.cs" />
     <Compile Include="..\..\src\WinKit\Services\UninstallService.cs" Link="Services\UninstallService.cs" />
     <Compile Include="..\..\src\WinKit\Services\ResidualScanService.cs" Link="Services\ResidualScanService.cs" />
     <Compile Include="..\..\src\WinKit\Services\TaskbarService.cs" Link="Services\TaskbarService.cs" />

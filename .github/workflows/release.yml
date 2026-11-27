@@ -49,7 +49,7 @@ jobs:
       - name: Self test
         shell: pwsh
         run: |
-          dotnet run --project tools/Probe/Probe.csproj -c Release -m:1 -- --selftest
+          dotnet run --project tools/Probe/Probe.csproj -c Release --no-build -- --selftest
           if ($LASTEXITCODE -ne 0) { throw "Selftest failed with exit code $LASTEXITCODE" }
 
       # ---- 质量门槛 2：界面离屏渲染 + 每个模块的数据断言 ----
@@ -153,7 +153,8 @@ jobs:
           if ($log -notmatch 'SMOKE OK') { $failures += "日志里没有 SMOKE OK" }
 
           # 每个模块都必须有 OK 行（导航栏共 24 个模块）
-          $okCount = ([regex]::Matches($log, '(?m)^OK ')).Count
+          $okCount = ([regex]::Matches($log, '(?m)^MODULE OK (\S+) ->') |
+            ForEach-Object { $_.Groups[1].Value } | Sort-Object -Unique | Measure-Object).Count
           if ($okCount -lt 24) { $failures += "只有 $okCount 个模块渲染成功，期望至少 24 个" }
 
           # 关键模块必须真的读到数据，而不只是"渲染出来了"。
@@ -251,7 +252,7 @@ jobs:
           if ($log -notmatch 'ux-interactions: .*result=OK') {
             $failures += "导航、权限说明或可撤销反馈的交互回归检查失败"
           }
-          foreach ($check in @('ux-backup', 'ux-path', 'ux-diff', 'ux-close', 'ux-update')) {
+          foreach ($check in @('ux-backup', 'ux-path', 'ux-diff', 'ux-close', 'ux-update', 'ux-uninstall', 'ux-motion', 'ux-motion-shell')) {
             if ($log -notmatch "${check}: .*result=OK") { $failures += "$check 交互回归缺失或失败" }
           }
           if ($log -notmatch 'ux-errors: pages=14 buttons=unobstructed result=OK') {
@@ -314,19 +315,15 @@ jobs:
         with:
           generate_release_notes: true
           body: |
-            ### 1.12.0 单 EXE 与应用更新
+            ### ${{ env.RELEASE_VERSION }} 操作体验与清理保护
 
-            - **单 EXE**：Windows 11 x64 自包含发布，直接下载 EXE 运行，无需解压或另装 .NET 运行时。
-            - **检查更新**：默认后台最多 24 小时检查一次正式稳定版，可在设置中关闭；手动检查不受频率限制。发现新版只提示，更新说明来自本仓库 Release 正文。
-            - **下载与安装**：点击后才下载，支持进度、取消和重试；校验来源、SHA-256、字节数、程序版本及自包含格式。点击「重启并更新」后，助手就绪才关闭窗口，按需请求 UAC，保留原路径、文件名及原运行身份。
-            - **重启前提醒**：不保存未完成工作；发现 PATH 草稿时在更新面板提醒重启会丢弃。替换期间临时保护原文件，成功后清理，不保留长期旧版。
-            - **分发渠道**：仅从本仓库下载 WinKit；已移除向 winget/Scoop 发行的资料，应用内原有 winget/Scoop 管理功能完整保留。
-            - **按需提权与操作反馈**：浏览页面不再弹模态提权确认；受限操作在页内说明权限。支持快照的改动显示可撤销反馈，撤销/回滚失败保留记录供重试。
-            - **忙碌状态**：限制重复操作与导航；关闭窗口会等待当前操作结束，可点「取消关闭」。
-            - **卸载残留**：应用与右键菜单的等待、结果和失败在页内卡片呈现，按需清理注册表残留或定位目录/注册表。
-            - **备份还原**：先预览完整注册表/文件目标与覆盖、删除影响；确认时重新核对快照 SHA-256，内容变化则拒绝执行。
-            - **PATH 草稿**：用户/系统分别留稿，刷新及切换作用域保留未应用更改；写入前核对基线，外部变化时保留草稿并暂停应用。
-            - **文件工具**：对比结果绑定本次输入范围；重复文件回收前按扫描大小与完整 SHA-256 复核保留副本及目标，逐项报告失败。
+            - **查找工具**：在侧栏按名称或用途搜索，不用先猜模块在哪个分组。
+            - **状态变化**：按下、选中、提示与切页使用统一的短过渡；滚动、拖拽和列宽仍直接跟手。支持 Windows 的减少动态效果。
+            - **卸载残留**：匹配只提供线索，默认不勾选；安装目录的上级文件夹只供查看。整目录回收单独确认，不等同于卸载软件。
+            - **系统清理与驱动**：只读清理扫描不阻止切换页面；永久清空回收站单独确认。驱动部分安装失败时保留未完成项，并明确是否需要重启。
+            - **体检、维护与事件日志**：在页内显示当前进度、结果与下一步，不把 Windows 接受维护请求误报为完成。
+            - **环境变量和 WinKit 更新**：新增用户变量时一次输入名称和值；PATH 草稿可返回检查，未处理前不重启更新。
+            - **快速访问**：保存顺序前核对资源管理器现状；外部变更时不覆盖，部分失败会尝试恢复并报告结果。
 
             ### 运行要求与下载说明
 

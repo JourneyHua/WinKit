@@ -65,51 +65,57 @@
                 <RowDefinition Height="*" />
             </Grid.RowDefinitions>
 
-            <Grid Grid.Row="0" Margin="0,0,0,10">
-                <Grid.ColumnDefinitions>
-                    <ColumnDefinition Width="*" />
-                    <ColumnDefinition Width="Auto" />
-                </Grid.ColumnDefinitions>
-
-                <Grid Grid.Column="0">
+            <StackPanel Grid.Row="0" Margin="0,0,0,10">
+                <Grid Margin="0,0,0,8">
                     <TextBox Style="{StaticResource SearchBox}"
                              Text="{Binding SearchText, UpdateSourceTrigger=PropertyChanged}"
-                             ToolTip="按驱动包名 (oem*.inf)、原始 .inf、厂商、数字签名或类别搜索" />
-                    <TextBlock Text="搜索驱动包 / 厂商 / 数字签名…" Margin="12,0,0,0"
+                             AutomationProperties.Name="搜索驱动包"
+                             ToolTip="按驱动包名、原始 .inf、厂商、数字签名或类别搜索" />
+                    <TextBlock Text="搜索驱动包、厂商或签名…" Margin="12,0,0,0"
                                VerticalAlignment="Center" IsHitTestVisible="False"
                                FontSize="13" Foreground="{DynamicResource Brush.TextMuted}"
                                Visibility="{Binding SearchText, Converter={StaticResource EmptyToVis}}" />
                 </Grid>
-
-                <StackPanel Grid.Column="1" Orientation="Horizontal" Margin="10,0,0,0">
-                    <Button Content="{Binding InstallAllUpdatesText}" Style="{StaticResource BtnPrimary}" Margin="0,0,6,0"
-                            Visibility="{Binding HasWindowsUpdates, Converter={StaticResource BoolToVis}}"
-                            Command="{Binding InstallAllWindowsUpdatesCommand}" />
-                    <Button Content="检查官方更新" Style="{StaticResource BtnBase}" Margin="0,0,6,0"
-                            ToolTip="通过 Windows Update 检索微软官方 WHQL 驱动更新"
+                <WrapPanel>
+                    <Button Content="检查驱动更新" Style="{StaticResource BtnPrimary}" Margin="0,0,6,4"
+                            ToolTip="通过 Windows Update 查找可用的驱动更新"
                             Command="{Binding CheckWindowsUpdatesCommand}" />
-                    <Button Content="安装 .inf…" Style="{StaticResource BtnBase}" Margin="0,0,6,0"
-                            ToolTip="选择本地 .inf 驱动包调用 pnputil 安装或升级"
-                            Command="{Binding InstallLocalInfCommand}" />
-                    <Button Content="{Binding RestoreBackupText}" Style="{StaticResource BtnBase}" Margin="0,0,6,0"
+                    <Button Content="刷新驱动列表" Style="{StaticResource BtnBase}" Margin="0,0,6,4"
+                            Command="{Binding RefreshCommand}" />
+                    <Button Content="{Binding RestoreBackupText}" Style="{StaticResource BtnBase}" Margin="0,0,0,4"
                             Visibility="{Binding HasBackups, Converter={StaticResource BoolToVis}}"
                             Command="{Binding RestoreFromBackupCommand}" />
-                    <Button Content="设备管理器" Style="{StaticResource BtnBase}" Margin="0,0,6,0"
-                            ToolTip="打开系统设备管理器 (devmgmt.msc)"
-                            Command="{Binding OpenDeviceManagerCommand}" />
-                    <Button Content="扫描硬件" Style="{StaticResource BtnBase}" Margin="0,0,6,0"
-                            Command="{Binding ScanHardwareCommand}" />
-                    <Button Content="重新扫描" Style="{StaticResource BtnBase}"
-                            Command="{Binding RefreshCommand}" />
-                </StackPanel>
-            </Grid>
+                </WrapPanel>
+                <Expander Header="更多驱动操作" Margin="0,4,0,0" Foreground="{DynamicResource Brush.Text}">
+                    <WrapPanel Margin="0,6,0,0">
+                        <Button Content="设备管理器" Style="{StaticResource BtnSmall}" Margin="0,0,6,4"
+                                Command="{Binding OpenDeviceManagerCommand}" />
+                        <Button Content="安装本地驱动…" Style="{StaticResource BtnSmall}" Margin="0,0,6,4"
+                                Command="{Binding InstallLocalInfCommand}" />
+                        <Button Content="扫描硬件改动" Style="{StaticResource BtnSmall}" Margin="0,0,0,4"
+                                Command="{Binding ScanHardwareCommand}" />
+                    </WrapPanel>
+                </Expander>
+                <TextBlock Text="{Binding OperationText}" Style="{StaticResource Muted}" Margin="0,6,0,0"
+                           Visibility="{Binding HasOperationText, Converter={StaticResource BoolToVis}}"
+                           AutomationProperties.LiveSetting="Polite" />
+                <TextBlock Text="Windows Update 要求重启电脑。请保存工作并重启，然后重新检查驱动更新。"
+                           Style="{StaticResource HintText.Warn}" Margin="0,6,0,0"
+                           Visibility="{Binding WindowsUpdateRebootRequired, Converter={StaticResource BoolToVis}}"
+                           AutomationProperties.LiveSetting="Polite" />
+            </StackPanel>
 
             <Border Grid.Row="1" Style="{StaticResource Card}" Padding="14,10" Margin="0,0,0,10"
                     Background="{DynamicResource Brush.WarnSoft}" BorderBrush="{DynamicResource Brush.WarnSoftBorder}"
                     Visibility="{Binding HasWindowsUpdates, Converter={StaticResource BoolToVis}}">
                 <StackPanel>
-                    <TextBlock Text="检测到微软 Windows Update 官方驱动更新" Style="{StaticResource H2}"
-                               Foreground="{DynamicResource Brush.Warn}" Margin="0,0,0,6" />
+                    <DockPanel Margin="0,0,0,6">
+                        <Button DockPanel.Dock="Right" Content="{Binding InstallAllUpdatesText}" Style="{StaticResource BtnPrimary}"
+                                Margin="10,0,0,0" Command="{Binding InstallAllWindowsUpdatesCommand}" />
+                        <TextBlock Text="Windows Update 提供的驱动更新" Style="{StaticResource H2}"
+                                   VerticalAlignment="Center" TextWrapping="Wrap" />
+                    </DockPanel>
+                    <ScrollViewer MaxHeight="160" VerticalScrollBarVisibility="Auto">
                     <ItemsControl ItemsSource="{Binding WindowsUpdates}">
                         <ItemsControl.ItemTemplate>
                             <DataTemplate>
@@ -119,12 +125,14 @@
                                         <ColumnDefinition Width="Auto" />
                                     </Grid.ColumnDefinitions>
                                     <StackPanel Grid.Column="0" VerticalAlignment="Center">
-                                        <TextBlock Text="{Binding Title}" FontSize="13"
+                                        <TextBlock Text="{Binding Title}" FontSize="13" TextWrapping="Wrap"
                                                    Foreground="{DynamicResource Brush.Text}" />
                                         <TextBlock Text="{Binding DetailText}" FontSize="11"
                                                    Foreground="{DynamicResource Brush.TextMuted}" />
+                                        <TextBlock Text="{Binding InstallIssue}" Style="{StaticResource HintText.Warn}"
+                                                   Visibility="{Binding HasInstallIssue, Converter={StaticResource BoolToVis}}" />
                                     </StackPanel>
-                                    <Button Grid.Column="1" Content="下载并安装" Style="{StaticResource BtnSmall}"
+                                    <Button Grid.Column="1" Content="{Binding InstallActionText}" Style="{StaticResource BtnSmall}"
                                             VerticalAlignment="Center" Margin="10,0,0,0"
                                             Command="{Binding DataContext.InstallWindowsUpdateCommand, RelativeSource={RelativeSource AncestorType=ItemsControl}}"
                                             CommandParameter="{Binding}" />
@@ -132,6 +140,7 @@
                             </DataTemplate>
                         </ItemsControl.ItemTemplate>
                     </ItemsControl>
+                    </ScrollViewer>
                 </StackPanel>
             </Border>
 
@@ -235,7 +244,7 @@
                                                     ToolTip="导出完整驱动包至本地备份目录"
                                                     Command="{Binding DataContext.ExportDriverCommand, RelativeSource={RelativeSource AncestorType=DataGrid}}"
                                                     CommandParameter="{Binding}" />
-                                            <Button Content="卸载" Style="{StaticResource BtnSmall}"
+                                            <Button Content="卸载…" Style="{StaticResource BtnSmall}"
                                                     Foreground="{DynamicResource Brush.Danger}"
                                                     Command="{Binding DataContext.UninstallDriverCommand, RelativeSource={RelativeSource AncestorType=DataGrid}}"
                                                     CommandParameter="{Binding}" />

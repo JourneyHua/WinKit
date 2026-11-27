@@ -22,6 +22,14 @@ public partial class MainWindow : Window
         DataContext = _vm;
 
         Loaded += OnLoaded;
+        SizeChanged += (_, e) =>
+        {
+            if (!e.WidthChanged) return;
+            // Ease the layout constraint, not the resize: the rail tracks the current width
+            // directly rather than jumping between two widths at a breakpoint.
+            var width = Math.Clamp(190 + (e.NewSize.Width - MinWidth) * 0.25, 190, 228);
+            if (NavigationColumn.Width.Value != width) NavigationColumn.Width = new GridLength(width);
+        };
         Closing += OnClosing;
         Closed += (_, _) => _vm.OnWindowClosed();
         SourceInitialized += OnSourceInitialized;
@@ -49,12 +57,6 @@ public partial class MainWindow : Window
             _vm.Updater.ShowRestartNotice(notice);
         }
         SyncSettingsToggles();
-        _vm.PropertyChanged += (_, args) =>
-        {
-            if (args.PropertyName == nameof(MainViewModel.SelectedNav)) SyncNavSelection();
-        };
-
-        SyncNavSelection();
     }
 
     private void ApplyWindowBounds()
@@ -101,58 +103,41 @@ public partial class MainWindow : Window
             return;
         }
 
+        if (_vm.HasPendingPathDrafts && MessageBox.Show(this,
+                "关闭 WinKit 会丢弃尚未应用的 PATH 更改。要丢弃更改并关闭吗？\n\n选择「否」可返回检查更改。",
+                "关闭 WinKit", MessageBoxButton.YesNo, MessageBoxImage.Warning, MessageBoxResult.No) != MessageBoxResult.Yes)
+        {
+            e.Cancel = true;
+            _vm.ReviewPendingPathDrafts();
+            return;
+        }
+
         var maximized = WindowState == WindowState.Maximized;
         var bounds = maximized ? RestoreBounds : new Rect(Left, Top, Width, Height);
 
         _vm.SaveWindowState(bounds.Width, bounds.Height, bounds.Left, bounds.Top, maximized);
     }
 
-    private void CheckUpdates_Click(object sender, RoutedEventArgs e) => SettingsPopup.IsOpen = false;
-
     // ---------- 导航选中态 ----------
 
     private void NavRow_Click(object sender, RoutedEventArgs e)
     {
-        if (sender is FrameworkElement { DataContext: NavItem item })
-        {
-            _vm.SelectedNav = item;
-            SyncNavSelection();
-        }
+        if (sender is FrameworkElement { DataContext: NavItem item }) _vm.SelectedNav = item;
     }
 
-    /// <summary>NavItem 不是 ObservableObject，选中态由窗口手动同步（避免给 21 个模型加 UI 属性）。</summary>
-    private void SyncNavSelection()
+    private void ClearNavSearch_Click(object sender, RoutedEventArgs e) => NavSearchBox.Focus();
+
+    private void NavSearchBox_KeyDown(object sender, KeyEventArgs e)
     {
-        foreach (var (button, item) in FindNavContainers(this))
+        if (e.Key == Key.Escape && _vm.HasNavSearchText)
         {
-            var selected = ReferenceEquals(item, _vm.SelectedNav);
-            if (selected) button.SetResourceReference(BackgroundProperty, "Brush.AccentSoft");
-            else button.ClearValue(BackgroundProperty);
-            System.Windows.Automation.AutomationProperties.SetItemStatus(button, selected ? "当前页面" : "");
+            _vm.ClearNavSearchCommand.Execute(null);
+            e.Handled = true;
         }
-    }
-
-    private static List<(Button Button, NavItem Item)> FindNavContainers(DependencyObject root)
-    {
-        var result = new List<(Button, NavItem)>();
-        Walk(root, result);
-        return result;
-
-        static void Walk(DependencyObject node, List<(Button, NavItem)> acc)
+        else if (e.Key == Key.Enter && _vm.IsNavigationEnabled && _vm.NavSearchResults.Count == 1)
         {
-            var count = System.Windows.Media.VisualTreeHelper.GetChildrenCount(node);
-            for (var i = 0; i < count; i++)
-            {
-                var child = System.Windows.Media.VisualTreeHelper.GetChild(node, i);
-
-                if (child is Button { DataContext: NavItem item } button
-                    && button.Name == "NavRowButton")
-                {
-                    acc.Add((button, item));
-                }
-
-                Walk(child, acc);
-            }
+            _vm.SelectedNav = _vm.NavSearchResults[0];
+            e.Handled = true;
         }
     }
 

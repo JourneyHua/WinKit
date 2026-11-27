@@ -14,16 +14,22 @@ public sealed class NavPaneViewModel : ObservableObject, IModule
     private readonly StubbornNodeService _stubbornService;
     private readonly QuickAccessOrderStore _orderStore = new();
     private readonly Action<string> _status;
+    private readonly Action<bool>? _setBusy;
+    private string[]? _fixedSnapshot;
+    private IReadOnlyList<string> _desiredOrder;
+    private string _quickAccessStatus = "";
     private string _loadError = "";
     private bool _isLoading;
     private string _subView = "navpane"; // navpane | taskbar
 
-    public NavPaneViewModel(ChangeJournal journal, Action<string> status)
+    public NavPaneViewModel(ChangeJournal journal, Action<string> status, Action<bool>? setBusy = null)
     {
         _service = new NavPaneService(journal);
         _pinnedService = new NavPinnedService(journal);
         _stubbornService = new StubbornNodeService(journal);
         _status = status;
+        _setBusy = setBusy;
+        _desiredOrder = _orderStore.Load();
 
         Pinned = new ObservableCollection<QuickAccessItem>();
         PinnedFolders = new ObservableCollection<PinnedFolderItem>();
@@ -31,17 +37,18 @@ public sealed class NavPaneViewModel : ObservableObject, IModule
         Toggles = new ObservableCollection<NavToggleItem>();
         Taskbar = new TaskbarViewModel(journal, status);
 
-        ShowNavPaneCommand = new RelayCommand(() => SubView = "navpane");
-        ShowTaskbarCommand = new RelayCommand(() => SubView = "taskbar");
-        RefreshCommand = new RelayCommand(Refresh);
-        PinCommand = new RelayCommand(PinFolder);
-        UnpinCommand = new RelayCommand(p => Unpin(p as QuickAccessItem));
-        OpenCommand = new RelayCommand(p => Open(p as QuickAccessItem));
-        MoveUpCommand = new RelayCommand(p => Move(p as QuickAccessItem, -1));
-        MoveDownCommand = new RelayCommand(p => Move(p as QuickAccessItem, 1));
-        ApplyOrderCommand = new RelayCommand(() => _ = ApplyOrderAsync());
-        RestoreSavedOrderCommand = new RelayCommand(ApplySavedOrder);
-        RestartExplorerCommand = new RelayCommand(RestartExplorer);
+        ShowNavPaneCommand = new RelayCommand(() => SubView = "navpane", () => !IsLoading);
+        ShowTaskbarCommand = new RelayCommand(() => SubView = "taskbar", () => !IsLoading);
+        RefreshCommand = new RelayCommand(() => { QuickAccessStatus = ""; Refresh(); }, () => !IsLoading);
+        PinCommand = new RelayCommand(() => _ = PinFolderAsync(), () => CanManagePins);
+        UnpinCommand = new RelayCommand(p => _ = UnpinAsync((QuickAccessItem)p!),
+            p => CanManagePins && p is QuickAccessItem { IsPinnedFolder: true } item && Pinned.Contains(item));
+        OpenCommand = new RelayCommand(p => Open((QuickAccessItem)p!),
+            p => p is QuickAccessItem item && !string.IsNullOrWhiteSpace(item.Path));
+        MoveUpCommand = new RelayCommand(p => Move((QuickAccessItem)p!, -1), p => CanMove(p as QuickAccessItem, -1));
+        MoveDownCommand = new RelayCommand(p => Move((QuickAccessItem)p!, 1), p => CanMove(p as QuickAccessItem, 1));
+        ApplyOrderCommand = new RelayCommand(() => _ = ApplyOrderAsync(), () => CanManagePins && HasOrderDraft);
+        DiscardOrderCommand = new RelayCommand(DiscardOrder, () => CanManagePins && HasOrderDraft);
         PurgeStubbornCommand = new RelayCommand(p => PurgeStubborn(p as StubbornGroup));
         StopRebuilderCommand = new RelayCommand(p => StopRebuilder(p as StubbornGroup));
         CopyPinnedPathCommand = new RelayCommand(p => CopyPinnedPath(p as PinnedFolderItem));
@@ -90,9 +97,7 @@ public sealed class NavPaneViewModel : ObservableObject, IModule
     public RelayCommand MoveUpCommand { get; }
     public RelayCommand MoveDownCommand { get; }
     public RelayCommand ApplyOrderCommand { get; }
-    /// <summary>把列表按本地存档（上次排好的顺序）重排一次。</summary>
-    public RelayCommand RestoreSavedOrderCommand { get; }
-    public RelayCommand RestartExplorerCommand { get; }
+    public RelayCommand DiscardOrderCommand { get; }
     public RelayCommand PurgeStubbornCommand { get; }
     public RelayCommand StopRebuilderCommand { get; }
     public RelayCommand CopyPinnedPathCommand { get; }
@@ -134,10 +139,60 @@ public sealed class NavPaneViewModel : ObservableObject, IModule
 
     public bool HasError => !string.IsNullOrWhiteSpace(_loadError);
 
+    public string QuickAccessStatus
+    {
+        get => _quickAccessStatus;
+        private set
+        {
+            if (Set(ref _quickAccessStatus, value)) OnPropertyChanged(nameof(HasQuickAccessStatus));
+        }
+    }
+
+    public bool HasQuickAccessStatus => QuickAccessStatus.Length > 0;
+
     public bool IsLoading
     {
         get => _isLoading;
-        private set => Set(ref _isLoading, value);
+        private set
+        {
+            if (Set(ref _isLoading, value))
+            {
+                OnPropertyChanged(nameof(CanManagePins));
+                System.Windows.Input.CommandManager.InvalidateRequerySuggested();
+            }
+        }
+    }
+
+    public bool CanManagePins => !IsLoading && _fixedSnapshot is not null;
+    public bool HasOrderDraft => _fixedSnapshot is not null
+        && !Pinned.Where(item => item.IsPinnedFolder).Select(item => item.Path)
+            .SequenceEqual(_fixedSnapshot, StringComparer.OrdinalIgnoreCase);
+
+    private void UpdatePinState()
+    {
+        OnPropertyChanged(nameof(CanManagePins));
+        OnPropertyChanged(nameof(HasOrderDraft));
+        System.Windows.Input.CommandManager.InvalidateRequerySuggested();
+    }
+
+    private void SetQuickAccessItems(List<QuickAccessItem> items, string? error)
+    {
+        _fixedSnapshot = null;
+        if (error is null)
+        {
+            try { _fixedSnapshot = NavPaneService.GetFixedFolders(items); }
+            catch (InvalidOperationException ex) { error = ex.Message; }
+        }
+        LoadError = error ?? "";
+
+        var rank = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+        if (_fixedSnapshot is not null)
+            for (var i = 0; i < _desiredOrder.Count; i++) rank.TryAdd(_desiredOrder[i], i);
+        Pinned.Clear();
+        foreach (var item in items.OrderBy(item => !item.IsPinnedFolder)
+                     .ThenBy(item => item.IsPinnedFolder && rank.TryGetValue(item.Path, out var index) ? index : int.MaxValue))
+            Pinned.Add(item);
+        UpdatePinState();
     }
 
     public void Refresh()
@@ -148,13 +203,7 @@ public sealed class NavPaneViewModel : ObservableObject, IModule
         try
         {
             var (items, error) = _service.LoadQuickAccess();
-            LoadError = error ?? "";
-
-            Pinned.Clear();
-            foreach (var item in items) Pinned.Add(item);
-
-            // 资源管理器给的顺序是它自己的，用户在本页排过的顺序存在本地，加载后盖回去
-            ApplySavedOrder(silent: true);
+            SetQuickAccessItems(items, error);
 
             PinnedFolders.Clear();
             foreach (var folder in _pinnedService.Load())
@@ -226,192 +275,129 @@ public sealed class NavPaneViewModel : ObservableObject, IModule
         }
     }
 
-    private void PinFolder()
+    private async Task PinFolderAsync()
     {
         var dialog = new Microsoft.Win32.OpenFolderDialog
         {
             Title = "选择要固定到快速访问的文件夹",
             Multiselect = false
         };
-
-        if (dialog.ShowDialog() != true) return;
-
-        try
+        if (dialog.ShowDialog(Application.Current.MainWindow) != true) return;
+        var path = dialog.FolderName;
+        await RunPinChangeAsync("正在固定文件夹…", "固定文件夹未完成", () =>
         {
-            _service.Pin(dialog.FolderName);
-            _status($"已固定：{dialog.FolderName}");
-            Refresh();
-        }
-        catch (Exception ex)
-        {
-            MessageBox.Show($"固定失败：{ex.Message}", "WinKit", MessageBoxButton.OK, MessageBoxImage.Warning);
-        }
+            _service.Pin(path);
+            return new($"已固定：{path}");
+        });
     }
 
-    private void Unpin(QuickAccessItem? item)
-    {
-        if (item is null || string.IsNullOrWhiteSpace(item.Path)) return;
-        if (!item.IsFolder)
-        {
-            MessageBox.Show("“最近使用”的条目无法在此取消固定，请在资源管理器中右键该文件选择“从快速访问中取消固定”。",
-                "WinKit", MessageBoxButton.OK, MessageBoxImage.Information);
-            return;
-        }
-
-        try
+    private Task UnpinAsync(QuickAccessItem item)
+        => RunPinChangeAsync("正在取消固定…", "取消固定未完成", () =>
         {
             _service.Unpin(item.Path);
-            _status($"已取消固定：{item.Name}");
-            Refresh();
-        }
-        catch (Exception ex)
-        {
-            MessageBox.Show($"取消固定失败：{ex.Message}", "WinKit", MessageBoxButton.OK, MessageBoxImage.Warning);
-        }
+            return new($"已取消固定：{item.Name}");
+        });
+
+    private void Open(QuickAccessItem item)
+    {
+        if (!Native.OpenPath(item.Path)) ReportQuickAccess($"无法打开：{item.Path}");
     }
 
-    private void Open(QuickAccessItem? item)
+    private bool CanMove(QuickAccessItem? item, int delta)
     {
-        if (item is null || string.IsNullOrWhiteSpace(item.Path)) return;
-        try
-        {
-            Native.OpenPath(item.Path);
-        }
-        catch (Exception ex)
-        {
-            MessageBox.Show($"打开失败：{ex.Message}", "WinKit", MessageBoxButton.OK, MessageBoxImage.Warning);
-        }
-    }
-
-    private void Move(QuickAccessItem? item, int delta)
-    {
-        if (item is null) return;
+        if (!CanManagePins || item is not { IsPinnedFolder: true }) return false;
         var index = Pinned.IndexOf(item);
         var target = index + delta;
-        if (index < 0 || target < 0 || target >= Pinned.Count) return;
-
-        Pinned.Move(index, target);
-        for (var i = 0; i < Pinned.Count; i++) Pinned[i].Order = i;
-
-        // 一挪就存：不然关掉程序这次排序就白排了
-        SaveOrder("上移/下移后自动保存");
+        return index >= 0 && target >= 0 && target < Pinned.Count && Pinned[target].IsPinnedFolder;
     }
 
-    /// <summary>
-    /// 把当前显示顺序写进本地存档。只存固定文件夹——「最近使用」由资源管理器实时生成，
-    /// 没有稳定顺序可言，存下来下次对不上反而误导。
-    /// </summary>
-    private void SaveOrder(string reason)
+    private void Move(QuickAccessItem item, int delta)
     {
-        var paths = Pinned
-            .Where(i => i.IsFolder && !string.IsNullOrWhiteSpace(i.Path))
-            .Select(i => i.Path)
-            .ToList();
-
-        if (paths.Count == 0) return;
-
-        try
-        {
-            _orderStore.Save(paths);
-            _status($"顺序已保存（{paths.Count} 项）：{reason}");
-        }
-        catch (Exception ex)
-        {
-            // 存档写不进去要明说：否则用户以为排好了，下次打开又变回去
-            _status($"顺序保存失败：{ex.Message}");
-        }
+        if (!CanMove(item, delta)) return;
+        var index = Pinned.IndexOf(item);
+        Pinned.Move(index, index + delta);
+        UpdatePinState();
+        SaveOrderDraft(HasOrderDraft ? DesiredOrder() : [], HasOrderDraft
+            ? "新顺序已保存为草稿，尚未应用到资源管理器。"
+            : "已恢复资源管理器中的顺序。");
     }
 
-    private void ApplySavedOrder() => ApplySavedOrder(silent: false);
+    private string[] DesiredOrder() => Pinned.Where(item => item.IsPinnedFolder).Select(item => item.Path).ToArray();
 
-    /// <summary>
-    /// 按本地存档重排显示顺序。存档里没有的项（新固定的）排在后面，彼此保持原顺序。
-    /// </summary>
-    private void ApplySavedOrder(bool silent)
+    private void DiscardOrder()
     {
-        var saved = _orderStore.Load();
-
-        if (saved.Count > 0)
-        {
-            var rank = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
-            for (var i = 0; i < saved.Count; i++) rank.TryAdd(saved[i], i);
-
-            var ordered = Pinned
-                .Select((item, index) => (item, index))
-                .OrderBy(x => rank.TryGetValue(x.item.Path, out var r) ? r : int.MaxValue)
-                .ThenBy(x => x.index)
-                .Select(x => x.item)
-                .ToList();
-
-            Pinned.Clear();
-            foreach (var item in ordered) Pinned.Add(item);
-        }
-
-        for (var i = 0; i < Pinned.Count; i++) Pinned[i].Order = i;
-
-        if (silent) return;
-
-        _status(saved.Count == 0
-            ? "还没有保存过顺序：用上移/下移排一次就会自动存下来"
-            : $"已按存档重排（存档 {saved.Count} 项，当前列表 {Pinned.Count} 项）");
+        SaveOrderDraft([], "已放弃草稿，未更改资源管理器中的顺序。");
+        SetQuickAccessItems(Pinned.OrderBy(item => item.Order).ToList(), null);
     }
 
-    private async Task ApplyOrderAsync()
+    private void SaveOrderDraft(IReadOnlyList<string> paths, string message)
     {
-        if (Native.RequireAdmin("重排快速访问") is { } adminNeeded)
+        _desiredOrder = paths;
+        try { _orderStore.Save(paths); }
+        catch (Exception ex) { message = $"本次更改已保留，但无法保存供下次使用：{ex.Message}"; }
+        ReportQuickAccess(message);
+    }
+
+    private Task ApplyOrderAsync()
+    {
+        if (_fixedSnapshot is not { } expected || !ApplyOrderCommand.CanExecute(null)) return Task.CompletedTask;
+        var desired = DesiredOrder();
+        var confirmation = MessageBox.Show(Application.Current.MainWindow,
+            "资源管理器会暂时取消固定需要移动的文件夹，再按新顺序固定。文件和文件夹内容不会更改。",
+            "应用快速访问顺序", MessageBoxButton.OKCancel, MessageBoxImage.Warning, MessageBoxResult.Cancel);
+        if (confirmation != MessageBoxResult.OK) return Task.CompletedTask;
+
+        return RunPinChangeAsync("正在调整快速访问顺序…", "未能应用新顺序", () =>
         {
-            LoadError = adminNeeded;
-            return;
-        }
+            var result = _service.RebuildOrder(expected, desired);
+            var message = result.Outcome switch
+            {
+                QuickAccessOrderOutcome.Applied => "已在资源管理器应用新顺序。",
+                QuickAccessOrderOutcome.Changed => "资源管理器的固定项已变化，WinKit 未修改。请核对列表和草稿再应用。",
+                QuickAccessOrderOutcome.NotApplied => $"未修改固定项。{result.Reason}",
+                QuickAccessOrderOutcome.Restored => $"未能应用新顺序，已确认原顺序。\n{result.Reason}",
+                _ when result.Missing is { Count: > 0 } missing =>
+                    $"未能恢复原顺序，以下文件夹目前未固定：\n{string.Join("\n", missing)}\n{result.Reason}",
+                _ when result.Missing is not null => $"未能恢复原顺序，原有文件夹仍已固定。\n{result.Reason}",
+                _ => $"未能确认调整结果，请刷新列表核对。\n{result.Reason}"
+            };
+            return new(message, result.Outcome == QuickAccessOrderOutcome.Applied);
+        });
+    }
 
-        var paths = Pinned.Where(i => i.IsFolder && Directory.Exists(i.Path))
-            .Select(i => i.Path)
-            .ToList();
+    private sealed record PinChangeResult(string Message, bool AppliedOrder = false);
 
-        if (paths.Count == 0) return;
-        if (IsLoading) return;
-
-        var result = MessageBox.Show(
-            "重新排序的做法是：先取消全部固定，再按当前列表顺序重新固定。\n\n" +
-            "过程中快速访问会短暂清空（几秒钟），结束后恢复。\n\n确定应用新顺序吗？",
-            "应用新的固定顺序",
-            MessageBoxButton.OKCancel,
-            MessageBoxImage.Warning, MessageBoxResult.Cancel);
-
-        if (result != MessageBoxResult.OK) return;
-
-        // 先把要应用的顺序落盘：万一重建中途失败，至少知道用户想要的是哪个顺序
-        SaveOrder("应用到资源管理器前存档");
-
+    private async Task RunPinChangeAsync(string progress, string failure, Func<PinChangeResult> change)
+    {
+        if (!CanManagePins) return;
         IsLoading = true;
+        _setBusy?.Invoke(true);
+        ReportQuickAccess(progress);
         try
         {
-            // 逐项 ShellExecuteEx + 等待，必须在后台跑，否则窗口会“未响应”
-            var failures = await Task.Run(() => _service.RebuildOrder(paths, msg => _status(msg)));
-
-            if (failures.Count == 0)
+            var (result, items, error) = await Task.Run(() =>
             {
-                _status("固定顺序已按新列表重建");
-            }
-            else
-            {
-                _status($"重建顺序有 {failures.Count} 项未完成");
-                MessageBox.Show(
-                    "以下项目没有恢复固定（它们可能已从快速访问里消失，请手动重新固定）：\n\n" +
-                    string.Join("\n", failures),
-                    "部分项目重建失败", MessageBoxButton.OK, MessageBoxImage.Warning);
-            }
-        }
-        catch (Exception ex)
-        {
-            MessageBox.Show($"调整顺序失败：{ex.Message}", "WinKit", MessageBoxButton.OK, MessageBoxImage.Warning);
+                PinChangeResult outcome;
+                try { outcome = change(); }
+                catch (Exception ex) { outcome = new($"{failure}：{ex.Message}"); }
+                var (loadedItems, loadError) = _service.LoadQuickAccess();
+                return (outcome, loadedItems, loadError);
+            });
+            if (result.AppliedOrder) SaveOrderDraft([], result.Message);
+            else ReportQuickAccess(result.Message);
+            SetQuickAccessItems(items, error);
         }
         finally
         {
             IsLoading = false;
+            _setBusy?.Invoke(false);
         }
+    }
 
-        Refresh();
+    private void ReportQuickAccess(string message)
+    {
+        QuickAccessStatus = message;
+        _status(message.Replace('\n', ' '));
     }
 
     private void PurgeStubborn(StubbornGroup? group)
@@ -470,13 +456,4 @@ public sealed class NavPaneViewModel : ObservableObject, IModule
         Refresh();
     }
 
-    private void RestartExplorer()
-    {
-        var result = MessageBox.Show("将重启资源管理器使改动立即生效，确定继续吗？",
-            "重启资源管理器", MessageBoxButton.OKCancel, MessageBoxImage.Warning, MessageBoxResult.Cancel);
-        if (result != MessageBoxResult.OK) return;
-
-        Native.RestartExplorer();
-        _status("已重启资源管理器");
-    }
 }

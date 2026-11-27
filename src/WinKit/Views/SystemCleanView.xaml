@@ -24,10 +24,10 @@
         </Grid.RowDefinitions>
 
         <StackPanel Grid.Row="0" Orientation="Horizontal" Margin="0,0,0,10">
-            <ToggleButton Content="垃圾与缓存清理" Style="{StaticResource Chip}" Margin="0,0,6,0"
+            <ToggleButton Content="临时文件与缓存" Style="{StaticResource Chip}" Margin="0,0,6,0"
                           IsChecked="{Binding ShowJunkView, Mode=OneWay}"
                           Command="{Binding ShowJunkViewCommand}" />
-            <ToggleButton Content="大文件扫描 (>100 MB)" Style="{StaticResource Chip}"
+            <ToggleButton Content="大文件" Style="{StaticResource Chip}"
                           IsChecked="{Binding ShowLargeView, Mode=OneWay}"
                           Command="{Binding ShowLargeViewCommand}" />
         </StackPanel>
@@ -40,37 +40,51 @@
             </Grid.RowDefinitions>
 
             <Border Grid.Row="0" Style="{StaticResource Card}" Margin="0,0,0,10" Padding="16,12">
-                <Grid>
-                    <Grid.ColumnDefinitions>
-                        <ColumnDefinition Width="*" />
-                        <ColumnDefinition Width="Auto" />
-                    </Grid.ColumnDefinitions>
-                    <StackPanel Grid.Column="0" VerticalAlignment="Center">
-                        <TextBlock Text="{Binding JunkSummaryText}" Style="{StaticResource H2}" />
-                        <TextBlock Style="{StaticResource Muted}" Margin="0,4,0,0"
-                                   Text="默认仅勾选 100% 安全的系统临时文件、更新下载缓存与崩溃转储；回收站、历史快捷方式与开发包缓存默认不勾选，按需选择。" />
-                    </StackPanel>
-                    <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Center" Margin="12,0,0,0">
-                        <Button Content="{Binding CleanButtonText}" Style="{StaticResource BtnPrimary}" Margin="0,0,8,0"
-                                Command="{Binding CleanSelectedCommand}" />
-                        <Button Content="DISM 组件清理" Style="{StaticResource BtnBase}" Margin="0,0,8,0"
-                                ToolTip="调用系统 DISM /StartComponentCleanup 清理 WinSxS 旧组件备份"
-                                Command="{Binding RunDismCleanCommand}" />
-                        <Button Content="系统存储感知" Style="{StaticResource BtnBase}" Margin="0,0,8,0"
-                                Command="{Binding OpenStorageSenseCommand}" />
-                        <Button Content="重新扫描" Style="{StaticResource BtnBase}"
-                                Command="{Binding ScanJunkCommand}" />
-                    </StackPanel>
-                </Grid>
+                <StackPanel>
+                    <DockPanel>
+                        <StackPanel DockPanel.Dock="Right" Orientation="Horizontal" VerticalAlignment="Center" Margin="12,0,0,0">
+                            <Button Content="清理已选文件…" Style="{StaticResource BtnPrimary}" Margin="0,0,8,0"
+                                    Visibility="{Binding HasSelectedFiles, Converter={StaticResource BoolToVis}}"
+                                    Command="{Binding CleanSelectedCommand}" />
+                            <Button Content="重新扫描" Style="{StaticResource BtnBase}" Command="{Binding ScanJunkCommand}" />
+                        </StackPanel>
+                        <StackPanel VerticalAlignment="Center">
+                            <TextBlock Text="{Binding JunkSummaryText}" Style="{StaticResource H2}" TextWrapping="Wrap"
+                                       AutomationProperties.LiveSetting="Polite" />
+                            <TextBlock Style="{StaticResource Muted}" Margin="0,4,0,0" TextWrapping="Wrap"
+                                       Text="最近 2 小时内修改的文件会保留。崩溃转储和诊断日志默认不清理。" />
+                        </StackPanel>
+                    </DockPanel>
+                    <TextBlock Text="{Binding JunkActionText}" Style="{StaticResource Muted}" TextWrapping="Wrap" Margin="0,8,0,0"
+                               Visibility="{Binding HasJunkAction, Converter={StaticResource BoolToVis}}"
+                               AutomationProperties.LiveSetting="Polite" />
+                    <Expander Header="更多清理选项" Margin="0,10,0,0" Foreground="{DynamicResource Brush.Text}">
+                        <StackPanel Margin="0,8,0,0">
+                            <WrapPanel>
+                                <Button Content="存储设置" Style="{StaticResource BtnSmall}" Margin="0,0,8,0"
+                                        Command="{Binding OpenStorageSenseCommand}" />
+                                <Button Content="清理旧版 Windows 组件…" Style="{StaticResource BtnSmall}"
+                                        Command="{Binding RunDismCleanCommand}" />
+                            </WrapPanel>
+                            <WrapPanel Margin="0,8,0,0" Visibility="{Binding HasRecycleBinItems, Converter={StaticResource BoolToVis}}">
+                                <TextBlock Text="{Binding RecycleBinSummary}" Style="{StaticResource Muted}" Margin="0,0,8,0"
+                                           VerticalAlignment="Center" />
+                                <Button Content="永久清空回收站…" Style="{StaticResource BtnDanger}" Command="{Binding EmptyRecycleBinCommand}" />
+                            </WrapPanel>
+                        </StackPanel>
+                    </Expander>
+                </StackPanel>
             </Border>
 
             <Border Grid.Row="1" Style="{StaticResource Card}" Padding="0">
-                <DataGrid ItemsSource="{Binding Targets}" Style="{StaticResource Grid}">
+                <DataGrid ItemsSource="{Binding Targets}" Style="{StaticResource Grid}" IsEnabled="{Binding CanEditInputs}">
                     <DataGrid.Columns>
                         <DataGridTemplateColumn Header="选" Width="48" SortMemberPath="IsSelected">
                             <DataGridTemplateColumn.CellTemplate>
                                 <DataTemplate>
                                     <CheckBox IsChecked="{Binding IsSelected, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
+                                              IsEnabled="{Binding CanSelect}" AutomationProperties.Name="{Binding Title}"
+                                              ToolTip="{Binding SelectionHint}" ToolTipService.ShowOnDisabled="True"
                                               HorizontalAlignment="Center" VerticalAlignment="Center" Cursor="Hand" />
                                 </DataTemplate>
                             </DataGridTemplateColumn.CellTemplate>
@@ -144,6 +158,7 @@
                 <ComboBox Grid.Column="0" ItemsSource="{Binding Scopes}"
                           SelectedItem="{Binding SelectedScope, Mode=TwoWay}"
                           DisplayMemberPath="Title" Height="34" VerticalContentAlignment="Center"
+                          IsEnabled="{Binding CanEditInputs}" AutomationProperties.Name="扫描范围"
                           Margin="0,0,10,0" />
 
                 <Grid Grid.Column="1" Margin="0,0,10,0">
@@ -155,7 +170,7 @@
                                Visibility="{Binding LargeSearchText, Converter={StaticResource EmptyToVis}}" />
                 </Grid>
 
-                <Button Grid.Column="2" Content="开始扫描大文件" Style="{StaticResource BtnPrimary}"
+                <Button Grid.Column="2" Content="扫描大文件" Style="{StaticResource BtnPrimary}"
                         Command="{Binding ScanLargeFilesCommand}" />
             </Grid>
 
@@ -167,7 +182,7 @@
                     </Grid.RowDefinitions>
 
                     <TextBlock Grid.Row="0" Text="{Binding LargeSummaryText}" Style="{StaticResource Muted}"
-                               Margin="14,10,14,6" />
+                               Margin="14,10,14,6" AutomationProperties.LiveSetting="Polite" />
 
                     <DataGrid Grid.Row="1" ItemsSource="{Binding LargeFiles}" Style="{StaticResource Grid}">
                         <DataGrid.Columns>
@@ -219,7 +234,7 @@
                                             <Button Content="复制路径" Style="{StaticResource BtnSmall}" Margin="0,0,6,0"
                                                     Command="{Binding DataContext.CopyLargeFilePathCommand, RelativeSource={RelativeSource AncestorType=DataGrid}}"
                                                     CommandParameter="{Binding}" />
-                                            <Button Content="移入回收站" Style="{StaticResource BtnSmall}"
+                                            <Button Content="移入回收站…" Style="{StaticResource BtnSmall}"
                                                     Foreground="{DynamicResource Brush.Danger}"
                                                     Command="{Binding DataContext.RecycleLargeFileCommand, RelativeSource={RelativeSource AncestorType=DataGrid}}"
                                                     CommandParameter="{Binding}" />

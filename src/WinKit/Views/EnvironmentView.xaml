@@ -35,7 +35,8 @@
                        VerticalAlignment="Center" Margin="14,0,0,0" />
 
             <StackPanel Grid.Column="2" Orientation="Horizontal" VerticalAlignment="Center">
-                <Button Content="新增变量" Style="{StaticResource BtnSmall}" Margin="0,0,8,0"
+                <Button Content="新增变量…" Style="{StaticResource BtnSmall}" Margin="0,0,8,0"
+                        ToolTip="新增当前用户的环境变量" AutomationProperties.Name="新增当前用户变量"
                         Command="{Binding AddCommand}" />
                 <Button Content="刷新" Style="{StaticResource BtnPrimary}"
                         Command="{Binding RefreshCommand}" />
@@ -79,15 +80,36 @@
                             <DataGridTemplateColumn.CellTemplate>
                                 <DataTemplate>
                                     <StackPanel Orientation="Horizontal">
-                                        <Button Content="编辑" Style="{StaticResource BtnSmall}" Margin="0,0,6,0"
+                                        <Button Margin="0,0,6,0"
                                                 Command="{Binding DataContext.EditCommand, RelativeSource={RelativeSource AncestorType=DataGrid}}"
-                                                CommandParameter="{Binding}" />
+                                                CommandParameter="{Binding}">
+                                            <Button.Style>
+                                                <Style TargetType="Button" BasedOn="{StaticResource BtnSmall}">
+                                                    <Setter Property="Content" Value="编辑…" />
+                                                    <Style.Triggers>
+                                                        <DataTrigger Binding="{Binding IsPath}" Value="True">
+                                                            <Setter Property="Content" Value="查看 PATH" />
+                                                        </DataTrigger>
+                                                    </Style.Triggers>
+                                                </Style>
+                                            </Button.Style>
+                                        </Button>
                                         <Button Content="复制" Style="{StaticResource BtnSmall}" Margin="0,0,6,0"
                                                 Command="{Binding DataContext.CopyCommand, RelativeSource={RelativeSource AncestorType=DataGrid}}"
                                                 CommandParameter="{Binding}" />
-                                        <Button Content="删除" Style="{StaticResource BtnSmall}"
+                                        <Button Content="删除…"
                                                 Command="{Binding DataContext.DeleteCommand, RelativeSource={RelativeSource AncestorType=DataGrid}}"
-                                                CommandParameter="{Binding}" />
+                                                CommandParameter="{Binding}">
+                                            <Button.Style>
+                                                <Style TargetType="Button" BasedOn="{StaticResource BtnSmall}">
+                                                    <Style.Triggers>
+                                                        <DataTrigger Binding="{Binding IsPath}" Value="True">
+                                                            <Setter Property="Visibility" Value="Collapsed" />
+                                                        </DataTrigger>
+                                                    </Style.Triggers>
+                                                </Style>
+                                            </Button.Style>
+                                        </Button>
                                     </StackPanel>
                                 </DataTemplate>
                             </DataGridTemplateColumn.CellTemplate>
@@ -120,9 +142,10 @@
                         <WrapPanel>
                             <Button Content="添加目录" Style="{StaticResource BtnSmall}" Margin="0,0,6,6"
                                     Command="{Binding AddPathEntryCommand}" />
-                            <Button Content="放弃草稿" Style="{StaticResource BtnSmall}" Margin="0,0,6,6"
+                            <Button Content="放弃草稿…" Style="{StaticResource BtnSmall}" Margin="0,0,6,6"
                                     ToolTip="放弃当前作用域的草稿，并读取最新 PATH；其它作用域草稿保留"
-                                    Command="{Binding DiscardPathCommand}" />
+                                    Command="{Binding DiscardPathCommand}"
+                                    Visibility="{Binding HasPathChanges, Converter={StaticResource BoolToVis}}" />
                             <Button Content="应用 PATH 更改" Style="{StaticResource BtnPrimary}" Margin="0,0,0,6"
                                     ToolTip="应用当前作用域的目录增删及排序；写入前保存快照，可撤销"
                                     Command="{Binding ApplyPathCommand}" />
@@ -156,11 +179,11 @@
 
                                             <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Center">
                                                 <Button Content="↑" Style="{StaticResource BtnSmall}" Padding="8,2"
-                                                        Margin="0,0,4,0"
+                                                        Margin="0,0,4,0" AutomationProperties.Name="上移目录"
                                                         Command="{Binding DataContext.MovePathUpCommand, RelativeSource={RelativeSource AncestorType=UserControl}}"
                                                         CommandParameter="{Binding}" />
                                                 <Button Content="↓" Style="{StaticResource BtnSmall}" Padding="8,2"
-                                                        Margin="0,0,6,0"
+                                                        Margin="0,0,6,0" AutomationProperties.Name="下移目录"
                                                         Command="{Binding DataContext.MovePathDownCommand, RelativeSource={RelativeSource AncestorType=UserControl}}"
                                                         CommandParameter="{Binding}" />
                                                 <Button Content="打开" Style="{StaticResource BtnSmall}" Margin="0,0,6,0"

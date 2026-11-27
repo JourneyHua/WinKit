@@ -1,5 +1,4 @@
-using System.Diagnostics;
-using System.Text;
+using System.IO;
 using System.Xml.Linq;
 
 namespace WinKit.Services;
@@ -20,6 +19,9 @@ public sealed class EventLogGroup
     public string Category { get; init; } = "";
 }
 
+public sealed record EventLogReadResult(
+    List<EventLogGroup> Groups, string? Error, int SuccessfulLogs, int LimitedLogs, int MaxPerLog);
+
 /// <summary>
 /// 事件日志诊断：用系统自带 wevtutil 拉取近 N 天的“错误/严重”事件，按 来源+事件ID 归并。
 /// 不引入 EventLog NuGet 包，也不需要管理员权限（System / Application 日志普通用户可读）。
@@ -28,27 +30,33 @@ public sealed class EventLogService
 {
     private static readonly string[] Logs = { "System", "Application" };
 
-    public (List<EventLogGroup> Groups, string? Error) Load(int days = 7, int maxPerLog = 400)
+    public EventLogReadResult Read(int days = 7, int maxPerLog = 400)
     {
+        if (maxPerLog is < 1 or int.MaxValue) throw new ArgumentOutOfRangeException(nameof(maxPerLog));
         var all = new List<EventLogGroup>();
         var errors = new List<string>();
+        var limitedLogs = 0;
 
         foreach (var log in Logs)
         {
-            var (entries, error) = Query(log, days, maxPerLog);
-            if (error is not null) errors.Add($"{log}：{error}");
-            all.AddRange(Group(entries));
+            // 多读一条以区分准确命中限额和仍有未读取的事件。
+            var (entries, error) = Query(log, days, maxPerLog + 1);
+            if (error is not null)
+            {
+                errors.Add($"{log}：{error}");
+                continue;
+            }
+
+            if (entries.Count > maxPerLog) limitedLogs++;
+            all.AddRange(Group(entries.Take(maxPerLog)));
         }
 
-        var ordered = all
-            .OrderByDescending(g => g.Count)
-            .ThenByDescending(g => g.LastTime)
-            .ToList();
-
-        return (ordered, errors.Count == 0 ? null : string.Join("；", errors));
+        var ordered = all.OrderByDescending(g => g.Count).ThenByDescending(g => g.LastTime).ToList();
+        return new EventLogReadResult(ordered, errors.Count == 0 ? null : string.Join("；", errors),
+            Logs.Length - errors.Count, limitedLogs, maxPerLog);
     }
 
-    private static IEnumerable<EventLogGroup> Group(List<RawEvent> entries)
+    private static IEnumerable<EventLogGroup> Group(IEnumerable<RawEvent> entries)
     {
         return entries
             .GroupBy(e => (e.LogName, e.Provider, e.EventId, e.Level))
@@ -124,18 +132,23 @@ public sealed class EventLogService
                 .GetAwaiter()
                 .GetResult();
 
-            if (string.IsNullOrWhiteSpace(output))
-                return (entries, string.IsNullOrWhiteSpace(error) || code == 0 ? null : error.Trim());
+            if (code != 0)
+                return (entries, !string.IsNullOrWhiteSpace(error) ? error.Trim()
+                    : !string.IsNullOrWhiteSpace(output) ? output.Trim()
+                    : $"读取命令未成功（退出码 {code}）");
 
             // wevtutil 输出的是连续拼接的 <Event> 片段，没有根节点，需要自己包一层
             var xml = output.TrimStart('\uFEFF', '\r', '\n', ' ');
+            if (string.IsNullOrWhiteSpace(xml)) return (entries, null);
             var doc = XDocument.Parse("<Events>" + xml + "</Events>", LoadOptions.PreserveWhitespace);
 
             // 每个 <Event> 自带默认命名空间，不能按 XNamespace.None 匹配，统一按 LocalName 取
-            foreach (var ev in doc.Root!.Elements().Where(e => e.Name.LocalName == "Event"))
+            var events = doc.Root!.Elements().Where(e => e.Name.LocalName == "Event").ToList();
+            if (events.Count == 0) throw new InvalidDataException("事件日志返回了无法识别的数据");
+            foreach (var ev in events)
             {
-                var system = ev.Elements().FirstOrDefault(e => e.Name.LocalName == "System");
-                if (system is null) continue;
+                var system = ev.Elements().FirstOrDefault(e => e.Name.LocalName == "System")
+                    ?? throw new InvalidDataException("事件记录缺少系统信息");
 
                 var provider = system.Elements().FirstOrDefault(e => e.Name.LocalName == "Provider")?.Attribute("Name")?.Value ?? "未知来源";
                 var eventId = system.Elements().FirstOrDefault(e => e.Name.LocalName == "EventID")?.Value ?? "";

@@ -18,6 +18,9 @@ internal static class Program
         if (args.Length > 0 && args[0] == "--journal-selftest")
             return JournalSelfTest() == 0 ? 0 : 1;
 
+        if (args.Length > 0 && args[0] == "--quick-access-selftest")
+            return QuickAccessChecks.Run() == 0 ? 0 : 1;
+
         if (args.Length > 0 && args[0] == "--duplicate-selftest")
             return DuplicateCleanupSelfTest() == 0 ? 0 : 1;
 
@@ -216,9 +219,11 @@ internal static class Program
     {
         var failures = 0;
         var skipped = 0;
-        var journal = new ChangeJournal(Path.Combine(Path.GetTempPath(), "winkit_selftest_backups_" + Guid.NewGuid().ToString("N")));
-        // 不要用 Software\Classes\* 这类受保护路径：非提权时连 HKCU 也会被拒
-        var testRoot = @"Software\WinKitSelfTest\Menu";
+        var fixtureId = Guid.NewGuid().ToString("N");
+        var journal = new ChangeJournal(Path.Combine(Path.GetTempPath(), "winkit_selftest_backups_" + fixtureId));
+        // 独占本次测试的键，避免清理之前运行或其他进程留下的夹具。
+        var registryFixture = $@"Software\WinKitSelfTest\{fixtureId}";
+        var testRoot = $@"{registryFixture}\Menu";
         var testPath = RegPath.Hkcu(testRoot);
 
         void Check(string name, bool condition, string detail = "")
@@ -276,7 +281,7 @@ internal static class Program
             Check("撤销后值恢复", Reg.GetString(testPath, "MUIVerb") == "自测菜单项");
 
             // 3. 屏蔽列表写入 → 撤销（同时验证撤销后磁盘快照文件已被清理）
-            var blockedKey = @"Software\Microsoft\Windows\CurrentVersion\Shell Extensions\BlockedSelfTest";
+            var blockedKey = $@"{registryFixture}\BlockedSelfTest";
             var fakeClsid = "{00000000-WINKIT-SELFTEST-0000-0000000000}";
             var snap = journal.Record("自测-屏蔽", new[] { (HiveKind.CurrentUser, blockedKey) },
                 () => Reg.SetString(RegPath.Hkcu(blockedKey), fakeClsid, ""));
@@ -301,7 +306,7 @@ internal static class Program
             if (File.Exists(tempFile)) File.Delete(tempFile);
 
             // 5. 快照递归预算必须是共享计数器（v1.4.0 修复：按值传预算会让整棵树节点数失控）
-            var budgetRoot = @"Software\WinKitSelfTest\Budget";
+            var budgetRoot = $@"{registryFixture}\Budget";
             Reg.DeleteTree(RegPath.Hkcu(budgetRoot));
             for (var i = 0; i < 40; i++)
                 Reg.SetString(RegPath.Hkcu($@"{budgetRoot}\k{i}"), "v", i.ToString());
@@ -312,7 +317,7 @@ internal static class Program
             Reg.DeleteTree(RegPath.Hkcu(budgetRoot));
 
             // 6. 快照还原必须保留原默认值与 HiddenByDefault（v1.4.0 此电脑节点修复依赖它）
-            var shapeRoot = @"Software\WinKitSelfTest\Shape";
+            var shapeRoot = $@"{registryFixture}\Shape";
             Reg.DeleteTree(RegPath.Hkcu(shapeRoot));
             Reg.SetString(RegPath.Hkcu(shapeRoot), "", "CLSID_ThisPCDownloadsRegFolder");
             Reg.SetInt(RegPath.Hkcu(shapeRoot), "HiddenByDefault", 1);
@@ -328,7 +333,7 @@ internal static class Program
             Check("还原后子键保留", Reg.GetString(RegPath.Hkcu(shapeRoot + @"\child"), "x") == "y");
 
             // 7. 截断快照必须拒绝整树还原，不能把没记下来的子树删掉
-            var truncRoot = @"Software\WinKitSelfTest\Truncated";
+            var truncRoot = $@"{registryFixture}\Truncated";
             Reg.DeleteTree(RegPath.Hkcu(truncRoot));
             for (var i = 0; i < 30; i++)
                 Reg.SetString(RegPath.Hkcu($@"{truncRoot}\c{i}"), "v", i.ToString());
@@ -353,7 +358,7 @@ internal static class Program
             Reg.DeleteTree(RegPath.Hkcu(truncRoot));
 
             // 8. QWORD 超出 int 范围时 GetInt 必须返回 null，不能静默截断
-            var qwordRoot = @"Software\WinKitSelfTest\QWord";
+            var qwordRoot = $@"{registryFixture}\QWord";
             Reg.DeleteTree(RegPath.Hkcu(qwordRoot));
             Reg.SetString(RegPath.Hkcu(qwordRoot), "placeholder", "x");
             using (var key = Reg.Create(RegPath.Hkcu(qwordRoot)))
@@ -365,8 +370,8 @@ internal static class Program
             Check("GetLong 保留 64 位精度", Reg.GetLong(RegPath.Hkcu(qwordRoot), "big") == 0x1_0000_0001L);
             Reg.DeleteTree(RegPath.Hkcu(qwordRoot));
 
-            // 9. 32/64 位视图：写到 32 位视图的键，64 位视图里必须看不到
-            const string viewRoot = @"Software\Classes\WinKitViewSelfTest";
+            // 9. 32/64 位视图：验证快照保存并还原到原来的视图。
+            var viewRoot = $@"Software\Classes\WinKitViewSelfTest_{fixtureId}";
             var x86Path = RegPath.Hkcu(viewRoot).WithView(RegViewKind.X86);
             var x64Path = RegPath.Hkcu(viewRoot).WithView(RegViewKind.X64);
 
@@ -395,7 +400,7 @@ internal static class Program
             Reg.DeleteTree(x86Path);
             Reg.DeleteTree(x64Path);
 
-            Reg.DeleteTree(testPath);
+            Reg.DeleteTree(RegPath.Hkcu(registryFixture));
             Check("清理完成（测试键不存在）", !Reg.Exists(testPath));
         }
         else
@@ -502,7 +507,7 @@ internal static class Program
         }
 
         Check("非法 Hive 的快照被拒绝还原", badHiveRefused);
-        Check("删除不存在的键视为成功", Reg.DeleteTree(RegPath.Hkcu(@"Software\WinKitSelfTest\NoSuchKey")));
+        Check("删除不存在的键视为成功", Reg.DeleteTree(RegPath.Hkcu($@"{registryFixture}\NoSuchKey")));
 
         // ---------- 文件对比 / 重复文件 / Scoop 解析（纯文件系统，低完整性也能跑） ----------
         var workDir = Path.Combine(Path.GetTempPath(), "winkit_selftest_" + Guid.NewGuid().ToString("N")[..8]);
@@ -737,10 +742,27 @@ internal static class Program
             });
 
             Check("残留扫描命中夹具目录", scanResult.Items.Count >= 2, $"实际 {scanResult.Items.Count} 项");
-            Check("精确同名的残留判为确定项", scanResult.ConfirmedCount >= 2, $"确定 {scanResult.ConfirmedCount} 项");
+            Check("精确同名只提供线索，默认不勾选",
+                scanResult.PossibleCount >= 2 && scanResult.PathReferenceCount == 0 && scanResult.Items.All(item => !item.IsSelected),
+                $"名称相似 {scanResult.PossibleCount} 项，路径引用 {scanResult.PathReferenceCount} 项");
             Check("残留项带类型与大小字段",
                 scanResult.Items.All(i => !string.IsNullOrWhiteSpace(i.KindText) && !string.IsNullOrWhiteSpace(i.ConfidenceText)));
             Check("扫描统计了目录数", scanResult.ScannedDirectories > 0);
+            var installedSubfolder = Path.Combine(residualApp, "WinKitProbeGhostApp");
+            var sibling = Path.Combine(residualApp, "WinKitProbeGhostApp2");
+            Directory.CreateDirectory(installedSubfolder);
+            Directory.CreateDirectory(sibling);
+            var scopedScan = new ResidualScanService().Scan(new ResidualScanRequest
+            {
+                ExactNames = ["WinKitProbeGhostApp", "WinKitProbeGhostApp2"], ExtraRoots = [residualRoot],
+                ExcludedPaths = [installedSubfolder], MaxDepth = 2, IncludeDirectories = true,
+                IncludeShortcuts = false, IncludeServices = false, IncludeTasks = false,
+                IncludeStartup = false, IncludeAssociations = false
+            });
+            Check("移除候选不能包含当前安装目录，但仍扫描其旁边的候选",
+                scopedScan.Items.Any(item => item.Path == residualApp && !item.CanClean)
+                && scopedScan.Items.Any(item => item.Path == sibling && item.CanClean)
+                && scopedScan.Items.All(item => item.Path != installedSubfolder));
             Check("文件关联类残留不可清理（UserChoice 有哈希签名）",
                 scanResult.Items.Where(i => i.Kind == ResidualKind.FileAssociation).All(i => !i.CanClean));
             Check("清理动作不碰文件关联",
@@ -838,6 +860,7 @@ internal static class Program
 
         failures += DuplicateCleanupSelfTest();
         failures += JournalSelfTest();
+        failures += QuickAccessChecks.Run();
         try { Directory.Delete(journal.StorageDirectory, true); } catch (Exception) { }
         Console.WriteLine();
         Console.WriteLine(failures == 0

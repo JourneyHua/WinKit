@@ -1,57 +1,54 @@
 <UserControl x:Class="WinKit.Views.AppUpdateView"
              xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:core="clr-namespace:WinKit.Core"
              Visibility="{Binding IsVisible, Converter={StaticResource BoolToVis}}">
-    <Border Style="{StaticResource HintCard}" Margin="16,8,16,0">
+    <Border Style="{StaticResource HintCard}" Margin="16,8,16,0" core:Motion.Reveal="True">
         <StackPanel>
-            <Grid>
-                <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
-                <StackPanel VerticalAlignment="Center">
+            <DockPanel>
+                <Button DockPanel.Dock="Right" Content="收起" Style="{StaticResource BtnSmall}"
+                        Command="{Binding DismissCommand}" Margin="8,0,0,0" VerticalAlignment="Top" />
+                <StackPanel>
                     <TextBlock Text="{Binding Title}" Style="{StaticResource H2}" />
-                    <TextBlock Text="{Binding StatusText}" TextWrapping="Wrap" Margin="0,4,8,0"
+                    <TextBlock Text="{Binding StatusText}" TextWrapping="Wrap" Margin="0,4,0,0"
                                Foreground="{DynamicResource Brush.Text}" AutomationProperties.LiveSetting="Polite" />
                 </StackPanel>
-                <WrapPanel Grid.Column="1" VerticalAlignment="Center">
-                    <Button Content="查看更新" Command="{Binding ShowCommand}" Margin="8,0,0,0">
-                        <Button.Style><Style TargetType="Button" BasedOn="{StaticResource BtnSmall}">
-                            <Style.Triggers><DataTrigger Binding="{Binding IsPanelOpen}" Value="True"><Setter Property="Visibility" Value="Collapsed" /></DataTrigger></Style.Triggers>
-                        </Style></Button.Style>
-                    </Button>
-                    <Button Content="关闭提示" Style="{StaticResource BtnSmall}" Command="{Binding DismissCommand}" Margin="8,0,0,0" />
-                </WrapPanel>
-            </Grid>
-            <StackPanel Visibility="{Binding IsPanelOpen, Converter={StaticResource BoolToVis}}" Margin="0,10,0,0">
-                <WrapPanel Margin="0,0,0,6">
-                    <TextBlock Text="{Binding CurrentVersionText}" Style="{StaticResource Muted}" Margin="0,0,12,0" />
-                    <TextBlock Text="{Binding ReleaseSummary}" Style="{StaticResource Muted}" />
-                </WrapPanel>
-                <ScrollViewer MaxHeight="110" VerticalScrollBarVisibility="Auto" Margin="0,0,0,8"
-                              Visibility="{Binding HasUpdate, Converter={StaticResource BoolToVis}}">
-                    <TextBlock Text="{Binding ReleaseNotes}" TextWrapping="Wrap" Foreground="{DynamicResource Brush.Text}" />
-                </ScrollViewer>
-                <TextBlock Text="{Binding ErrorText}" TextWrapping="Wrap" Margin="0,0,0,8"
-                           Visibility="{Binding HasError, Converter={StaticResource BoolToVis}}"
-                           Foreground="{DynamicResource Brush.Text}" AutomationProperties.LiveSetting="Polite" />
-                <StackPanel Visibility="{Binding IsDownloading, Converter={StaticResource BoolToVis}}" Margin="0,0,0,8">
-                    <ProgressBar Value="{Binding DownloadPercent, Mode=OneWay}" Minimum="0" Maximum="100" Height="5" />
-                    <TextBlock Text="{Binding ProgressText}" Style="{StaticResource Muted}" Margin="0,4,0,0" />
-                </StackPanel>
-                <TextBlock Text="重启将丢弃尚未应用的 PATH 更改。" TextWrapping="Wrap" Margin="0,0,0,8"
-                           Visibility="{Binding ShowDraftWarning, Converter={StaticResource BoolToVis}}"
-                           Foreground="{DynamicResource Brush.Text}" AutomationProperties.LiveSetting="Polite" />
-                <WrapPanel>
-                    <Button Content="检查 WinKit 更新" Style="{StaticResource BtnSmall}" Command="{Binding CheckCommand}" Margin="0,0,8,4" />
-                    <Button Content="下载更新" Style="{StaticResource BtnPrimary}" Command="{Binding DownloadCommand}" Margin="0,0,8,4"
-                            Visibility="{Binding CanDownload, Converter={StaticResource BoolToVis}}" />
-                    <Button Content="重启并更新" Style="{StaticResource BtnPrimary}" Command="{Binding RestartCommand}" Margin="0,0,8,4"
-                            Visibility="{Binding IsReady, Converter={StaticResource BoolToVis}}"
-                            ToolTip="{Binding RestartHint}" ToolTipService.ShowOnDisabled="True" />
-                    <Button Content="取消" Style="{StaticResource BtnSmall}" Command="{Binding CancelCommand}" Margin="0,0,8,4"
-                            Visibility="{Binding CanCancel, Converter={StaticResource BoolToVis}}" />
-                    <Button Content="打开下载目录" Style="{StaticResource BtnSmall}" Command="{Binding OpenDownloadFolderCommand}" Margin="0,0,0,4"
-                            Visibility="{Binding IsReady, Converter={StaticResource BoolToVis}}" />
-                </WrapPanel>
+            </DockPanel>
+            <WrapPanel Margin="0,6,0,4">
+                <TextBlock Text="{Binding CurrentVersionText}" Style="{StaticResource Muted}" Margin="0,0,12,0" />
+                <TextBlock Text="{Binding ReleaseSummary}" Style="{StaticResource Muted}"
+                           Visibility="{Binding HasUpdate, Converter={StaticResource BoolToVis}}" />
+            </WrapPanel>
+            <ScrollViewer MaxHeight="90" VerticalScrollBarVisibility="Auto" Margin="0,0,0,8"
+                          Visibility="{Binding HasUpdate, Converter={StaticResource BoolToVis}}">
+                <TextBlock Text="{Binding ReleaseNotes}" TextWrapping="Wrap" Foreground="{DynamicResource Brush.Text}" />
+            </ScrollViewer>
+            <TextBlock Text="{Binding ErrorText}" TextWrapping="Wrap" Margin="0,0,0,8"
+                       Visibility="{Binding HasError, Converter={StaticResource BoolToVis}}"
+                       Foreground="{DynamicResource Brush.Text}" AutomationProperties.LiveSetting="Polite" />
+            <StackPanel Visibility="{Binding IsDownloading, Converter={StaticResource BoolToVis}}" Margin="0,0,0,8">
+                <ProgressBar Style="{StaticResource QuietProgress}" Value="{Binding DownloadPercent, Mode=OneWay}"
+                             Minimum="0" Maximum="100" Height="5" AutomationProperties.Name="下载更新进度" />
+                <TextBlock Text="{Binding ProgressText}" Style="{StaticResource Muted}" Margin="0,4,0,0" />
             </StackPanel>
+            <TextBlock Text="PATH 有未应用的更改。请先处理更改，再重启 WinKit。" TextWrapping="Wrap" Margin="0,0,0,8"
+                       Visibility="{Binding ShowDraftWarning, Converter={StaticResource BoolToVis}}"
+                       Foreground="{DynamicResource Brush.Text}" AutomationProperties.LiveSetting="Polite" />
+            <WrapPanel>
+                <Button Content="检查更新" Style="{StaticResource BtnSmall}" Command="{Binding CheckCommand}" Margin="0,0,8,4"
+                        Visibility="{Binding ShowCheckAction, Converter={StaticResource BoolToVis}}" />
+                <Button Content="下载更新" Style="{StaticResource BtnPrimary}" Command="{Binding DownloadCommand}" Margin="0,0,8,4"
+                        Visibility="{Binding CanDownload, Converter={StaticResource BoolToVis}}" />
+                <Button Content="重启并更新" Style="{StaticResource BtnPrimary}" Command="{Binding RestartCommand}" Margin="0,0,8,4"
+                        Visibility="{Binding ShowRestartAction, Converter={StaticResource BoolToVis}}"
+                        ToolTip="{Binding RestartHint}" ToolTipService.ShowOnDisabled="True" />
+                <Button Content="查看 PATH 更改" Style="{StaticResource BtnPrimary}" Command="{Binding ReviewDraftsCommand}" Margin="0,0,8,4"
+                        Visibility="{Binding ShowReviewDraftsAction, Converter={StaticResource BoolToVis}}" />
+                <Button Content="取消" Style="{StaticResource BtnSmall}" Command="{Binding CancelCommand}" Margin="0,0,8,4"
+                        Visibility="{Binding CanCancel, Converter={StaticResource BoolToVis}}" />
+                <Button Content="打开下载目录" Style="{StaticResource BtnSmall}" Command="{Binding OpenDownloadFolderCommand}" Margin="0,0,0,4"
+                        Visibility="{Binding CanOpenDownloadFolder, Converter={StaticResource BoolToVis}}" />
+            </WrapPanel>
         </StackPanel>
     </Border>
 </UserControl>

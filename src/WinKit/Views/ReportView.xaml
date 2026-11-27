@@ -47,17 +47,25 @@
                 <TextBlock Text="{Binding SummaryText}" Style="{StaticResource H2}" />
                 <TextBlock Text="{Binding GeneratedText}" Style="{StaticResource Muted}" Margin="0,2,0,0" />
                 <TextBlock Text="{Binding ProgressText}" Style="{StaticResource Muted}"
-                           Foreground="{DynamicResource Brush.Accent}" Margin="0,2,0,0" />
+                           Foreground="{DynamicResource Brush.Accent}" Margin="0,2,0,0"
+                           Visibility="{Binding ProgressText, Converter={StaticResource EmptyToVis}, ConverterParameter=invert}"
+                           AutomationProperties.LiveSetting="Polite" />
+                <TextBlock Text="{Binding FeedbackText}" Style="{StaticResource Muted}" TextWrapping="Wrap"
+                           Margin="0,2,0,0" AutomationProperties.LiveSetting="Polite"
+                           Visibility="{Binding FeedbackText, Converter={StaticResource EmptyToVis}, ConverterParameter=invert}" />
             </StackPanel>
 
             <StackPanel Grid.Column="2" Orientation="Horizontal" VerticalAlignment="Center">
-                <Button Content="重新体检" Style="{StaticResource BtnPrimary}" Margin="0,0,8,0"
+                <Button Content="{Binding GenerateText}" Style="{StaticResource BtnPrimary}" Margin="0,0,8,0"
                         Command="{Binding GenerateCommand}" />
-                <Button Content="导出 Markdown" Style="{StaticResource BtnBase}" Margin="0,0,8,0"
+                <Button Content="保存 Markdown" Style="{StaticResource BtnBase}" Margin="0,0,8,0"
+                        Visibility="{Binding HasReport, Converter={StaticResource BoolToVis}}"
                         Command="{Binding ExportMarkdownCommand}" />
-                <Button Content="导出 JSON" Style="{StaticResource BtnBase}" Margin="0,0,8,0"
+                <Button Content="保存 JSON" Style="{StaticResource BtnBase}" Margin="0,0,8,0"
+                        Visibility="{Binding HasReport, Converter={StaticResource BoolToVis}}"
                         Command="{Binding ExportJsonCommand}" />
-                <Button Content="报告目录" Style="{StaticResource BtnSmall}"
+                <Button Content="打开报告文件夹" Style="{StaticResource BtnSmall}"
+                        Visibility="{Binding HasReportFolder, Converter={StaticResource BoolToVis}}"
                         Command="{Binding OpenReportFolderCommand}" />
             </StackPanel>
         </Grid>
@@ -72,22 +80,39 @@
 
                     <StackPanel Grid.Column="0">
                         <TextBlock Text="定期维护" Style="{StaticResource H2}" />
-                        <TextBlock Text="{Binding MaintenanceText}" Style="{StaticResource Muted}" Margin="0,2,0,0" />
-                        <TextBlock Text="{Binding LastOutcomeText}" Style="{StaticResource Muted}" Margin="0,2,0,0" />
+                        <TextBlock Text="{Binding MaintenanceText}" Style="{StaticResource Muted}" Margin="0,2,0,0" TextWrapping="Wrap" />
+                        <TextBlock Text="{Binding LastOutcomeText}" Style="{StaticResource Muted}" Margin="0,2,0,0"
+                                   Visibility="{Binding LastOutcomeText, Converter={StaticResource EmptyToVis}, ConverterParameter=invert}" />
+                        <TextBlock Text="{Binding MaintenanceProgress}" Style="{StaticResource Muted}" Margin="0,2,0,0"
+                                   TextWrapping="Wrap" AutomationProperties.LiveSetting="Polite"
+                                   Visibility="{Binding MaintenanceProgress, Converter={StaticResource EmptyToVis}, ConverterParameter=invert}" />
                     </StackPanel>
 
-                    <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Center">
-                        <Button Content="注册每周任务" Style="{StaticResource BtnBase}" Margin="0,0,8,0"
+                    <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Center" Margin="8,0,0,0">
+                        <Button Content="启用每周维护…" Style="{StaticResource BtnBase}"
+                                Visibility="{Binding ShowEnableTask, Converter={StaticResource BoolToVis}}"
                                 Command="{Binding RegisterTaskCommand}" />
-                        <Button Content="立即运行" Style="{StaticResource BtnBase}" Margin="0,0,8,0"
+                        <Button Content="以管理员身份启用维护…" Style="{StaticResource BtnBase}"
+                                Visibility="{Binding ShowElevateForTask, Converter={StaticResource BoolToVis}}"
+                                Command="{Binding DataContext.ElevateCommand, RelativeSource={RelativeSource AncestorType=Window}}" />
+                        <Button Content="立即维护…" Style="{StaticResource BtnBase}" Margin="0,0,8,0"
+                                Visibility="{Binding ShowRunTask, Converter={StaticResource BoolToVis}}"
                                 Command="{Binding RunTaskNowCommand}" />
-                        <Button Content="删除任务" Style="{StaticResource BtnDanger}"
+                        <Button Content="关闭每周维护…" Style="{StaticResource BtnSmall}"
+                                Visibility="{Binding ShowDisableTask, Converter={StaticResource BoolToVis}}"
                                 Command="{Binding DeleteTaskCommand}" />
+                        <Button Content="以管理员身份重启…" Style="{StaticResource BtnSmall}"
+                                ToolTip="读取或关闭 Windows 维护安排可能需要管理员权限"
+                                Visibility="{Binding ShowElevateToDisable, Converter={StaticResource BoolToVis}}"
+                                Command="{Binding DataContext.ElevateCommand, RelativeSource={RelativeSource AncestorType=Window}}" />
+                        <Button Content="刷新维护状态" Style="{StaticResource BtnSmall}"
+                                Visibility="{Binding ShowRefreshTask, Converter={StaticResource BoolToVis}}"
+                                Command="{Binding RefreshTaskCommand}" />
                     </StackPanel>
                 </Grid>
 
-                <TextBlock Style="{StaticResource Muted}"
-                           Text="每周日 03:00 以 WinKit --maintain 运行：安全清理 + 生成体检报告，日志写 %LOCALAPPDATA%\WinKit\Logs\scheduled.log。任务可见可删，删除前会导出任务 XML。" />
+                <TextBlock Style="{StaticResource Muted}" TextWrapping="Wrap"
+                           Text="每周维护会清理过期的临时文件和缓存，并保存体检报告，不会清空回收站。" />
             </StackPanel>
         </Border>
 

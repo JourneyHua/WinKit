@@ -22,7 +22,7 @@
                 <StackPanel Grid.Column="0">
                     <TextBlock Text="{Binding SessionText}" Style="{StaticResource H2}" />
                     <TextBlock Style="{StaticResource Muted}" Margin="0,4,0,0"
-                               Text="每次改动前都会自动保存一份只包含改动键或文件的快照。回滚按相反顺序执行，逐步还原。" />
+                               Text="这里只还原 WinKit 已备份的改动。回收站里的文件请在系统回收站中还原。" TextWrapping="Wrap" />
                 </StackPanel>
                 <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Center">
                     <Button Content="回滚本次会话" Style="{StaticResource BtnDanger}" Margin="0,0,8,0"

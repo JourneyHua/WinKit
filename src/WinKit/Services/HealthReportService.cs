@@ -164,7 +164,8 @@ public sealed class HealthReportService
 
     private static ReportSection BuildEvents()
     {
-        var (groups, error) = new EventLogService().Load(days: 7, maxPerLog: 300);
+        var result = new EventLogService().Read(days: 7, maxPerLog: 300);
+        var groups = result.Groups;
         var items = new List<ReportItem>();
 
         foreach (var group in groups.Take(10))
@@ -181,17 +182,21 @@ public sealed class HealthReportService
             });
         }
 
-        if (groups.Count == 0 && error is not null)
+        if (result.Error is { } error)
         {
-            items.Add(new ReportItem { Label = "事件日志", Value = "读取失败", Detail = error });
+            items.Add(new ReportItem { Label = "读取范围", Value = "未能读取全部日志", Detail = error, Level = "warn" });
+        }
+        if (result.LimitedLogs > 0)
+        {
+            items.Add(new ReportItem { Label = "读取范围", Value = $"{result.LimitedLogs} 个日志达到读取上限", Detail = $"每个日志仅统计最近 {result.MaxPerLog} 条", Level = "warn" });
         }
 
         return new ReportSection
         {
             Title = "事件日志（近 7 天）",
-            Summary = groups.Count == 0
-                ? "没有错误或严重级别事件"
-                : $"{groups.Sum(g => g.Count)} 条错误，归并为 {groups.Count} 种",
+            Summary = result.SuccessfulLogs == 0 ? "未能读取事件日志"
+                : groups.Count == 0 ? "已读取的日志中未发现错误或严重事件"
+                : $"已读取 {groups.Sum(g => g.Count)} 条错误或严重事件，归并为 {groups.Count} 组",
             Level = Worst(items),
             Items = items
         };

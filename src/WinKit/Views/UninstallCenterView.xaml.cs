@@ -21,7 +21,7 @@ public partial class UninstallCenterView : UserControl
     {
         if (!e.Data.GetDataPresent(DataFormats.FileDrop)) return;
 
-        e.Effects = DragDropEffects.Copy;
+        e.Effects = Vm is { CanChangeTarget: true } ? DragDropEffects.Copy : DragDropEffects.None;
         e.Handled = true;
     }
 

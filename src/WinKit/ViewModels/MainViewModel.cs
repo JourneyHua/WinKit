@@ -10,8 +10,11 @@ public interface IModule
     void Refresh();
 }
 
-public sealed class NavItem
+public sealed class NavItem : ObservableObject
 {
+    private bool _isSelected;
+    public bool IsSelected { get => _isSelected; internal set => Set(ref _isSelected, value); }
+
     public string Key { get; init; } = "";
     public string Title { get; init; } = "";
     public string Subtitle { get; init; } = "";
@@ -66,9 +69,12 @@ public sealed class MainViewModel : ObservableObject
     private readonly UiSettings _settings;
     private readonly bool _saveSettings;
     private bool _isClosePending;
+    private string _navSearchText = "";
+    private IReadOnlyList<NavItem> _navSearchResults = [];
     private NavItem? _selectedNav;
     private object? _currentViewModel;
     private string _statusText = "就绪";
+    private readonly Dictionary<string, string> _moduleStatuses = new(StringComparer.Ordinal);
     private int _busyCount;
     private string _feedbackMessage = "";
     private bool _feedbackIsError;
@@ -126,7 +132,7 @@ public sealed class MainViewModel : ObservableObject
                 Glyph = "\uE8A9",
                 Subtitle = "管理左侧固定的软件节点与快速访问项",
                 AccentBrush = new System.Windows.Media.SolidColorBrush(System.Windows.Media.Color.FromRgb(0xBA, 0x75, 0x17)),
-                Factory = () => new NavPaneViewModel(_journal, SetStatus)
+                Factory = () => new NavPaneViewModel(_journal, SetStatusFor("nav"), SetBusy)
             },
             new()
             {
@@ -196,7 +202,7 @@ public sealed class MainViewModel : ObservableObject
                 Glyph = "\uE7BA",
                 Subtitle = "近 7/30 天错误与严重事件按来源归并，蓝屏、崩溃、更新失败一眼定位",
                 AccentBrush = new System.Windows.Media.SolidColorBrush(System.Windows.Media.Color.FromRgb(0xB0, 0x2A, 0x37)),
-                Factory = () => new EventLogViewModel(SetStatus)
+                Factory = () => new EventLogViewModel(SetStatusFor("events"))
             },
             new()
             {
@@ -216,7 +222,7 @@ public sealed class MainViewModel : ObservableObject
                 Glyph = "\uE968",
                 Subtitle = "网卡/DNS/网关、延迟与丢包、DNS 解析耗时、Wi-Fi 信号与系统代理",
                 AccentBrush = new System.Windows.Media.SolidColorBrush(System.Windows.Media.Color.FromRgb(0x2F, 0x5F, 0x9E)),
-                Factory = () => new NetworkViewModel(SetStatus)
+                Factory = () => new NetworkViewModel(SetStatusFor("network"))
             },
             new()
             {
@@ -226,7 +232,7 @@ public sealed class MainViewModel : ObservableObject
                 Glyph = "\uE8C8",
                 Subtitle = "按大小/时间/哈希对比两个目录，列出仅左侧、仅右侧、内容不同与更新方向",
                 AccentBrush = new System.Windows.Media.SolidColorBrush(System.Windows.Media.Color.FromRgb(0x7A, 0x5C, 0x1E)),
-                Factory = () => new DiffViewModel(SetStatus, SetBusy)
+                Factory = () => new DiffViewModel(SetStatusFor("diff"))
             },
             new()
             {
@@ -256,7 +262,7 @@ public sealed class MainViewModel : ObservableObject
                 Glyph = "\uE9D5",
                 Subtitle = "一键汇总各模块检查结果，导出 Markdown/JSON；可注册每周自动维护任务",
                 AccentBrush = new System.Windows.Media.SolidColorBrush(System.Windows.Media.Color.FromRgb(0x0E, 0x7C, 0x86)),
-                Factory = () => new ReportViewModel(SetStatus, SetMaintenanceStatus, SetBusy)
+                Factory = () => new ReportViewModel(SetStatusFor("report"), SetBusy)
             },
             new()
             {
@@ -266,7 +272,7 @@ public sealed class MainViewModel : ObservableObject
                 Glyph = "\uEDA2",
                 Subtitle = "SMART 预测失败、SSD 磨损度、温度、通电时长、读写错误与各卷占用",
                 AccentBrush = new System.Windows.Media.SolidColorBrush(System.Windows.Media.Color.FromRgb(0x5B, 0x3F, 0x8F)),
-                Factory = () => new DiskHealthViewModel(SetStatus, SetBusy)
+                Factory = () => new DiskHealthViewModel(SetStatusFor("diskhealth"))
             },
             new()
             {
@@ -296,7 +302,7 @@ public sealed class MainViewModel : ObservableObject
                 Glyph = "\uE9D2",
                 Subtitle = "逐条看硬盘的 SMART 原始属性（重映射扇区、待映射、温度、通电时长），可导出 CSV",
                 AccentBrush = new System.Windows.Media.SolidColorBrush(System.Windows.Media.Color.FromRgb(0x7A, 0x3E, 0x1D)),
-                Factory = () => new SmartAttributeViewModel(SetStatus, SetBusy)
+                Factory = () => new SmartAttributeViewModel(SetStatusFor("smart"))
             },
             new()
             {
@@ -349,17 +355,18 @@ public sealed class MainViewModel : ObservableObject
         });
         UndoCommand = new RelayCommand(Undo, () => _journal.CanUndo && IsNavigationEnabled);
         DismissFeedbackCommand = new RelayCommand(() => FeedbackMessage = "");
-        RestartExplorerCommand = new RelayCommand(RestartExplorer, () => IsNavigationEnabled);
+        RestartExplorerCommand = new RelayCommand(() => _ = RestartExplorerAsync(), () => IsNavigationEnabled && ShowRestartExplorer);
         ElevateCommand = new RelayCommand(Elevate, () => IsNavigationEnabled);
         CancelCloseCommand = new RelayCommand(() => IsClosePending = false);
         ToggleGroupCommand = new RelayCommand(p => ToggleGroup(p as NavGroup));
+        ClearNavSearchCommand = new RelayCommand(() => NavSearchText = "", () => HasNavSearchText);
         ShowSettingsCommand = new RelayCommand(() => ShowSettingsRequested?.Invoke());
 
         Updater = new AppUpdateViewModel(
             new AppUpdateService(_saveSettings ? null : System.IO.Path.Combine(_journal.StorageDirectory, "updates")),
             () => IsGlobalBusy,
-            () => NavItems.Select(item => item.Instance).OfType<EnvironmentViewModel>().Any(env => env.HasPendingPathDrafts),
-            PrepareUpdateRestartAsync, () => CloseRequested?.Invoke());
+            () => HasPendingPathDrafts,
+            PrepareUpdateRestartAsync, () => CloseRequested?.Invoke(), reviewDrafts: ReviewPendingPathDrafts);
         Updater.PropertyChanged += (_, args) =>
         {
             if (args.PropertyName == nameof(AppUpdateViewModel.IsPreparing)) UpdateOperationState();
@@ -382,9 +389,22 @@ public sealed class MainViewModel : ObservableObject
         return environment;
     }
 
+    private NavItem? EnvironmentNav => NavItems.FirstOrDefault(item => item.Key == "env");
+    public bool HasPendingPathDrafts => EnvironmentNav?.Instance is EnvironmentViewModel { HasPendingPathDrafts: true };
+
+    public void ReviewPendingPathDrafts()
+    {
+        if (IsNavigationEnabled && EnvironmentNav is { Instance: EnvironmentViewModel environment } nav)
+        {
+            NavSearchText = "";
+            SelectedNav = nav;
+            environment.ReviewPendingPathDrafts();
+        }
+    }
+
     private async Task<bool> PrepareUpdateRestartAsync(AppUpdateDownload download, CancellationToken cancellationToken)
     {
-        if (IsGlobalBusy) return false;
+        if (IsGlobalBusy || HasPendingPathDrafts) return false;
         var session = await new AppUpdateInstaller().PrepareRestartAsync(download, cancellationToken);
         if (!session.Ready || IsGlobalBusy)
         {
@@ -426,6 +446,32 @@ public sealed class MainViewModel : ObservableObject
     public ObservableCollection<NavGroup> NavGroups { get; } = new();
 
     public RelayCommand ToggleGroupCommand { get; }
+
+    public RelayCommand ClearNavSearchCommand { get; }
+
+    public string NavSearchText
+    {
+        get => _navSearchText;
+        set
+        {
+            if (!Set(ref _navSearchText, value)) return;
+            var terms = value.Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries);
+            _navSearchResults = terms.Length == 0 ? [] : NavItems.Where(item => terms.All(term =>
+                item.Title.Contains(term, StringComparison.OrdinalIgnoreCase) ||
+                item.Subtitle.Contains(term, StringComparison.OrdinalIgnoreCase) ||
+                item.Group.Contains(term, StringComparison.OrdinalIgnoreCase))).ToArray();
+            OnPropertyChanged(nameof(NavSearchResults));
+            OnPropertyChanged(nameof(HasNavSearchText));
+            OnPropertyChanged(nameof(IsNavSearchActive));
+            OnPropertyChanged(nameof(ShowNoNavResults));
+            ClearNavSearchCommand.RaiseCanExecuteChanged();
+        }
+    }
+
+    public IReadOnlyList<NavItem> NavSearchResults => _navSearchResults;
+    public bool HasNavSearchText => NavSearchText.Length > 0;
+    public bool IsNavSearchActive => !string.IsNullOrWhiteSpace(NavSearchText);
+    public bool ShowNoNavResults => IsNavSearchActive && NavSearchResults.Count == 0;
 
     public RelayCommand ShowSettingsCommand { get; }
 
@@ -512,7 +558,12 @@ public sealed class MainViewModel : ObservableObject
                 OnPropertyChanged(nameof(SelectedNav));
                 return;
             }
-            if (!Set(ref _selectedNav, value) || value is null) return;
+            var previous = _selectedNav;
+            if (!Set(ref _selectedNav, value)) return;
+            if (previous is not null) previous.IsSelected = false;
+            if (value is null) return;
+            value.IsSelected = true;
+            StatusText = _moduleStatuses.GetValueOrDefault(value.Key, "就绪");
             CurrentViewModel = value.ViewModel;
             OnPropertyChanged(nameof(CurrentTitle));
             OnPropertyChanged(nameof(CurrentSubtitle));
@@ -675,7 +726,11 @@ public sealed class MainViewModel : ObservableObject
 
     private void SetStatus(string message) => OnUi(() => StatusText = message);
 
-    private void SetMaintenanceStatus(string message) => SetStatus(message);
+    private Action<string> SetStatusFor(string moduleKey) => message => OnUi(() =>
+    {
+        _moduleStatuses[moduleKey] = message;
+        if (SelectedNav?.Key == moduleKey) StatusText = message;
+    });
 
     private void UpdateUndoState()
     {
@@ -727,10 +782,22 @@ public sealed class MainViewModel : ObservableObject
         module.Refresh();
     }
 
-    private static void Elevate()
+    private void Elevate()
     {
-        if (Native.RestartAsAdmin())
-            Application.Current.Shutdown();
+        if (HasPendingPathDrafts)
+        {
+            ReviewPendingPathDrafts();
+            FeedbackIsError = false;
+            FeedbackMessage = "PATH 有未应用的更改。请先处理更改，再以管理员身份重新启动。";
+            return;
+        }
+
+        if (Native.RestartAsAdmin()) Application.Current.Shutdown();
+        else
+        {
+            FeedbackIsError = true;
+            FeedbackMessage = "未以管理员身份重新启动。当前窗口保持打开，可稍后重试。";
+        }
     }
 
     private async void Undo()
@@ -757,28 +824,31 @@ public sealed class MainViewModel : ObservableObject
         }
     }
 
-    private void RestartExplorer()
+    private async Task RestartExplorerAsync()
     {
         if (!RestartExplorerCommand.CanExecute(null)) return;
-        var result = MessageBox.Show(
-            "将关闭并重新启动资源管理器。正在进行的文件复制或重命名会被中断，确定继续吗？",
-            "重启资源管理器",
-            MessageBoxButton.OKCancel,
-            MessageBoxImage.Warning,
-            MessageBoxResult.Cancel);
+        var result = MessageBox.Show(Application.Current.MainWindow,
+            "任务栏和桌面会暂时消失，资源管理器里的文件操作可能中断。请先等这些操作结束，再重启资源管理器。",
+            "重启资源管理器？", MessageBoxButton.OKCancel, MessageBoxImage.Warning, MessageBoxResult.Cancel);
 
-        if (result != MessageBoxResult.OK) return;
-
+        if (result != MessageBoxResult.OK || !RestartExplorerCommand.CanExecute(null)) return;
+        SetBusy(true);
+        FeedbackIsError = false;
+        FeedbackMessage = "正在重启资源管理器…";
         try
         {
-            var killed = Native.RestartExplorer();
-            SetStatus($"已重启资源管理器（结束 {killed} 个进程）");
+            await Native.RestartExplorerAsync();
+            FeedbackMessage = "资源管理器已重新启动。";
         }
         catch (Exception ex)
         {
             FeedbackIsError = true;
-            FeedbackMessage = $"资源管理器重启失败：{ex.Message}";
+            FeedbackMessage = $"无法确认资源管理器已重新启动：{ex.Message}";
+        }
+        finally
+        {
             SetStatus(FeedbackMessage);
+            SetBusy(false);
         }
     }
 }

@@ -61,7 +61,28 @@ public sealed class WindowsDriverUpdateItem : ObservableObject
     public string DetailText => string.IsNullOrWhiteSpace(Manufacturer) && string.IsNullOrWhiteSpace(Model)
         ? Description
         : $"{Manufacturer} {Model}".Trim();
+
+    private string _installIssue = "";
+    public string InstallIssue
+    {
+        get => _installIssue;
+        internal set
+        {
+            if (!Set(ref _installIssue, value)) return;
+            OnPropertyChanged(nameof(HasInstallIssue));
+            OnPropertyChanged(nameof(InstallActionText));
+        }
+    }
+
+    public bool HasInstallIssue => InstallIssue.Length > 0;
+    public string InstallActionText => HasInstallIssue ? "重试安装…" : "下载并安装…";
 }
+
+internal sealed record WindowsDriverInstallResult(
+    IReadOnlyList<WindowsDriverUpdateItem> Installed,
+    IReadOnlyDictionary<WindowsDriverUpdateItem, string> Issues,
+    string? IncompleteReason,
+    bool RebootRequired);
 
 public sealed class DriverManagerService
 {
@@ -497,59 +518,112 @@ public sealed class DriverManagerService
         });
     }
 
-    public Task<(bool Success, string Message)> InstallWindowsDriverUpdatesAsync(
+    internal Task<WindowsDriverInstallResult> InstallWindowsDriverUpdatesAsync(
         IReadOnlyList<WindowsDriverUpdateItem> items,
         Action<string>? progress = null)
     {
+        const int succeeded = 2; // OperationResultCode.orcSucceeded
+        const int succeededWithErrors = 3;
+
         return Task.Run(() =>
         {
+            var installed = new List<WindowsDriverUpdateItem>();
+            var issues = new Dictionary<WindowsDriverUpdateItem, string>();
+            var warnings = new List<string>();
+            var rebootRequired = false;
+
+            WindowsDriverInstallResult Finish(string? warning = null)
+            {
+                if (warning is not null) warnings.Add(warning);
+                if (warnings.Count == 0 && installed.Count != items.Count)
+                    warnings.Add("未能完成所有驱动更新。");
+                return new(installed, issues, warnings.Count == 0 ? null : string.Join(" ", warnings), rebootRequired);
+            }
+
             try
             {
                 var sessionType = Type.GetTypeFromProgID("Microsoft.Update.Session");
                 var collType = Type.GetTypeFromProgID("Microsoft.Update.UpdateColl");
                 if (sessionType is null || collType is null)
-                    return (false, "系统 Windows Update 组件不可用");
+                    return Finish("系统 Windows Update 组件不可用。");
 
                 dynamic session = Activator.CreateInstance(sessionType)!;
                 dynamic toDownload = Activator.CreateInstance(collType)!;
-
+                var downloadItems = new List<WindowsDriverUpdateItem>();
                 foreach (var item in items)
                 {
-                    if (item.ComUpdateObject is null) continue;
+                    if (item.ComUpdateObject is null)
+                    {
+                        issues[item] = "此更新不可用，请重新检查驱动更新。";
+                        continue;
+                    }
                     toDownload.Add(item.ComUpdateObject);
+                    downloadItems.Add(item);
                 }
 
-                if ((int)toDownload.Count == 0)
-                    return (false, "没有可安装的官方驱动更新项");
+                if (downloadItems.Count == 0)
+                    return Finish("没有可安装的官方驱动更新项。");
 
-                progress?.Invoke($"正在通过 Windows Update 下载 {(int)toDownload.Count} 个官方驱动包…");
+                progress?.Invoke($"正在通过 Windows Update 下载 {downloadItems.Count} 个官方驱动包…");
                 dynamic downloader = session.CreateUpdateDownloader();
                 downloader.Updates = toDownload;
                 dynamic dlResult = downloader.Download();
-                int dlCode = (int)dlResult.ResultCode; // 2 = Succeeded, 3 = SucceededWithErrors
-                if (dlCode is not (2 or 3))
-                    return (false, $"驱动下载未完成（状态码 {dlCode}）");
+                int dlCode = (int)dlResult.ResultCode;
+                if (dlCode != succeeded)
+                    warnings.Add(dlCode == succeededWithErrors
+                        ? "Windows Update 下载时报告错误（状态码 3）。"
+                        : $"驱动下载未完成（状态码 {dlCode}）。");
 
-                progress?.Invoke("下载完成，正在安装官方驱动更新…");
-                dynamic installer = session.CreateUpdateInstaller();
-                installer.Updates = toDownload;
-                dynamic instResult = installer.Install();
-                int instCode = (int)instResult.ResultCode;
-                bool rebootRequired = false;
-                try { rebootRequired = (bool)instResult.RebootRequired; } catch (Exception) { }
-
-                if (instCode is 2 or 3)
+                dynamic toInstall = Activator.CreateInstance(collType)!;
+                var installItems = new List<WindowsDriverUpdateItem>();
+                for (var i = 0; i < downloadItems.Count; i++)
                 {
-                    var suffix = rebootRequired ? "（部分驱动需重启电脑后完全生效）" : "";
-                    return (true, $"成功安装 {(int)toDownload.Count} 个官方驱动更新{suffix}");
+                    var item = downloadItems[i];
+                    dynamic update = item.ComUpdateObject!;
+                    if (!(bool)update.IsDownloaded)
+                    {
+                        dynamic dlItem = dlResult.GetUpdateResult(i);
+                        issues[item] = FormatUpdateIssue("未下载完成", (int)dlItem.ResultCode, (int)dlItem.HResult);
+                        continue;
+                    }
+                    if (dlCode is not (succeeded or succeededWithErrors)) continue;
+                    toInstall.Add(update);
+                    installItems.Add(item);
                 }
 
-                return (false, $"驱动安装未完成（状态码 {instCode}）");
+                if (installItems.Count == 0)
+                    return Finish("本次没有安装驱动更新。");
+
+                progress?.Invoke($"正在安装 {installItems.Count} 个已下载的官方驱动更新…");
+                dynamic installer = session.CreateUpdateInstaller();
+                installer.Updates = toInstall;
+                dynamic instResult = installer.Install();
+                rebootRequired = (bool)instResult.RebootRequired;
+                int instCode = (int)instResult.ResultCode;
+                if (instCode != succeeded)
+                    warnings.Add(instCode == succeededWithErrors
+                        ? "Windows Update 安装结束，但报告了错误（状态码 3）。"
+                        : $"驱动安装未完成（状态码 {instCode}）。");
+
+                for (var i = 0; i < installItems.Count; i++)
+                {
+                    var item = installItems[i];
+                    dynamic instItem = instResult.GetUpdateResult(i);
+                    int itemCode = (int)instItem.ResultCode;
+                    if (itemCode == succeeded) installed.Add(item);
+                    else issues[item] = FormatUpdateIssue("未确认安装成功", itemCode, (int)instItem.HResult);
+                }
+
+                return Finish();
             }
             catch (Exception ex)
             {
-                return (false, $"安装官方驱动更新失败：{ex.Message}");
+                return Finish($"Windows Update 驱动更新操作未完成：{ex.Message}");
             }
         });
     }
+
+    private static string FormatUpdateIssue(string message, int resultCode, int hresult) => hresult == 0
+        ? $"{message}（状态码 {resultCode}）。"
+        : $"{message}（状态码 {resultCode}，错误 0x{hresult:X8}）。";
 }

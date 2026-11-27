@@ -80,6 +80,10 @@ public sealed class AppUpdateService : IDisposable
     /// <summary>自动检查限 24 小时一次；手动检查不受开关、节流限制。仅下载小型元数据，不下载 EXE。</summary>
     public async Task<AppUpdateRelease?> CheckAsync(Version currentVersion, bool manual,
         CancellationToken cancellationToken = default)
+        => (await CheckWithOutcomeAsync(currentVersion, manual, cancellationToken).ConfigureAwait(false)).Release;
+
+    internal async Task<(bool Checked, AppUpdateRelease? Release)> CheckWithOutcomeAsync(Version currentVersion, bool manual,
+        CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(currentVersion);
         ThrowIfDisposed();
@@ -95,12 +99,12 @@ public sealed class AppUpdateService : IDisposable
                 var normalized = AppUpdateVersion.Normalize(currentVersion);
                 if (_currentVersion is null || normalized > _currentVersion) _currentVersion = normalized;
             }
-            if (!manual && !_preferences.TryReserveAutomaticCheck(_utcNow())) return null;
+            if (!manual && !_preferences.TryReserveAutomaticCheck(_utcNow())) return (false, null);
             var release = await LoadReleaseAsync(new Uri(ApiRoot + "latest"), null, token, currentVersion).ConfigureAwait(false);
             if (release is null || AppUpdateVersion.Normalize(release.Version) <= AppUpdateVersion.Normalize(currentVersion))
-                return null;
+                return (true, null);
             RememberTrusted(release);
-            return release;
+            return (true, release);
         }
         catch (OperationCanceledException exception) when (!cancellationToken.IsCancellationRequested && !_lifetimeToken.IsCancellationRequested)
         {

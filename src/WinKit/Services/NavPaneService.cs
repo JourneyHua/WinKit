@@ -12,8 +12,12 @@ public sealed class QuickAccessItem : ObservableObject
     public string Name { get; init; } = "";
     public string Path { get; init; } = "";
     public bool IsFolder { get; init; }
+    public bool? IsPinned { get; init; }
+    public bool IsPinnedFolder => IsFolder && IsPinned is true;
 
-    public string KindText => IsFolder ? "固定文件夹" : "最近使用";
+    public string KindText => IsPinned is null ? "未确认固定状态"
+        : IsPinned is true ? "已固定"
+        : IsFolder ? "常用文件夹" : "最近使用";
 
     public int Order
     {
@@ -84,23 +88,26 @@ public sealed class NavPaneService
                 try
                 {
                     item = ((dynamic)collection).Item(i);
-                    if (item is null) continue;
+                    if (item is null) return (items, "快速访问列表已变化，请刷新后重试。");
 
                     string name = "";
                     string path = "";
-                    try { name = (string)((dynamic)item).Name; } catch (Exception) { }
-                    try { path = (string)((dynamic)item).Path; } catch (Exception) { }
+                    try { name = (string)((dynamic)item).Name ?? ""; } catch (Exception) { }
+                    try { path = (string)((dynamic)item).Path ?? ""; } catch (Exception) { }
 
-                    if (string.IsNullOrWhiteSpace(name) && string.IsNullOrWhiteSpace(path)) continue;
-
-                    // 用文件系统判断是否文件夹，COM 的 IsFolder 在快速访问命名空间里不可靠
-                    var isFolder = !string.IsNullOrWhiteSpace(path) && Directory.Exists(path);
+                    // 常用文件夹也是目录，但不是固定项。读取 Explorer 自己的固定标记，
+                    // 不用 Directory.Exists 猜测（离线或不可访问的固定项也不能忽略）。
+                    var isFolder = (bool)((dynamic)item).IsFolder;
+                    bool? isPinned = null;
+                    try { isPinned = (object?)((dynamic)item).ExtendedProperty("System.Home.IsPinned") as bool?; }
+                    catch (Exception) { /* 不确定的固定项只读展示。 */ }
 
                     items.Add(new QuickAccessItem
                     {
-                        Name = string.IsNullOrWhiteSpace(name) ? path : name,
+                        Name = !string.IsNullOrWhiteSpace(name) ? name : !string.IsNullOrWhiteSpace(path) ? path : "未命名项目",
                         Path = path,
                         IsFolder = isFolder,
+                        IsPinned = isPinned,
                         Order = order++
                     });
                 }
@@ -121,62 +128,48 @@ public sealed class NavPaneService
             ReleaseCom(shell);
         }
 
-        // 已固定的文件夹排在前面，最近使用的文件排在后面
-        return (items.OrderBy(i => i.IsFolder ? 0 : 1).ThenBy(i => i.Order).ToList(), null);
+        return (items.OrderBy(i => i.IsPinnedFolder ? 0 : 1).ToList(), null);
     }
 
-    public void Pin(string folderPath)
+    internal static string[] GetFixedFolders(IEnumerable<QuickAccessItem> items)
     {
-        if (!Directory.Exists(folderPath)) throw new DirectoryNotFoundException(folderPath);
-        RunVerb(folderPath, "pintohome");
+        var candidates = items.Where(item => item.IsFolder).ToArray();
+        var paths = candidates.Where(item => item.IsPinned is true).Select(item => item.Path).ToArray();
+        if (candidates.Any(item => item.IsPinned is null) || paths.Any(string.IsNullOrWhiteSpace)
+            || paths.Distinct(StringComparer.OrdinalIgnoreCase).Count() != paths.Length)
+            throw new InvalidOperationException("无法确认所有固定文件夹，请刷新列表后重试。");
+        return paths;
     }
 
-    public void Unpin(string itemPath)
+    private string[] ReadFixedFolders()
     {
-        RunVerb(itemPath, "unpinfromhome");
-    }
-
-    /// <summary>
-    /// 重新排列快速访问固定项：先全部取消，再按给定顺序重新固定（逐个等待，较慢但可靠）。
-    /// 返回未能恢复的路径，调用方必须提示用户，不能静默当作成功。
-    /// </summary>
-    public IReadOnlyList<string> RebuildOrder(IReadOnlyList<string> orderedPaths, Action<string>? progress = null)
-    {
-        var (current, error) = LoadQuickAccess();
+        var (items, error) = LoadQuickAccess();
         if (error is not null) throw new InvalidOperationException(error);
-
-        var failures = new List<string>();
-
-        foreach (var item in current.Where(i => i.IsFolder && !string.IsNullOrWhiteSpace(i.Path)))
-        {
-            try
-            {
-                progress?.Invoke($"取消固定：{item.Name}");
-                Unpin(item.Path);
-                Thread.Sleep(120);
-            }
-            catch (Exception ex)
-            {
-                failures.Add($"{item.Name}（取消固定失败：{ex.Message}）");
-            }
-        }
-
-        foreach (var path in orderedPaths)
-        {
-            try
-            {
-                progress?.Invoke($"固定：{path}");
-                Pin(path);
-                Thread.Sleep(180);
-            }
-            catch (Exception ex)
-            {
-                failures.Add($"{path}（重新固定失败：{ex.Message}）");
-            }
-        }
-
-        return failures;
+        return GetFixedFolders(items);
     }
+
+    private static bool CanPin(string path) => Path.IsPathFullyQualified(path) && Directory.Exists(path);
+
+    public void Pin(string folderPath) => SetPinned(folderPath, true);
+    public void Unpin(string folderPath) => SetPinned(folderPath, false);
+
+    private void SetPinned(string path, bool pinned)
+    {
+        bool Check() => ReadFixedFolders().Contains(path, StringComparer.OrdinalIgnoreCase) == pinned;
+        if (Check()) return;
+        if (pinned && !CanPin(path)) throw new DirectoryNotFoundException($"无法访问文件夹：{path}");
+        RunVerb(path, pinned ? "pintohome" : "unpinfromhome");
+        for (var i = 0; i < 12; i++)
+        {
+            if (i != 0) Thread.Sleep(100);
+            if (Check()) return;
+        }
+        throw new InvalidOperationException($"资源管理器未确认{(pinned ? "固定" : "取消固定")}：{path}");
+    }
+
+    public QuickAccessOrderResult RebuildOrder(IReadOnlyList<string> expected, IReadOnlyList<string> desired)
+        => QuickAccessOrder.Apply(expected, desired, ReadFixedFolders,
+            path => RunVerb(path, "pintohome"), path => RunVerb(path, "unpinfromhome"), CanPin, () => Thread.Sleep(100));
 
     public List<NavToggleItem> LoadToggles()
     {
