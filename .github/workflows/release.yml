@@ -309,6 +309,12 @@ jobs:
             ${{ env.RELEASE_METADATA }}
           if-no-files-found: error
 
+      - name: Build and verify optional release EXEs
+        if: startsWith(github.ref, 'refs/tags/v')
+        timeout-minutes: 10
+        shell: pwsh
+        run: ./build-variants.ps1
+
       - name: Create GitHub Release
         if: startsWith(github.ref, 'refs/tags/v')
         uses: softprops/action-gh-release@v2
@@ -327,14 +333,18 @@ jobs:
 
             ### 运行要求与下载说明
 
-            - 下载 `${{ env.RELEASE_EXE }}`，适用于 Windows 11 x64，已包含 .NET 运行时。配套 `${{ env.RELEASE_METADATA }}` 供应用更新与手动校验使用，包含 EXE 的 SHA-256 和字节数。
-            - 双击默认以普通权限启动；需要管理员时可点击「以管理员身份重新启动」。
+            - **默认版**：`${{ env.RELEASE_EXE }}`，适用于 Windows 11 x64，已包含 .NET 运行时。仅此版本配套 `${{ env.RELEASE_METADATA }}`，供内置更新和手动校验使用。
+            - **压缩自包含版**：`WinKit-v${{ env.RELEASE_VERSION }}-win-x64-compressed.exe`，下载更小，不用另装 .NET。
+            - **不带运行时版**：`WinKit-v${{ env.RELEASE_VERSION }}-win-x64-framework-dependent.exe`，需要已安装 .NET 10 桌面运行时（Windows x64）。
+            - 内置更新仍下载默认版；若希望一直使用备用版，请手动下载对应文件。双击默认以普通权限启动，需要管理员时可点击「以管理员身份重新启动」。
             - SmartScreen 提示受文件声誉、下载标记和本机策略影响。核实来源后，可在文件属性提供该选项时「解除锁定」；不保证解除标记后不再出现安全提示。详见 README。
             - 仓库配置 Probe 服务层自测与界面离屏自检门禁；本次结果以对应 Actions 日志为准，用例数随版本变化。
           fail_on_unmatched_files: true
           files: |
             ${{ env.RELEASE_EXE }}
             ${{ env.RELEASE_METADATA }}
+            dist/variants/WinKit-v${{ env.RELEASE_VERSION }}-win-x64-compressed.exe
+            dist/variants/WinKit-v${{ env.RELEASE_VERSION }}-win-x64-framework-dependent.exe
 
   verify-public-update:
     needs: build
