@@ -22,20 +22,20 @@ public partial class MainWindow : Window
         DataContext = _vm;
 
         Loaded += OnLoaded;
-        SizeChanged += (_, e) =>
-        {
-            if (!e.WidthChanged) return;
-            // Ease the layout constraint, not the resize: the rail tracks the current width
-            // directly rather than jumping between two widths at a breakpoint.
-            var width = Math.Clamp(190 + (e.NewSize.Width - MinWidth) * 0.25, 190, 228);
-            if (NavigationColumn.Width.Value != width) NavigationColumn.Width = new GridLength(width);
-        };
         Closing += OnClosing;
         Closed += (_, _) => _vm.OnWindowClosed();
         SourceInitialized += OnSourceInitialized;
 
         _vm.ShowSettingsRequested += ShowSettingsPopup;
         _vm.CloseRequested += () => Dispatcher.BeginInvoke(new Action(Close));
+    }
+
+    private void LayoutRoot_SizeChanged(object sender, SizeChangedEventArgs e)
+    {
+        if (!e.WidthChanged) return;
+        // Track the client area continuously; the native title bar and borders are not part of layout.
+        var width = Math.Clamp(190 + (e.NewSize.Width - 1024) * 0.25, 190, 228);
+        if (NavigationColumn.Width.Value != width) NavigationColumn.Width = new GridLength(width);
     }
 
     private void OnSourceInitialized(object? sender, EventArgs e)

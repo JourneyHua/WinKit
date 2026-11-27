@@ -209,7 +209,11 @@ public partial class App
             window.Height = window.MinHeight;
             window.UpdateLayout();
             var narrowRail = window.NavigationColumn.ActualWidth;
-            Require(Math.Abs(narrowRail - 190) < 1, "窄窗口侧栏没有跟随窗口大小");
+            var narrowWindowWidth = window.ActualWidth;
+            var frameWidth = narrowWindowWidth - root.ActualWidth;
+            var frameHeight = window.ActualHeight - root.ActualHeight;
+            Require(Math.Abs(narrowWindowWidth - window.MinWidth) < 1 && Math.Abs(narrowRail - 190) < 1,
+                "窄窗口侧栏没有跟随窗口大小");
 
             var overview = vm.NavItems.First(item => item.Key == "overview");
             var backup = vm.NavItems.First(item => item.Key == "backup");
@@ -241,16 +245,31 @@ public partial class App
 
             CheckSettings();
             Motion.SuppressForVerification = false;
-            window.Width = 1440;
-            window.Height = 820;
+            const double wideWidth = 1440, wideHeight = 820;
+            window.Width = wideWidth;
+            window.Height = wideHeight;
             ThemeService.Apply(AppTheme.Dark);
             window.UpdateLayout();
-            Require(Math.Abs(window.NavigationColumn.ActualWidth - 228) < 1, "宽窗口侧栏没有恢复常规宽度");
             CheckSettings();
+
+            var clientWidth = wideWidth - frameWidth;
+            var clientHeight = wideHeight - frameHeight;
+            var wideOffscreen = root.ActualWidth < clientWidth - 1 || root.ActualHeight < clientHeight - 1;
+            if (wideOffscreen)
+            {
+                // On a small CI desktop Windows caps native window bounds. Lay out the actual
+                // shell at the requested client size and capture the whole visual offscreen.
+                root.Width = clientWidth;
+                root.Height = clientHeight;
+                window.UpdateLayout();
+            }
+            Require(root.ActualWidth >= clientWidth - 1 && root.ActualHeight >= clientHeight - 1
+                && Math.Abs(window.NavigationColumn.ActualWidth - 228) < 1,
+                $"宽窗口布局错误（窗口 {window.ActualWidth:0}，内容 {root.ActualWidth:0}，侧栏 {window.NavigationColumn.ActualWidth:0}）");
             NavigateSmoke(window, vm, overview);
             RenderFor(180);
             Capture(window, outputDir, "shell-wide-dark", log);
-            log.AppendLine($"  ux-motion-shell: narrow={window.MinWidth:0} rail={narrowRail:0} wide={window.ActualWidth:0} rail={window.NavigationColumn.ActualWidth:0} search=clicked settings=open/close reduced=instant result=OK");
+            log.AppendLine($"  ux-motion-shell: narrow={narrowWindowWidth:0} rail={narrowRail:0} wide={window.ActualWidth:0} client={root.ActualWidth:0} mode={(wideOffscreen ? "offscreen" : "native")} rail={window.NavigationColumn.ActualWidth:0} search=clicked settings=open/close reduced=instant result=OK");
         }
         finally
         {

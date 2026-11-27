@@ -50,7 +50,7 @@
         </DataTemplate>
     </Window.Resources>
 
-    <Grid>
+    <Grid SizeChanged="LayoutRoot_SizeChanged">
         <Grid.ColumnDefinitions>
             <ColumnDefinition x:Name="NavigationColumn" Width="228" />
             <ColumnDefinition Width="*" />
