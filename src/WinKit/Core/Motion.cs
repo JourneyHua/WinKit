@@ -20,6 +20,11 @@ public static class Motion
     internal static bool IsEnabled => !_suppressForVerification && SystemParameters.ClientAreaAnimation && !SystemParameters.HighContrast;
     internal static int ActiveCount => Active.Count;
 
+    // Inspect the clock's configured start, not a dispatcher-timing-dependent intermediate tick.
+    internal static double? ActiveStartForVerification(DependencyObject target, DependencyProperty property)
+        => Active.TryGetValue((target, property), out var clock) && clock.Timeline is DoubleAnimation animation
+            ? animation.From : null;
+
     // For exercising the same zero-motion path even when the test desktop has animations enabled.
     internal static bool SuppressForVerification
     {

@@ -95,15 +95,21 @@ public partial class App
             var trackSize = progress.RenderSize;
             var settingsPermitMotion = Motion.IsEnabled;
 
-            // Verify an interrupted transition carries its current visual value and does not leave a second clock behind.
+            // Interrupt in the same dispatcher turn: a slow test host must not run out the first clock.
+            Motion.SuppressForVerification = true;
+            Motion.SetLevel(feedback, 0);
+            Motion.SuppressForVerification = oldSuppression;
             Motion.SetLevel(feedback, 0.16);
-            RenderFor(35);
-            var mid = feedback.Opacity;
+            var current = feedback.Opacity;
             Motion.SetLevel(feedback, 0.07);
             if (settingsPermitMotion)
-                Require(Math.Abs(feedback.Opacity - mid) < 0.03 && Motion.ActiveCount > 0, "反向操作没有接上当前透明度");
+                Require(Motion.ActiveStartForVerification(feedback, UIElement.OpacityProperty) is double from
+                    && Math.Abs(from - current) < 0.001, "反向操作没有接上当前透明度");
+            RenderFor(210);
+            Require(Math.Abs(feedback.Opacity - 0.07) < 0.001, "反向动效结束后状态不正确");
+            Motion.SetLevel(feedback, 0.16);
             Motion.SuppressForVerification = true;
-            Require(Motion.ActiveCount == 0 && Math.Abs(feedback.Opacity - 0.07) < 0.001, "关闭动效后没有立即落到正确状态");
+            Require(Motion.ActiveCount == 0 && Math.Abs(feedback.Opacity - 0.16) < 0.001, "关闭动效后没有立即落到正确状态");
             Motion.SetLevel(feedback, 0);
             Motion.SetAngle(arrow, 180);
             var toggle = (IToggleProvider)new CheckBoxAutomationPeer(check).GetPattern(PatternInterface.Toggle)!;
