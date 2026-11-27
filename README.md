@@ -384,7 +384,18 @@ dotnet run --project tools/UpdateInstallerProbe -- --fixture dist/publish/WinKit
 WinKit.exe --maintain
 ```
 
-`build.cmd` 在 `dist/` 生成 `WinKit-v<版本>-win-x64.exe` 与 `WinKit-v<版本>-win-x64.update.json`。Release 只上传这两个文件，不再提供 ZIP；普通 solution build 与 Probe 仍使用框架依赖构建，避免项目引用受自包含设置影响。
+`build.cmd` 在 `dist/` 生成 `WinKit-v<版本>-win-x64.exe` 与 `WinKit-v<版本>-win-x64.update.json`。正式 Release 和内置更新继续使用这两个文件；普通 solution build 与 Probe 仍使用框架依赖构建，避免项目引用受自包含设置影响。
+
+### 备用构建：压缩自包含版和不带运行时版
+
+在装有 .NET 10 SDK、x64 Desktop Runtime 和 PowerShell 7.4+ 的 Windows 上，运行 `pwsh -File ./build-variants.ps1`。脚本从同一份源码构建两个单文件 EXE，在实际窗口里跑动效自检，并打印精确字节数和 SHA-256；默认输出到 `dist/variants/`。同版本重复构建可用 `-OutputDirectory` 指定新目录，不会覆盖已有 EXE。
+
+| 文件名后缀 | 什么时候选 |
+| --- | --- |
+| `-win-x64-compressed.exe` | 想减小下载体积，又不想另装任何运行时。仍是自包含 EXE。 |
+| `-win-x64-framework-dependent.exe` | 电脑已经有 [.NET 10 Desktop Runtime（Windows x64）](https://dotnet.microsoft.com/download/dotnet/10.0)，希望下载更小的 EXE。仅装普通 .NET Runtime 不够。 |
+
+`package-variants` 工作流将两份 EXE 分别上传为 Actions 构建产物（下载需登录 GitHub，下载后从 Actions 的 ZIP 中取出 EXE）。它们不是正式更新资产，不生成 `.update.json`；若通过应用内置更新升级，下载的仍是正式 Release 的自包含版，不会沿用备用构建格式。若希望保留所选格式，请手动下载对应的新构建。
 
 更新元数据使用 UTF-8 JSON，固定字段为 `schemaVersion: 1`、字符串 `version`（如 `1.12.0`）、`rid: "win-x64"`、`fileName`（完整 EXE 文件名）、`sha256`（64 位十六进制 SHA-256）与 `size`（64 位整数，EXE 字节数）。哈希和大小都由最终上传的 EXE 计算，发布说明由 GitHub Release 正文提供。标签必须为 `v<项目版本>`，CI 会核对标签、项目版本以及 EXE 的 ProductVersion/FileVersion，并拒绝包含额外散件的发布目录。
 

@@ -1,0 +1,38 @@
+name: package-variants
+
+on:
+  push:
+    branches: ['**']
+    paths:
+      - 'src/WinKit/**'
+      - 'build-variants.ps1'
+      - '.github/workflows/package-variants.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  win-x64:
+    runs-on: windows-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.x'
+      - name: Build and exercise both single EXEs
+        shell: pwsh
+        run: ./build-variants.ps1
+      - name: Upload compressed self-contained EXE
+        uses: actions/upload-artifact@v4
+        with:
+          name: WinKit-win-x64-compressed
+          path: dist/variants/*-compressed.exe
+          if-no-files-found: error
+      - name: Upload framework-dependent EXE
+        uses: actions/upload-artifact@v4
+        with:
+          name: WinKit-win-x64-framework-dependent
+          path: dist/variants/*-framework-dependent.exe
+          if-no-files-found: error
