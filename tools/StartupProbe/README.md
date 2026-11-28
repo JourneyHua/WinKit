@@ -14,7 +14,7 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File tools/StartupProbe/Invok
 
 - 以 `UseShellExecute=false`、空应用参数启动指定 EXE，工作目录为该 EXE 所在目录。脚本保留继承的环境，不设置 `TEMP`、`TMP`、`DOTNET_BUNDLE_EXTRACT_BASE_DIR`、`DOTNET_ROOT` 或隐藏原生启动错误的变量。
 - 并行读取标准输出和标准错误，保留原生 host 在 C# 入口执行前写出的错误。每个流最多保存 1,048,576 个字符；截断或读取异常都会导致验收失败。
-- 核对启动 PID、映像绝对路径、进程创建时间及 token 的用户 SID 和完整性级别。报告还记录 RestrictedSids、IsRestricted、ElevationType 和 IsAppContainer。`-RequireMediumIntegrity` 要求观察器为 Medium（RID 8192），子进程必须保留相同 SID 和完整性级别；它不会降权、提权或修改 token。
+- 核对启动 PID、映像绝对路径、进程创建时间及 token 的用户 SID 和精确的预期完整性级别。默认 `-ExpectedProcessIntegrity Observer` 保持原有同级要求；发布入口显式使用 `-ExpectedProcessIntegrity Medium`，只接受同一用户、RID 8192 的应用，观察器本身限 Medium 或 High；该模式还要求观察器和应用均为已知的非 AppContainer、非受限 token，RestrictedSids 为空。报告分别记录期望 RID、观察器与应用 token，并保留 RestrictedSids、IsRestricted、ElevationType 和 IsAppContainer。`-RequireMediumIntegrity` 额外要求观察器为 Medium（RID 8192）；脚本不修改任何 token。
 - 最多等待 90 秒（可用 `-TimeoutSeconds 5..90` 缩短），每 100 毫秒检查进程退出和窗口身份。窗口必须属于本次 PID，标题为“WinKit 系统管家”，可见、启用，并通过 UI Automation 的可交互检查。UI Automation 在后台线程执行，调用停滞也不会绕过等待截止时间。
 - 找到 AutomationId 为 `overview` 的系统概览按钮并实际调用 InvokePattern，核对其 ItemStatus 为“当前页面”。必要时会先展开“体检与安全”组。这是普通界面导航，可能按应用既有行为保存选中页面和导航组展开状态；不会执行优化、清理或权限修复。
 - 同一窗口连续通过检查至少 3 秒后，发送 `CloseMainWindow`，等待最多 20 秒并要求进程以 0 正常退出。最后重新核对 EXE 的 SHA-256，避免验收期间文件被替换。
@@ -27,7 +27,7 @@ JSON 包含 SHA-256、ProductVersion、FileVersion、继承的相关环境变量
 
 指定 `-ExpectedVersion 1.14.2` 时，ProductVersion 必须恰为 `1.14.2`，FileVersion 必须恰为 `1.14.2.0`。版本参数只接受规范的稳定版 `major.minor.patch`。未指定时只记录版本，不检查版本相等。
 
-本地普通用户验收应在未提升的 Medium 桌面运行，并使用 `-RequireMediumIntegrity`。CI 若以 High 运行，可在不传此开关时检查同级启动，但这份报告只证明 High 环境启动；它不能代替普通用户的 Medium 验收。脚本会明确记录实际级别。
+本地普通用户验收应在未提升的 Medium 桌面运行，并使用 `-RequireMediumIntegrity`。High CI 观察器启动已标记 Medium 的交付文件时，应用会正常成为 Medium；发布脚本显式指定 `-ExpectedProcessIntegrity Medium` 验证这一结果，而不是把它误判为同级启动失败。这份报告会同时保留 High 观察器与 Medium 应用的事实，不能替代本地未提升观察器的验收。Low、System 等观察器不能使用这个发布模式；Low、High、其他用户的应用也不能通过其精确身份检查。
 
 ## 完整性标签造成的原生启动失败
 
@@ -43,4 +43,7 @@ JSON 包含 SHA-256、ProductVersion、FileVersion、继承的相关环境变量
 
 ~~~powershell
 powershell.exe -NoProfile -ExecutionPolicy Bypass -File tools/StartupProbe/Test-ArtifactIntegrity.ps1
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File tools/StartupProbe/Test-StartupIdentity.ps1
 ~~~
+
+身份策略回归只加载实际的纯策略函数，覆盖普通同级、High 观察器与 Medium 应用、错误 SID、错误 RID 和不支持的观察器；不会启动应用或更改 token。

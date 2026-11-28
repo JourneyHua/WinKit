@@ -410,7 +410,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File tools/StartupProbe/Set-Artif
 powershell -NoProfile -ExecutionPolicy Bypass -File tools/StartupProbe/Invoke-StartupProbe.ps1 -ExecutablePath dist/publish/WinKit.exe -ExpectedVersion 1.14.2 -ReportPath dist/startup.json -RequireMediumIntegrity
 ```
 
-`-RequireMediumIntegrity` 用于普通桌面本地验收；CI 记录实际身份和完整性，要求子进程与观察器保持一致。探针记录实际 EXE 路径、SHA-256、版本、进程身份、UI Automation 交互、标准错误和关闭结果，失败返回非零。详见 [普通启动探针](tools/StartupProbe/README.md)。
+`-RequireMediumIntegrity` 用于普通桌面本地验收，要求观察器本身为 Medium。发布入口还显式指定 `-ExpectedProcessIntegrity Medium`，严格要求应用进程为同一用户的 Medium：这也支持 High CI 观察器启动已标记 Medium 的交付文件。默认模式仍要求观察器与应用同级，不接受任意级别变化。探针记录预期与实际完整性、EXE 路径、SHA-256、版本、UI Automation 交互、标准错误和关闭结果，失败返回非零。详见 [普通启动探针](tools/StartupProbe/README.md)。
 
 ### 页面性能对照
 

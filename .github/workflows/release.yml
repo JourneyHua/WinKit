@@ -67,6 +67,10 @@ jobs:
         shell: pwsh
         run: ./tools/StartupProbe/Test-ArtifactIntegrity.ps1
 
+      - name: Startup identity policy regression
+        shell: pwsh
+        run: ./tools/StartupProbe/Test-StartupIdentity.ps1
+
       - name: Publish single EXE for smoke and release (asInvoker)
         shell: pwsh
         run: |
@@ -303,7 +307,7 @@ jobs:
           $assetPath = Join-Path $PWD $env:RELEASE_EXE
           Copy-Item -LiteralPath publish/preview/WinKit.exe -Destination $assetPath -Force
           ./tools/StartupProbe/Set-ArtifactIntegrity.ps1 -ExecutablePath $assetPath
-          ./tools/StartupProbe/Invoke-StartupProbe.ps1 -ExecutablePath $assetPath -ExpectedVersion $env:RELEASE_VERSION -ReportPath startup-out/default.json
+          ./tools/StartupProbe/Invoke-StartupProbe.ps1 -ExecutablePath $assetPath -ExpectedVersion $env:RELEASE_VERSION -ExpectedProcessIntegrity Medium -ReportPath startup-out/default.json
           if ($LASTEXITCODE -ne 0) { throw "Final-named EXE ordinary startup failed" }
           $asset = Get-Item -LiteralPath $assetPath
           $metadata = [ordered]@{

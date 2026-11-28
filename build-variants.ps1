@@ -45,7 +45,7 @@ try {
         [IO.File]::Move($files[0].FullName, $variant.Staged)
         & (Join-Path $PSScriptRoot 'tools/StartupProbe/Set-ArtifactIntegrity.ps1') -ExecutablePath $variant.Staged
         $startupReport = Join-Path $output "$($variant.Name)-startup.json"
-        & (Join-Path $PSScriptRoot 'tools/StartupProbe/Invoke-StartupProbe.ps1') -ExecutablePath $variant.Staged -ExpectedVersion $version -ReportPath $startupReport
+        & (Join-Path $PSScriptRoot 'tools/StartupProbe/Invoke-StartupProbe.ps1') -ExecutablePath $variant.Staged -ExpectedVersion $version -ExpectedProcessIntegrity Medium -ReportPath $startupReport
         if ($LASTEXITCODE -ne 0) { throw "Ordinary startup for $($variant.Name) failed." }
         $smoke = Join-Path $scratch "$($variant.Name)-smoke"
         $environment = @{ DOTNET_DISABLE_GUI_ERRORS = '1' }

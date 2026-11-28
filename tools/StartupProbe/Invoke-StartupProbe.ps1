@@ -6,6 +6,7 @@ param(
     [string] $ReportPath,
     [ValidateRange(5, 90)] [int] $TimeoutSeconds = 90,
     [switch] $RequireMediumIntegrity,
+    [ValidateSet('Observer', 'Medium')] [string] $ExpectedProcessIntegrity = 'Observer',
     [switch] $Help
 )
 
@@ -15,6 +16,7 @@ Observe a real WinKit EXE startup without application arguments or environment o
 Usage: powershell -NoProfile -File Invoke-StartupProbe.ps1 -ExecutablePath <exe>
        [-ExpectedVersion <major.minor.patch>] [-ReportPath <json>]
        [-TimeoutSeconds <5..90>] [-RequireMediumIntegrity]
+       [-ExpectedProcessIntegrity <Observer|Medium>]
 The observer invokes only the overview navigation button, then closes its own process.
 Default reports: dist/startup-probe/<unique-id>/report.json beneath the repository.
 Exit code: 0 = startup, UI interaction, stability and normal close passed; 1 = failed.
@@ -28,6 +30,7 @@ $capture = $null
 $launchedStartTicks = $null
 $expectedPath = $null
 $observerIdentity = $null
+$expectedProcessIntegrityRid = $null
 $windowWork = $null
 $probeStarted = [DateTimeOffset]::UtcNow
 $report = [ordered]@{
@@ -46,6 +49,8 @@ $report = [ordered]@{
     EnvironmentOverrides = @{}
     InheritedEnvironment = [ordered]@{}
     RequireMediumIntegrity = [bool]$RequireMediumIntegrity
+    ExpectedProcessIntegrity = $ExpectedProcessIntegrity
+    ExpectedProcessIntegrityRid = $null
     ObserverIdentity = $null
     ProcessIdentity = $null
     ProcessId = $null
@@ -331,15 +336,37 @@ namespace WinKit.StartupProbe {
 }
 '@
 
+function Get-ExpectedProcessIntegrityRid {
+    param([int] $ObserverIntegrityRid, [ValidateSet('Observer', 'Medium')] [string] $Mode)
+    if ($Mode -eq 'Medium') {
+        if ($ObserverIntegrityRid -notin @(0x2000, 0x3000)) {
+            throw 'ExpectedProcessIntegrity Medium requires a Medium or High observer.'
+        }
+        return 0x2000
+    }
+    return $ObserverIntegrityRid
+}
+
+function Test-ExpectedProcessIdentity {
+    param([object] $Identity, [string] $Sid, [int] $IntegrityRid, [switch] $RequireUnrestricted)
+    if ($null -eq $Identity -or $Identity.Sid -cne $Sid -or $Identity.IntegrityRid -ne $IntegrityRid) { return $false }
+    if ($RequireUnrestricted) {
+        return $Identity.IsAppContainer -is [bool] -and -not $Identity.IsAppContainer -and
+            $Identity.IsRestricted -is [bool] -and -not $Identity.IsRestricted -and
+            $null -ne $Identity.RestrictedSids -and @($Identity.RestrictedSids).Count -eq 0
+    }
+    return $true
+}
+
 function Test-OwnedProcess {
-    if ($null -eq $process -or $null -eq $launchedStartTicks -or $null -eq $observerIdentity) { return $false }
+    if ($null -eq $process -or $null -eq $launchedStartTicks -or $null -eq $observerIdentity -or $null -eq $expectedProcessIntegrityRid) { return $false }
     try {
         $process.Refresh()
         if ($process.HasExited -or $process.Id -ne $report.ProcessId -or $process.StartTime.ToUniversalTime().Ticks -ne $launchedStartTicks) { return $false }
         $actualPath = [WinKit.StartupProbe.Native]::ImagePath($process.Id)
         if (-not [string]::Equals($actualPath, $expectedPath, [StringComparison]::OrdinalIgnoreCase)) { return $false }
         $identity = [WinKit.StartupProbe.Native]::ReadIdentity($process.Id)
-        return $identity.Sid -ceq $observerIdentity.Sid -and $identity.IntegrityRid -eq $observerIdentity.IntegrityRid
+        return Test-ExpectedProcessIdentity -Identity $identity -Sid $observerIdentity.Sid -IntegrityRid $expectedProcessIntegrityRid -RequireUnrestricted:($ExpectedProcessIntegrity -eq 'Medium')
     } catch { return $false }
 }
 
@@ -390,6 +417,11 @@ try {
     $observerIdentity = [WinKit.StartupProbe.Native]::ReadIdentity($PID)
     $report.ObserverIdentity = $observerIdentity
     if ($RequireMediumIntegrity -and $observerIdentity.IntegrityRid -ne 0x2000) { throw 'RequireMediumIntegrity needs an unelevated Medium-integrity observer.' }
+    $expectedProcessIntegrityRid = Get-ExpectedProcessIntegrityRid -ObserverIntegrityRid $observerIdentity.IntegrityRid -Mode $ExpectedProcessIntegrity
+    $report.ExpectedProcessIntegrityRid = $expectedProcessIntegrityRid
+    if ($ExpectedProcessIntegrity -eq 'Medium' -and -not (Test-ExpectedProcessIdentity -Identity $observerIdentity -Sid $observerIdentity.Sid -IntegrityRid $observerIdentity.IntegrityRid -RequireUnrestricted)) {
+        throw 'ExpectedProcessIntegrity Medium requires a known unrestricted, non-AppContainer observer.'
+    }
 
     $startInfo = New-Object Diagnostics.ProcessStartInfo
     $startInfo.FileName = $expectedPath
@@ -410,8 +442,8 @@ try {
     $process.Refresh()
     if ($process.HasExited) { throw ('EXE exited before its main window appeared: ' + $process.ExitCode) }
     $report.ProcessIdentity = [WinKit.StartupProbe.Native]::ReadIdentity($process.Id)
-    if ($report.ProcessIdentity.Sid -cne $observerIdentity.Sid -or $report.ProcessIdentity.IntegrityRid -ne $observerIdentity.IntegrityRid) {
-        throw 'Launched process did not retain the observer SID and integrity level.'
+    if (-not (Test-ExpectedProcessIdentity -Identity $report.ProcessIdentity -Sid $observerIdentity.Sid -IntegrityRid $expectedProcessIntegrityRid -RequireUnrestricted:($ExpectedProcessIntegrity -eq 'Medium'))) {
+        throw ('Launched process did not match the observer SID and expected integrity RID ' + $expectedProcessIntegrityRid + '.')
     }
     if (-not (Test-OwnedProcess)) {
         $process.Refresh()
