@@ -209,12 +209,12 @@ jobs:
             $failures += "表格列宽无法拖动（模板缺少 PART_*HeaderGripper）"
           }
 
-          # 子视图必须真的会隐藏：v1.8.0 的 bug 就是 Visibility 绑定写在同一元素的
-          # DataContext 之后，绑定失败 → 面板一直显示，叠在应用列表上面。
-          if ($log -notmatch 'uninstall-hidden: found=True .*visible=False') {
+          # 未激活的子视图不能可见：按需模板尚未创建时 found=False 合法，
+          # 已创建但隐藏的视图也合法；found=True 且 visible=True 仍须拒绝。
+          if ($log -notmatch 'uninstall-hidden: (?:found=False(?![A-Za-z0-9_])|found=True .*visible=False(?![A-Za-z0-9_]))') {
             $failures += "卸载残留清理面板在未激活时仍然可见"
           }
-          if ($log -notmatch 'uninstall-view-off: found=True .*visible=False') {
+          if ($log -notmatch 'uninstall-view-off: (?:found=False(?![A-Za-z0-9_])|found=True .*visible=False(?![A-Za-z0-9_]))') {
             $failures += "卸载残留清理面板切走后没有隐藏"
           }
           if ($log -notmatch 'taskbar-view: found=True') {
