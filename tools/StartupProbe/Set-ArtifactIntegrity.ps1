@@ -23,8 +23,11 @@ if ($LASTEXITCODE -ne 0) {
     throw 'Could not set the output EXE to ordinary Medium integrity. Use an ordinary Medium-integrity build session; no elevation is requested.'
 }
 $afterAccess = (Get-Acl -LiteralPath $artifact.FullName).GetSecurityDescriptorSddlForm($sections)
-if ($beforeAccess -cne $afterAccess -or
-    $beforeHash -cne (Get-FileHash -LiteralPath $artifact.FullName -Algorithm SHA256).Hash) {
-    throw 'Normalizing the output label unexpectedly changed its bytes or discretionary access permissions.'
+$afterHash = (Get-FileHash -LiteralPath $artifact.FullName -Algorithm SHA256).Hash
+if ($beforeHash -cne $afterHash) {
+    throw ('Normalizing the output label changed its bytes. Before SHA256: {0}; after SHA256: {1}' -f $beforeHash, $afterHash)
+}
+if ($beforeAccess -cne $afterAccess) {
+    throw ('Normalizing the output label changed its security descriptor on PowerShell {0}. Before: {1}; after: {2}' -f $PSVersionTable.PSVersion, $beforeAccess, $afterAccess)
 }
 Write-Host ('Output EXE integrity normalized: ' + $artifact.FullName)
