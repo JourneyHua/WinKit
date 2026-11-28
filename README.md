@@ -365,11 +365,11 @@ dotnet publish src/WinKit/WinKit.csproj -c Release -r win-x64 --self-contained t
 .\build.cmd
 
 # 界面自检：用发布的单 EXE 渲染各模块，并短时打开窗口验证真实交互
-dist\WinKit-v1.14.1-win-x64.exe --smoke C:\temp\smoke
+dist\WinKit-v1.14.2-win-x64.exe --smoke C:\temp\smoke
 
 # 动效专项：真实 WPF 窗口、普通/减少动态效果、6000 行滚动、窄/宽和浅/深截图
 # motion.log 的帧间隔是 WPF 渲染回调，不是显示器实际呈现间隔。
-dist\WinKit-v1.14.1-win-x64.exe --motion-smoke C:\temp\smoke-motion
+dist\WinKit-v1.14.2-win-x64.exe --motion-smoke C:\temp\smoke-motion
 
 # 只读探测：枚举全部菜单项/节点/驱动器/快速访问，落一份报告
 dotnet run --project tools/Probe -- report.txt
@@ -407,7 +407,7 @@ WinKit.exe --maintain
 
 ```powershell
 powershell -NoProfile -ExecutionPolicy Bypass -File tools/StartupProbe/Set-ArtifactIntegrity.ps1 -ExecutablePath dist/publish/WinKit.exe
-powershell -NoProfile -ExecutionPolicy Bypass -File tools/StartupProbe/Invoke-StartupProbe.ps1 -ExecutablePath dist/publish/WinKit.exe -ExpectedVersion 1.14.1 -ReportPath dist/startup.json -RequireMediumIntegrity
+powershell -NoProfile -ExecutionPolicy Bypass -File tools/StartupProbe/Invoke-StartupProbe.ps1 -ExecutablePath dist/publish/WinKit.exe -ExpectedVersion 1.14.2 -ReportPath dist/startup.json -RequireMediumIntegrity
 ```
 
 `-RequireMediumIntegrity` 用于普通桌面本地验收；CI 记录实际身份和完整性，要求子进程与观察器保持一致。探针记录实际 EXE 路径、SHA-256、版本、进程身份、UI Automation 交互、标准错误和关闭结果，失败返回非零。详见 [普通启动探针](tools/StartupProbe/README.md)。
@@ -434,7 +434,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File tools/StartupProbe/Invoke-St
 
 ### CI 质量门槛
 
-GitHub Actions 对 `master` 推送、面向 `master` 的 pull request、`v*` 标签及手动触发运行构建与检查；只有标签触发创建 Release。以工作流中的断言和本次运行日志为准，以下不是当前工作树已通过测试的声明。
+GitHub Actions 对 `master` 推送、面向 `master` 的 pull request、`v*` 标签及手动触发运行构建与检查；只有标签触发创建 Release。手动触发还会构建并验收两个可选 EXE，便于打 tag 前完成全部产物预检，不创建 Release。以工作流中的断言和本次运行日志为准，以下不是当前工作树已通过测试的声明。
 
 1. **服务层自测**：`tools/Probe --selftest` 与 npm、软件快照、结果集、导航生命周期、报告缓存专项返回非零即失败；用例数随代码变化，不固定为某个总数。`--selftest` 属于 Probe，不是 `WinKit.exe` 的参数。
 2. **界面离屏自检**：直接运行 `asInvoker`、win-x64 自包含单 EXE；通过自检的同一个 EXE 才用于 Release。检查进程退出码、`SMOKE OK`、至少 24 个模块渲染及关键模块数据、空态/错误原因。另检查列宽拖动、子视图隐藏、应用操作列未挤压或横向溢出、拖放放行、非模态导航/可撤销反馈，以及 14 页错误提示均不遮挡操作按钮。
@@ -446,7 +446,7 @@ GitHub Actions 对 `master` 推送、面向 `master` 的 pull request、`v*` 标
 
 - `ux-motion` / `ux-motion-shell`：检查动效可打断、减少动态效果时立即更新，验证 6,000 行仍按需绘制、窄/宽主窗口的导航及设置弹层可用。
 - `columnresize: ... result=OK`：列头拖动手柄存在且允许改宽。
-- `uninstall-hidden: ... visible=False` / `uninstall-view-off: ... visible=False`：卸载残留子视图在未激活及切走后均隐藏。
+- `uninstall-hidden: found=False` / `uninstall-view-off: found=False`：按需创建的卸载残留子视图尚不存在或已移出视图树；已创建但 `visible=False` 也有效，面板仍可见则失败。
 - `columns-apps: viewport=W total=T hscroll=no`：应用列表未横向溢出；同时按当前声明宽度（应用操作列为 274）检查实际宽度，避免按钮被挤掉。
 - `dragdrop: error=0 viewAllowDrop=True`：窗口允许相应拖放消息；受限沙箱可能拒绝，不能把它当作所有运行环境都已验证。
 - `restore: ... result=OK` / `smart: ... result=OK`：有数据，或明确解释权限/数据源不可用的原因。

@@ -374,7 +374,16 @@ try {
             [System.Windows.Automation.ControlType].Assembly.Location, [System.Windows.Rect].Assembly.Location)
         if ($PSVersionTable.PSVersion.Major -le 5) { $references += 'System.dll', 'System.Core.dll' }
         else {
-            $references += ([AppContext]::GetData('TRUSTED_PLATFORM_ASSEMBLIES') -split [IO.Path]::PathSeparator)
+            # Explicit references replace Add-Type's defaults. Runtime TPA DLLs can
+            # forward types to CoreLib, which Add-Type intentionally excludes.
+            # Use this PowerShell host's matching reference assemblies instead.
+            $referenceDirectory = Join-Path $PSHOME 'ref'
+            if (-not (Test-Path -LiteralPath $referenceDirectory -PathType Container)) {
+                throw ('PowerShell reference assemblies are unavailable: ' + $referenceDirectory)
+            }
+            $externalNames = @($references | ForEach-Object { [IO.Path]::GetFileName($_) })
+            $references += @(Get-ChildItem -LiteralPath $referenceDirectory -Filter '*.dll' -File |
+                Where-Object { $_.Name -notin $externalNames } | ForEach-Object { $_.FullName })
         }
         Add-Type -TypeDefinition $uiaSource -Language CSharp -ReferencedAssemblies ($references | Select-Object -Unique)
     }

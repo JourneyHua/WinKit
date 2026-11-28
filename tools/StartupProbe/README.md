@@ -1,11 +1,11 @@
 # 普通启动验收
 
-[Invoke-StartupProbe.ps1](Invoke-StartupProbe.ps1) 直接启动待交付的 WinKit EXE，观察真实主窗口和系统概览导航，再正常关闭本次创建的进程。它使用 Windows PowerShell 5.1 兼容语法，也包含 PowerShell 7 的程序集引用处理。
+[Invoke-StartupProbe.ps1](Invoke-StartupProbe.ps1) 直接启动待交付的 WinKit EXE，观察真实主窗口和系统概览导航，再正常关闭本次创建的进程。它使用 Windows PowerShell 5.1 兼容语法。PowerShell 7 动态编译使用该宿主 `ref` 目录中的配套引用程序集，避免运行时 TPA 转发到被编译器排除的 CoreLib；UI Automation 与 WindowsBase 使用实际加载的程序集，并排除同名引用冲突。
 
 在仓库根目录、可交互的 Windows 桌面中执行：
 
 ~~~powershell
-powershell.exe -NoProfile -ExecutionPolicy Bypass -File tools/StartupProbe/Invoke-StartupProbe.ps1 -ExecutablePath "dist/WinKit-v1.14.1-win-x64.exe" -ExpectedVersion 1.14.1 -RequireMediumIntegrity -ReportPath "dist/startup-probe/release-default.json"
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File tools/StartupProbe/Invoke-StartupProbe.ps1 -ExecutablePath "dist/WinKit-v1.14.2-win-x64.exe" -ExpectedVersion 1.14.2 -RequireMediumIntegrity -ReportPath "dist/startup-probe/release-default.json"
 ~~~
 
 将路径替换为真正准备交付的 EXE。不要用另一次构建、框架依赖 DLL 或已有的 WinKit 窗口替代。未指定报告位置时，脚本在仓库的 `dist/startup-probe/<unique-id>/report.json` 写入报告；具体路径会以 `STARTUP_PROBE_REPORT=...` 输出。帮助命令为 `-Help`。
@@ -25,7 +25,7 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File tools/StartupProbe/Invok
 
 JSON 包含 SHA-256、ProductVersion、FileVersion、继承的相关环境变量、观察器/子进程 token、窗口与导航检查结果、稳定时间、原生输出、十进制/十六进制退出码、正常关闭与失败清理结果。进程若过早退出而无法查询 token，对应字段可能为空；原生输出和退出码仍会保留。
 
-指定 `-ExpectedVersion 1.14.1` 时，ProductVersion 必须恰为 `1.14.1`，FileVersion 必须恰为 `1.14.1.0`。版本参数只接受规范的稳定版 `major.minor.patch`。未指定时只记录版本，不检查版本相等。
+指定 `-ExpectedVersion 1.14.2` 时，ProductVersion 必须恰为 `1.14.2`，FileVersion 必须恰为 `1.14.2.0`。版本参数只接受规范的稳定版 `major.minor.patch`。未指定时只记录版本，不检查版本相等。
 
 本地普通用户验收应在未提升的 Medium 桌面运行，并使用 `-RequireMediumIntegrity`。CI 若以 High 运行，可在不传此开关时检查同级启动，但这份报告只证明 High 环境启动；它不能代替普通用户的 Medium 验收。脚本会明确记录实际级别。
 

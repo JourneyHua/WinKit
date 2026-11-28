@@ -10,7 +10,7 @@
     <AssemblyName>WinKit</AssemblyName>
     <RootNamespace>WinKit</RootNamespace>
     <ApplicationManifest>app.manifest</ApplicationManifest>
-    <Version>1.14.1</Version>
+    <Version>1.14.2</Version>
     <InformationalVersion>$(Version)</InformationalVersion>
     <IncludeSourceRevisionInInformationalVersion>false</IncludeSourceRevisionInInformationalVersion>
     <Product>WinKit 系统管家</Product>

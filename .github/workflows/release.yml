@@ -327,7 +327,7 @@ jobs:
           if-no-files-found: error
 
       - name: Build and verify optional release EXEs
-        if: startsWith(github.ref, 'refs/tags/v')
+        if: startsWith(github.ref, 'refs/tags/v') || github.event_name == 'workflow_dispatch'
         timeout-minutes: 10
         shell: pwsh
         run: ./build-variants.ps1
