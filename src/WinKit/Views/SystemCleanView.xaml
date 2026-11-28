@@ -170,8 +170,13 @@
                                Visibility="{Binding LargeSearchText, Converter={StaticResource EmptyToVis}}" />
                 </Grid>
 
-                <Button Grid.Column="2" Content="扫描大文件" Style="{StaticResource BtnPrimary}"
-                        Command="{Binding ScanLargeFilesCommand}" />
+                <StackPanel Grid.Column="2" Orientation="Horizontal">
+                    <Button Content="扫描大文件" Style="{StaticResource BtnPrimary}" Margin="0,0,8,0"
+                            Command="{Binding ScanLargeFilesCommand}" />
+                    <Button Content="取消扫描" Style="{StaticResource BtnSmall}"
+                            Visibility="{Binding IsLargeScanRunning, Converter={StaticResource BoolToVis}}"
+                            Command="{Binding CancelLargeFilesCommand}" />
+                </StackPanel>
             </Grid>
 
             <Border Grid.Row="1" Style="{StaticResource Card}" Padding="0">

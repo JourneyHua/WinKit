@@ -76,6 +76,12 @@ public sealed class UninstallCenterViewModel : ObservableObject
         PastePathCommand = new RelayCommand(PastePath, () => CanChangeTarget);
     }
 
+    /// <summary>卸载器已成功启动；null 表示没有匹配安装登记的候选卸载器，不表示卸载已完成。</summary>
+    public event Action<UninstallEntry?>? UninstallerLaunched;
+
+    /// <summary>清理已实际改变本机软件相关状态，包含部分成功；由界面线程通知所属模块使缓存失效。</summary>
+    public event Action? SoftwareChanged;
+
     // ---------- 集合 ----------
 
     public ObservableCollection<UninstallEntry> Matches { get; }
@@ -399,6 +405,7 @@ public sealed class UninstallCenterViewModel : ObservableObject
         {
             _uninstall.Launch(entry);
             _status($"已调起卸载器：{entry.Name}。卸载完成后回来点「扫描残留」。");
+            NotifySoftwareState(() => UninstallerLaunched?.Invoke(entry));
         }
         catch (Exception ex)
         {
@@ -413,9 +420,22 @@ public sealed class UninstallCenterViewModel : ObservableObject
             return;
 
         if (Native.OpenPath(candidate.FilePath, workingDirectory: candidate.Folder))
+        {
             _status($"已打开候选卸载器：{candidate.Name}");
+            NotifySoftwareState(() => UninstallerLaunched?.Invoke(null));
+        }
         else
             CleanupFeedback = $"无法打开卸载器：{candidate.FilePath}";
+    }
+
+    private void NotifySoftwareState(Action notify)
+    {
+        try { notify(); }
+        catch (Exception ex)
+        {
+            // 通知失败不能把已启动的卸载器或已执行的清理误报为操作失败。
+            _status($"操作已执行，但刷新应用状态失败：{ex.Message}");
+        }
     }
 
     // ---------- 残留扫描 ----------
@@ -617,7 +637,14 @@ public sealed class UninstallCenterViewModel : ObservableObject
             }
             finally
             {
-                if (confirmed) _setGlobalBusy?.Invoke(false);
+                try
+                {
+                    if (completed.Count > 0) NotifySoftwareState(() => SoftwareChanged?.Invoke());
+                }
+                finally
+                {
+                    if (confirmed) _setGlobalBusy?.Invoke(false);
+                }
             }
         }
     }
@@ -636,27 +663,34 @@ public sealed class UninstallCenterViewModel : ObservableObject
         if (unchanged.Length == 0) return;
 
         var processed = new List<ResidualItem>();
-        _journal.Record($"清理「{targetName}」的残留注册表设置", unchanged.Select(item => (item.Hive!.Value, item.SubKey)), () =>
+        try
         {
-            foreach (var item in unchanged)
+            _journal.Record($"清理「{targetName}」的残留注册表设置", unchanged.Select(item => (item.Hive!.Value, item.SubKey)), () =>
             {
-                try
+                foreach (var item in unchanged)
                 {
-                    if (!IsStillSame(item)) throw new IOException("扫描后已变化，未处理。请重新扫描。");
-                    var path = RegistryPath(item);
-                    if (item.Kind == ResidualKind.Service)
+                    try
                     {
-                        if (!TryStopService(item, out var error)) throw new IOException(error);
-                        if (!IsStillSame(item)) throw new IOException("服务配置已变化，未删除注册项。");
-                        Reg.DeleteTree(path);
+                        if (!IsStillSame(item)) throw new IOException("扫描后已变化，未处理。请重新扫描。");
+                        var path = RegistryPath(item);
+                        if (item.Kind == ResidualKind.Service)
+                        {
+                            if (!TryStopService(item, out var error)) throw new IOException(error);
+                            if (!IsStillSame(item)) throw new IOException("服务配置已变化，未删除注册项。");
+                            Reg.DeleteTree(path);
+                        }
+                        else Reg.DeleteValue(path, item.ValueName);
+                        processed.Add(item);
                     }
-                    else Reg.DeleteValue(path, item.ValueName);
-                    processed.Add(item);
+                    catch (Exception ex) { failures.Add($"{item.Path}：{ex.Message}"); }
                 }
-                catch (Exception ex) { failures.Add($"{item.Path}：{ex.Message}"); }
-            }
-        });
-        completed.AddRange(processed);
+            });
+        }
+        finally
+        {
+            // 登记已实际移除后，日志提交/通知失败也不能丢失这次变更。
+            completed.AddRange(processed);
+        }
     }
 
     private bool TryStopService(ResidualItem item, out string error)
@@ -748,6 +782,7 @@ public sealed class UninstallCenterViewModel : ObservableObject
         var target = CaptureTarget();
         IsBusy = true;
         var confirmed = false;
+        var changed = false;
         try
         {
             if (!ResidualScanService.TryGetDirectoryTarget(target.Folder, out var actual, out var reason) || actual != expected)
@@ -776,6 +811,7 @@ public sealed class UninstallCenterViewModel : ObservableObject
                 CleanupFeedback = $"未能处理文件夹：{error}";
                 return;
             }
+            changed = true;
 
             var lines = new List<string>
             {
@@ -816,7 +852,14 @@ public sealed class UninstallCenterViewModel : ObservableObject
             }
             finally
             {
-                if (confirmed) _setGlobalBusy?.Invoke(false);
+                try
+                {
+                    if (changed) NotifySoftwareState(() => SoftwareChanged?.Invoke());
+                }
+                finally
+                {
+                    if (confirmed) _setGlobalBusy?.Invoke(false);
+                }
             }
         }
     }

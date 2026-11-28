@@ -1,5 +1,6 @@
 using System.IO;
 using System.Security.Cryptography;
+using WinKit.Core;
 
 namespace WinKit.Services;
 
@@ -13,11 +14,19 @@ public sealed class DuplicateFile
     public string Folder => Path.GetDirectoryName(FullPath) ?? "";
 }
 
-public sealed class DuplicateGroup
+public sealed class DuplicateGroup : ObservableObject
 {
+    private bool _isExpanded;
+
     public string Hash { get; init; } = "";
     public long Size { get; init; }
     public List<DuplicateFile> Files { get; init; } = new();
+
+    public bool IsExpanded
+    {
+        get => _isExpanded;
+        set => Set(ref _isExpanded, value);
+    }
 
     public int Count => Files.Count;
 

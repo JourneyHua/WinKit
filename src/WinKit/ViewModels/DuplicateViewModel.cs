@@ -1,4 +1,6 @@
 using System.Collections.ObjectModel;
+using System.Collections.Specialized;
+using System.ComponentModel;
 using System.Diagnostics;
 using System.IO;
 using System.Windows;
@@ -13,6 +15,7 @@ public sealed class DuplicateViewModel : ObservableObject, IModule
     private readonly Action<string> _status;
     private readonly Action<bool>? _setBusy;
     private CancellationTokenSource? _cts;
+    private readonly ResettableObservableCollection<DuplicateGroup> _groups;
     private int _rootsVersion;
 
     private bool _isBusy;
@@ -27,7 +30,8 @@ public sealed class DuplicateViewModel : ObservableObject, IModule
         _setBusy = setBusy;
 
         Roots = new ObservableCollection<string>();
-        Groups = new ObservableCollection<DuplicateGroup>();
+        _groups = new ResettableObservableCollection<DuplicateGroup>();
+        Groups = _groups;
 
         ScanCommand = new RelayCommand(() => _ = ScanAsync(), () => !IsBusy && Roots.Count > 0);
         CancelCommand = new RelayCommand(Cancel, () => IsBusy && _cts is { IsCancellationRequested: false });
@@ -35,6 +39,7 @@ public sealed class DuplicateViewModel : ObservableObject, IModule
         RemoveRootCommand = new RelayCommand(p => RemoveRoot(p as string),
             p => !IsBusy && p is string root && Roots.Contains(root));
         ClearRootsCommand = new RelayCommand(ClearRoots, () => !IsBusy && Roots.Count > 0);
+        ClearResultsCommand = new RelayCommand(ClearResults, () => !IsBusy && Groups.Count > 0);
         DeleteGroupDuplicatesCommand = new RelayCommand(p => _ = DeleteGroupDuplicatesAsync(p as DuplicateGroup),
             p => !IsBusy && p is DuplicateGroup group && group.Count > 1 && Groups.Contains(group));
         OpenFileFolderCommand = new RelayCommand(p => OpenFileFolder(p as DuplicateFile));
@@ -42,11 +47,18 @@ public sealed class DuplicateViewModel : ObservableObject, IModule
             p => !IsBusy && p is DuplicateFile file && Groups.Any(g => g.Count > 1 && g.Files.Contains(file)));
         SelectCommonRootsCommand = new RelayCommand(AddCommonRoots, () => !IsBusy);
 
+        Groups.CollectionChanged += (_, _) =>
+        {
+            OnPropertyChanged(nameof(HasGroups));
+            ClearResultsCommand.RaiseCanExecuteChanged();
+            DeleteGroupDuplicatesCommand.RaiseCanExecuteChanged();
+            DeleteFileCommand.RaiseCanExecuteChanged();
+        };
+
         Roots.CollectionChanged += (_, _) =>
         {
             _rootsVersion++;
-            Groups.Clear();
-            OnPropertyChanged(nameof(HasGroups));
+            _groups.ReplaceAll(Array.Empty<DuplicateGroup>());
             SummaryText = "";
             ErrorText = "";
             ScanCommand.RaiseCanExecuteChanged();
@@ -61,6 +73,7 @@ public sealed class DuplicateViewModel : ObservableObject, IModule
     public RelayCommand AddRootCommand { get; }
     public RelayCommand RemoveRootCommand { get; }
     public RelayCommand ClearRootsCommand { get; }
+    public RelayCommand ClearResultsCommand { get; }
     public RelayCommand DeleteGroupDuplicatesCommand { get; }
     public RelayCommand OpenFileFolderCommand { get; }
     public RelayCommand DeleteFileCommand { get; }
@@ -74,7 +87,9 @@ public sealed class DuplicateViewModel : ObservableObject, IModule
             if (!Set(ref _isBusy, value)) return;
             OnPropertyChanged(nameof(CanEditScanOptions));
             ScanCommand.RaiseCanExecuteChanged();
-            _setBusy?.Invoke(value);
+            ClearResultsCommand.RaiseCanExecuteChanged();
+            DeleteGroupDuplicatesCommand.RaiseCanExecuteChanged();
+            DeleteFileCommand.RaiseCanExecuteChanged();
         }
     }
 
@@ -113,7 +128,8 @@ public sealed class DuplicateViewModel : ObservableObject, IModule
 
     public void Refresh()
     {
-        if (!IsBusy && Roots.Count > 0) _ = ScanAsync();
+        if (!IsBusy && Roots.Count > 0 && !HasGroups && string.IsNullOrEmpty(SummaryText))
+            _ = ScanAsync();
     }
 
     private void AddCommonRoots()
@@ -201,6 +217,15 @@ public sealed class DuplicateViewModel : ObservableObject, IModule
         return 1024;
     }
 
+    private void ClearResults()
+    {
+        if (IsBusy || Groups.Count == 0) return;
+        _groups.ReplaceAll(Array.Empty<DuplicateGroup>());
+        ErrorText = "";
+        SummaryText = "结果已清空";
+        _status(SummaryText);
+    }
+
     private void Cancel()
     {
         if (!IsBusy || _cts is null || _cts.IsCancellationRequested) return;
@@ -236,8 +261,7 @@ public sealed class DuplicateViewModel : ObservableObject, IModule
 
         IsBusy = true;
         ErrorText = "";
-        Groups.Clear();
-        OnPropertyChanged(nameof(HasGroups));
+        _groups.ReplaceAll(Array.Empty<DuplicateGroup>());
         SummaryText = "正在扫描…";
 
         try
@@ -255,8 +279,7 @@ public sealed class DuplicateViewModel : ObservableObject, IModule
 
             ErrorText = error ?? "";
 
-            foreach (var group in groups) Groups.Add(group);
-            OnPropertyChanged(nameof(HasGroups));
+            _groups.ReplaceAll(groups);
 
             if (error is not null || token.IsCancellationRequested)
             {
@@ -353,6 +376,7 @@ public sealed class DuplicateViewModel : ObservableObject, IModule
 
         var expectedSize = group.Size;
         var expectedHash = group.Hash;
+        _setBusy?.Invoke(true);
         IsBusy = true;
         ErrorText = "";
         SummaryText = "正在重新核验内容并移入回收站…";
@@ -374,6 +398,7 @@ public sealed class DuplicateViewModel : ObservableObject, IModule
         finally
         {
             IsBusy = false;
+            _setBusy?.Invoke(false);
         }
     }
 
@@ -381,18 +406,30 @@ public sealed class DuplicateViewModel : ObservableObject, IModule
     {
         if (movedPaths.Count == 0) return;
         var moved = new HashSet<string>(movedPaths, StringComparer.OrdinalIgnoreCase);
-        for (var i = Groups.Count - 1; i >= 0; i--)
+        var updated = new List<DuplicateGroup>(Groups.Count);
+        var changed = false;
+        foreach (var group in Groups)
         {
-            var group = Groups[i];
             var remaining = group.Files.Where(f =>
                 DuplicateFinderService.NormalizePath(f.FullPath) is not { } path || !moved.Contains(path)).ToList();
-            if (remaining.Count == group.Files.Count) continue;
-            if (remaining.Count < 2)
-                Groups.RemoveAt(i);
-            else
-                Groups[i] = new DuplicateGroup { Hash = group.Hash, Size = group.Size, Files = remaining };
+            if (remaining.Count == group.Files.Count)
+            {
+                updated.Add(group);
+                continue;
+            }
+
+            changed = true;
+            if (remaining.Count >= 2)
+                updated.Add(new DuplicateGroup
+                {
+                    Hash = group.Hash,
+                    Size = group.Size,
+                    Files = remaining,
+                    IsExpanded = group.IsExpanded
+                });
         }
-        OnPropertyChanged(nameof(HasGroups));
+
+        if (changed) _groups.ReplaceAll(updated);
     }
 
     private void OpenFileFolder(DuplicateFile? file)
@@ -406,6 +443,20 @@ public sealed class DuplicateViewModel : ObservableObject, IModule
         catch (Exception ex)
         {
             _status($"打开失败：{ex.Message}");
+        }
+    }
+
+    private sealed class ResettableObservableCollection<T> : ObservableCollection<T>
+    {
+        public void ReplaceAll(IEnumerable<T> items)
+        {
+            var replacement = items.ToArray();
+            CheckReentrancy();
+            Items.Clear();
+            foreach (var item in replacement) Items.Add(item);
+            OnPropertyChanged(new PropertyChangedEventArgs(nameof(Count)));
+            OnPropertyChanged(new PropertyChangedEventArgs("Item[]"));
+            OnCollectionChanged(new NotifyCollectionChangedEventArgs(NotifyCollectionChangedAction.Reset));
         }
     }
 }

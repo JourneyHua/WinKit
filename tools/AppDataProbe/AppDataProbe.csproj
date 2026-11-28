@@ -1,0 +1,19 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net10.0-windows</TargetFramework>
+    <UseWPF>true</UseWPF>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <LangVersion>latest</LangVersion>
+  </PropertyGroup>
+  <ItemGroup>
+    <Compile Include="../../src/WinKit/Core/Registry.cs" Link="Core/Registry.cs" />
+    <Compile Include="../../src/WinKit/Core/Mvvm.cs" Link="Core/Mvvm.cs" />
+    <Compile Include="../../src/WinKit/Services/InstalledSoftwareSnapshot.cs" Link="Services/InstalledSoftwareSnapshot.cs" />
+    <Compile Include="../../src/WinKit/Services/AppManagerService.cs" Link="Services/AppManagerService.cs" />
+    <Compile Include="../../src/WinKit/Services/ScoopService.cs" Link="Services/ScoopService.cs" />
+    <Compile Include="../../src/WinKit/Services/RuntimeCheckService.cs" Link="Services/RuntimeCheckService.cs" />
+    <Compile Include="../../src/WinKit/Services/SystemToolCatalogService.cs" Link="Services/SystemToolCatalogService.cs" />
+  </ItemGroup>
+</Project>

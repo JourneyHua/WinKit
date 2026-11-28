@@ -1,0 +1,18 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net10.0-windows</TargetFramework>
+    <UseWPF>true</UseWPF>
+    <EnableDefaultApplicationDefinition>false</EnableDefaultApplicationDefinition>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <LangVersion>latest</LangVersion>
+  </PropertyGroup>
+  <ItemGroup>
+    <Compile Include="../../src/WinKit/Services/NpmService.cs" Link="NpmService.cs" />
+    <Compile Include="../../src/WinKit/Core/Mvvm.cs" Link="Mvvm.cs" />
+    <Compile Include="../../src/WinKit/ViewModels/NpmViewModel.cs" Link="NpmViewModel.cs" />
+    <Compile Include="../../src/WinKit/Views/NpmView.xaml.cs" Link="NpmView.xaml.cs" />
+    <Page Include="../../src/WinKit/Views/NpmView.xaml" Link="NpmView.xaml" />
+  </ItemGroup>
+</Project>

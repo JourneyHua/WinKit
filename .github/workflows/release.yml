@@ -52,6 +52,14 @@ jobs:
           dotnet run --project tools/Probe/Probe.csproj -c Release --no-build -- --selftest
           if ($LASTEXITCODE -ne 0) { throw "Selftest failed with exit code $LASTEXITCODE" }
 
+      - name: Package management and page-cache regression tests
+        shell: pwsh
+        run: |
+          foreach ($probe in @("AppDataProbe", "NpmProbe", "ResultsProbe", "NavigationProbe", "ReportProbe")) {
+            dotnet run --project "tools/$probe/$probe.csproj" -c Release
+            if ($LASTEXITCODE -ne 0) { throw "$probe failed with exit code $LASTEXITCODE" }
+          }
+
       # ---- 质量门槛 2：界面离屏渲染 + 每个模块的数据断言 ----
       # 主清单本身就是 asInvoker（见 src/WinKit/app.manifest 的注释），
       # 所以界面自检和发布用的是同一份权限模型，不再需要为 smoke 单独换清单。
@@ -74,6 +82,8 @@ jobs:
           if ($versionInfo.ProductVersion -cne $env:RELEASE_VERSION -or $versionInfo.FileVersion -cne "$env:RELEASE_VERSION.0") {
             throw "Published EXE version does not match $env:RELEASE_VERSION"
           }
+
+          ./tools/StartupProbe/Set-ArtifactIntegrity.ps1 -ExecutablePath $publishedFiles[0].FullName
 
           # 清单必须嵌入 asInvoker，确保浏览不主动请求 UAC；此检查不保证 SmartScreen 行为。
           # 直接检查 apphost 字节中的属性形态，避免把注释里的裸词误认为执行级别。
@@ -288,6 +298,9 @@ jobs:
           # 发布通过上述原生 smoke 的同一个单 EXE，不再二次 publish。
           $assetPath = Join-Path $PWD $env:RELEASE_EXE
           Copy-Item -LiteralPath publish/preview/WinKit.exe -Destination $assetPath -Force
+          ./tools/StartupProbe/Set-ArtifactIntegrity.ps1 -ExecutablePath $assetPath
+          ./tools/StartupProbe/Invoke-StartupProbe.ps1 -ExecutablePath $assetPath -ExpectedVersion $env:RELEASE_VERSION -ReportPath startup-out/default.json
+          if ($LASTEXITCODE -ne 0) { throw "Final-named EXE ordinary startup failed" }
           $asset = Get-Item -LiteralPath $assetPath
           $metadata = [ordered]@{
             schemaVersion = 1
@@ -315,13 +328,28 @@ jobs:
         shell: pwsh
         run: ./build-variants.ps1
 
+      - name: Upload ordinary startup evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ordinary-startup
+          path: |
+            startup-out/*.json
+            dist/variants/*-startup.json
+          if-no-files-found: warn
+
       - name: Create GitHub Release
         if: startsWith(github.ref, 'refs/tags/v')
         uses: softprops/action-gh-release@v2
         with:
           generate_release_notes: true
           body: |
-            ### ${{ env.RELEASE_VERSION }} 操作体验与清理保护
+            ### ${{ env.RELEASE_VERSION }} npm 管理与页面性能
+
+            - **npm 全局包**：读取当前 Node/npm 环境，支持安装、指定版本或 tag、单包更新与卸载；检查最新版由用户手动触发。
+            - **按需加载**：应用管理各子页首次访问才读取，会话内复用；后台只读操作不阻止切页，软件变更后按需更新。
+            - **重页面优化**：复用软件快照与报告、减少重复目录扫描；重复文件结果折叠并按需绘制，大文件扫描仅保留 Top300 且支持取消。
+            - **真实启动验收**：最终文件名 EXE 无参数、默认环境启动，核对身份和完整性、主窗口交互与正常关闭；构建输出标签检查覆盖低完整性工作区。
 
             - **查找工具**：在侧栏按名称或用途搜索，不用先猜模块在哪个分组。
             - **状态变化**：按下、选中、提示与切页使用统一的短过渡；滚动、拖拽和列宽仍直接跟手。支持 Windows 的减少动态效果。

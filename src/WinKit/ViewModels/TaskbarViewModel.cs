@@ -15,7 +15,7 @@ namespace WinKit.ViewModels;
 /// 而顺序调整等于「全部取消再按序固定」，没有固定就无从重排，硬做只能靠改
 /// Taskband\Favorites 那段私有二进制——实测里面只有 AppUserModelID，没有可用的路径对应关系。
 /// </summary>
-public sealed class TaskbarViewModel : ObservableObject
+public sealed class TaskbarViewModel : ObservableObject, IModuleActivation
 {
     private readonly TaskbarService _service;
     private readonly Action<string> _status;
@@ -26,6 +26,12 @@ public sealed class TaskbarViewModel : ObservableObject
     private string _traySummary = "";
     private string _error = "";
     private bool _onlyMissing;
+    private bool _isLoading;
+    private bool _isActive;
+    private bool _needsPinned = true;
+    private bool _needsTray = true;
+    private List<TaskbarPinnedItem>? _pendingPinned;
+    private List<TrayIconItem>? _pendingTray;
 
     public TaskbarViewModel(ChangeJournal journal, Action<string> status)
     {
@@ -35,15 +41,15 @@ public sealed class TaskbarViewModel : ObservableObject
         Pinned = new ObservableCollection<TaskbarPinnedItem>();
         TrayIcons = new ObservableCollection<TrayIconItem>();
 
-        RefreshCommand = new RelayCommand(Refresh);
-        UnpinCommand = new RelayCommand(p => Unpin(p as TaskbarPinnedItem));
+        RefreshCommand = new RelayCommand(Refresh, () => !IsLoading);
+        UnpinCommand = new RelayCommand(p => Unpin(p as TaskbarPinnedItem), p => p is TaskbarPinnedItem && !IsLoading);
         OpenPinnedLocationCommand = new RelayCommand(p => OpenPinnedLocation(p as TaskbarPinnedItem));
         OpenPinnedTargetCommand = new RelayCommand(p => OpenPinnedTarget(p as TaskbarPinnedItem));
-        CollapseMissingCommand = new RelayCommand(() => CollapseMissing(), () => HasMissingTray);
-        DeleteMissingRecordsCommand = new RelayCommand(() => DeleteMissingRecords(), () => HasMissingTray);
+        CollapseMissingCommand = new RelayCommand(() => CollapseMissing(), () => HasMissingTray && !IsLoading);
+        DeleteMissingRecordsCommand = new RelayCommand(() => DeleteMissingRecords(), () => HasMissingTray && !IsLoading);
         OpenTrayLocationCommand = new RelayCommand(p => OpenTrayLocation(p as TrayIconItem));
         OpenPinnedFolderCommand = new RelayCommand(OpenPinnedFolder);
-        RefreshTrayCommand = new RelayCommand(RefreshTray);
+        RefreshTrayCommand = new RelayCommand(RefreshTray, () => !IsLoading);
     }
 
     public ObservableCollection<TaskbarPinnedItem> Pinned { get; }
@@ -99,63 +105,136 @@ public sealed class TaskbarViewModel : ObservableObject
 
     // ---------- 加载 ----------
 
-    public void Refresh()
+    public bool IsLoading
     {
-        Error = "";
-        RefreshPinned();
-        RefreshTray();
+        get => _isLoading;
+        private set
+        {
+            if (!Set(ref _isLoading, value)) return;
+            RefreshCommand.RaiseCanExecuteChanged();
+            RefreshTrayCommand.RaiseCanExecuteChanged();
+            UnpinCommand.RaiseCanExecuteChanged();
+            CollapseMissingCommand.RaiseCanExecuteChanged();
+            DeleteMissingRecordsCommand.RaiseCanExecuteChanged();
+        }
     }
 
-    private void RefreshPinned()
+    public void OnActivated()
     {
-        try
-        {
-            Pinned.Clear();
+        _isActive = true;
+        ApplyPending();
+        EnsureLoaded();
+    }
 
-            foreach (var item in _service.LoadPinned()) Pinned.Add(item);
+    public void OnDeactivated() => _isActive = false;
 
-            var missing = Pinned.Count(i => i.IsMissing);
-            var shell = Pinned.Count(i => i.IsShellItem);
+    internal void Invalidate()
+    {
+        _needsPinned = _needsTray = true;
+        _pendingPinned = null;
+        _pendingTray = null;
+    }
 
-            PinnedSummary = Pinned.Count == 0
-                ? "任务栏没有固定项（WinKit 也不会替你添加——Win11 已不提供该入口）"
-                : $"共 {Pinned.Count} 个固定项"
-                  + (shell > 0 ? $"，其中 {shell} 个是系统内置入口" : "")
-                  + (missing > 0 ? $"，{missing} 个目标已失效" : "");
-        }
-        catch (Exception ex)
-        {
-            Error = $"读取任务栏固定项失败：{ex.Message}";
-        }
+    internal void EnsureLoaded()
+    {
+        if (_isActive && (_needsPinned || _needsTray)) _ = LoadAsync();
+    }
+
+    public void Refresh()
+    {
+        if (IsLoading) return;
+        Invalidate();
+        EnsureLoaded();
     }
 
     private void RefreshTray()
     {
+        if (IsLoading) return;
+        _needsTray = true;
+        _pendingTray = null;
+        EnsureLoaded();
+    }
+
+    private async Task LoadAsync()
+    {
+        if (IsLoading || !_isActive) return;
+        var pinned = _needsPinned;
+        var tray = _needsTray;
+        _needsPinned = _needsTray = false;
+        IsLoading = true;
+        Error = "";
         try
         {
-            _allTray.Clear();
-            _allTray.AddRange(_service.LoadTrayIcons());
-
-            ApplyTrayFilter();
-
-            var missing = _allTray.Count(i => i.IsMissingFile);
-            var promoted = _allTray.Count(i => i.IsPromoted);
-
-            TraySummary = $"共 {_allTray.Count} 条通知区域记录，{promoted} 个显示在托盘"
-                          + (missing > 0 ? $"，{missing} 个指向已不存在的文件" : "");
-
-            if (missing == 0 && _allTray.Count > 0)
-                TraySummary += "。scoop 每升级一次就会多一条历史记录，定期来这里看一眼比较省事。";
+            // .lnk 和已知文件夹的 Shell 查询都留在独立 STA 内，不跨线程传递 COM。
+            var snapshot = await ShellReadWorker.RunAsync(() =>
+            {
+                List<TaskbarPinnedItem>? pins = null;
+                List<TrayIconItem>? icons = null;
+                var errors = new List<string>();
+                if (pinned)
+                {
+                    try { pins = _service.LoadPinned(); }
+                    catch (Exception ex) { errors.Add($"读取任务栏固定项失败：{ex.Message}"); }
+                }
+                if (tray)
+                {
+                    try { icons = _service.LoadTrayIcons(); }
+                    catch (Exception ex) { errors.Add($"读取通知区域记录失败：{ex.Message}"); }
+                }
+                return (pins, icons, error: string.Join("\n", errors));
+            });
+            if (!_needsPinned) _pendingPinned = snapshot.pins ?? _pendingPinned;
+            if (!_needsTray) _pendingTray = snapshot.icons ?? _pendingTray;
+            Error = snapshot.error;
+            if (_isActive) ApplyPending();
         }
-        catch (Exception ex)
+        catch (Exception ex) { Error = $"读取任务栏失败：{ex.Message}"; }
+        finally
         {
-            Error = $"读取通知区域记录失败：{ex.Message}";
+            IsLoading = false;
+            // 读取期间发生的外部失效只补一轮，隐藏时留到下次激活。
+            if (_isActive && (_needsPinned || _needsTray)) EnsureLoaded();
         }
+    }
 
+    private void ApplyPending()
+    {
+        if (_pendingPinned is { } pins)
+        {
+            _pendingPinned = null;
+            Pinned.Clear();
+            foreach (var item in pins) Pinned.Add(item);
+            var missing = pins.Count(i => i.IsMissing);
+            var shell = pins.Count(i => i.IsShellItem);
+            PinnedSummary = pins.Count == 0
+                ? "任务栏没有固定项（WinKit 也不会替你添加——Win11 已不提供该入口）"
+                : $"共 {pins.Count} 个固定项"
+                  + (shell > 0 ? $"，其中 {shell} 个是系统内置入口" : "")
+                  + (missing > 0 ? $"，{missing} 个目标已失效" : "");
+        }
+        if (_pendingTray is { } icons)
+        {
+            _pendingTray = null;
+            _allTray.Clear();
+            _allTray.AddRange(icons);
+            ApplyTrayFilter();
+            UpdateTraySummary();
+        }
+    }
+
+    private void UpdateTraySummary()
+    {
+        var missing = _allTray.Count(i => i.IsMissingFile);
+        var promoted = _allTray.Count(i => i.IsPromoted);
+        TraySummary = $"共 {_allTray.Count} 条通知区域记录，{promoted} 个显示在托盘"
+                      + (missing > 0 ? $"，{missing} 个指向已不存在的文件" : "");
+        if (missing == 0 && _allTray.Count > 0)
+            TraySummary += "。scoop 每升级一次就会多一条历史记录，定期来这里看一眼比较省事。";
         CollapseMissingCommand.RaiseCanExecuteChanged();
         DeleteMissingRecordsCommand.RaiseCanExecuteChanged();
         OnPropertyChanged(nameof(HasMissingTray));
     }
+
 
     private void ApplyTrayFilter()
     {
@@ -177,6 +256,13 @@ public sealed class TaskbarViewModel : ObservableObject
     private void OnTrayToggleRequested(TrayIconItem item, bool requested)
     {
         var previous = !requested;
+        if (IsLoading)
+        {
+            item.ToggleRequested = null;
+            item.IsPromoted = previous;
+            item.ToggleRequested = OnTrayToggleRequested;
+            return;
+        }
 
         if (Native.RequireAdmin("显示或隐藏托盘图标") is { } adminNeeded)
         {
@@ -190,6 +276,7 @@ public sealed class TaskbarViewModel : ObservableObject
         try
         {
             _service.SetPromoted(item, requested);
+            UpdateTraySummary();
             _status($"{(requested ? "已显示" : "已折叠")}托盘图标：{item.DisplayName}");
         }
         catch (Exception ex)
@@ -206,7 +293,7 @@ public sealed class TaskbarViewModel : ObservableObject
 
     private async void Unpin(TaskbarPinnedItem? item)
     {
-        if (item is null) return;
+        if (item is null || IsLoading) return;
         if (Native.RequireAdmin("取消固定") is { } adminNeeded)
         {
             Error = adminNeeded;
@@ -215,21 +302,28 @@ public sealed class TaskbarViewModel : ObservableObject
 
         try
         {
-            // 等「固定项文件被删掉」的通知可能要等上一两秒，留在 UI 线程会把窗口冻住
-            await Task.Run(() => _service.Unpin(item));
+            // Shell verb 与等待通知都不占用 UI；COM 在同一 STA 内释放。
+            IsLoading = true;
+            await ShellReadWorker.RunAsync(() => { _service.Unpin(item); return true; });
+            _status($"已取消固定：{item.Name}");
+            if (!_isActive)
+            {
+                _needsPinned = true;
+                return;
+            }
             Pinned.Remove(item);
 
             PinnedSummary = Pinned.Count == 0
                 ? "任务栏没有固定项"
                 : $"共 {Pinned.Count} 个固定项";
 
-            _status($"已取消固定：{item.Name}");
         }
         catch (Exception ex)
         {
             Warn($"取消固定失败：{ex.Message}\n\n" +
                  "如果该固定项来自系统内置入口，需要在任务栏上右键取消。");
         }
+        finally { IsLoading = false; }
     }
 
     private void OpenPinnedFolder()

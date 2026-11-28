@@ -98,10 +98,13 @@ public sealed class SystemToolItem : ObservableObject
 
 public sealed class SystemToolCatalogService
 {
-    private const string UninstallRoot = @"Microsoft\Windows\CurrentVersion\Uninstall";
-    private const string AppPathsRoot = @"SOFTWARE\Microsoft\Windows\CurrentVersion\App Paths";
-    private const string AppModelPackages =
-        @"Software\Classes\Local Settings\Software\Microsoft\Windows\CurrentVersion\AppModel\Repository\Packages";
+    private readonly InstalledSoftwareSnapshotCache _snapshot;
+    private readonly bool _refreshSnapshotOnRead;
+
+    public SystemToolCatalogService() : this(new InstalledSoftwareSnapshotCache())
+        => _refreshSnapshotOnRead = true;
+
+    public SystemToolCatalogService(InstalledSoftwareSnapshotCache snapshot) => _snapshot = snapshot;
 
     private sealed record ToolSpec(
         string Id,
@@ -232,6 +235,8 @@ public sealed class SystemToolCatalogService
 
     public List<SystemToolItem> LoadCatalog()
     {
+        if (_refreshSnapshotOnRead) _snapshot.Invalidate();
+        using var search = new ToolExecutableSearch(Catalog.SelectMany(spec => spec.ExeCandidates));
         var uninstallEntries = LoadUninstallSnapshot();
         var storeEntries = LoadStorePackagesSnapshot();
         var appPaths = LoadAppPathsSnapshot();
@@ -247,7 +252,7 @@ public sealed class SystemToolCatalogService
         foreach (var spec in Catalog)
         {
             var (installed, version, exePath, installDir) = DetectTool(
-                spec, uninstallEntries, storeEntries, appPaths, wingetLinksDir, wingetPackagesDir);
+                spec, uninstallEntries, storeEntries, appPaths, wingetLinksDir, wingetPackagesDir, search);
 
             result.Add(new SystemToolItem
             {
@@ -272,9 +277,10 @@ public sealed class SystemToolCatalogService
         ToolSpec spec,
         List<(string Name, string Version, string Location, string IconExe)> uninstallEntries,
         List<(string Name, string Version, string Folder)> storeEntries,
-        Dictionary<string, string> appPaths,
+        IReadOnlyDictionary<string, string> appPaths,
         string wingetLinksDir,
-        string wingetPackagesDir)
+        string wingetPackagesDir,
+        ToolExecutableSearch search)
     {
         // 1. 先检查注册表 Uninstall
         foreach (var entry in uninstallEntries)
@@ -282,7 +288,7 @@ public sealed class SystemToolCatalogService
             if (MatchesAny(entry.Name, spec.MatchNames))
             {
                 var dir = entry.Location;
-                var exe = ResolveExeFromCandidates(spec.ExeCandidates, dir, appPaths, wingetLinksDir);
+                var exe = ResolveExeFromCandidates(spec.ExeCandidates, dir, appPaths, wingetLinksDir, search);
                 if (string.IsNullOrWhiteSpace(exe) && !string.IsNullOrWhiteSpace(entry.IconExe) && File.Exists(entry.IconExe))
                     exe = entry.IconExe;
                 if (string.IsNullOrWhiteSpace(dir) && !string.IsNullOrWhiteSpace(exe))
@@ -297,7 +303,7 @@ public sealed class SystemToolCatalogService
         {
             if (MatchesAny(pkg.Name, spec.MatchNames))
             {
-                var exe = ResolveExeFromCandidates(spec.ExeCandidates, pkg.Folder, appPaths, wingetLinksDir);
+                var exe = ResolveExeFromCandidates(spec.ExeCandidates, pkg.Folder, appPaths, wingetLinksDir, search);
                 if (string.IsNullOrWhiteSpace(exe) && spec.Id == "nanazip")
                     exe = FindInWindowsApps("NanaZip.exe") ?? pkg.Folder;
                 if (string.IsNullOrWhiteSpace(exe) && spec.Id == "pcmanager")
@@ -314,7 +320,7 @@ public sealed class SystemToolCatalogService
                 var pkgDir = Directory.GetDirectories(wingetPackagesDir, $"{spec.WingetId}_*").FirstOrDefault();
                 if (!string.IsNullOrWhiteSpace(pkgDir))
                 {
-                    var exe = FindExeInDirectory(pkgDir, spec.ExeCandidates);
+                    var exe = search.Find(pkgDir, spec.ExeCandidates);
                     return (true, "WinGet 便携包", exe, pkgDir);
                 }
             }
@@ -322,7 +328,7 @@ public sealed class SystemToolCatalogService
         }
 
         // 4. 检查候选路径、App Paths 与环境变量 PATH
-        var foundExe = ResolveExeFromCandidates(spec.ExeCandidates, "", appPaths, wingetLinksDir);
+        var foundExe = ResolveExeFromCandidates(spec.ExeCandidates, "", appPaths, wingetLinksDir, search);
         if (!string.IsNullOrWhiteSpace(foundExe) && File.Exists(foundExe))
         {
             var ver = "";
@@ -361,8 +367,9 @@ public sealed class SystemToolCatalogService
     private static string ResolveExeFromCandidates(
         string[] candidates,
         string installDir,
-        Dictionary<string, string> appPaths,
-        string wingetLinksDir)
+        IReadOnlyDictionary<string, string> appPaths,
+        string wingetLinksDir,
+        ToolExecutableSearch search)
     {
         foreach (var raw in candidates)
         {
@@ -394,25 +401,9 @@ public sealed class SystemToolCatalogService
 
         if (!string.IsNullOrWhiteSpace(installDir) && Directory.Exists(installDir))
         {
-            return FindExeInDirectory(installDir, candidates);
+            return search.Find(installDir, candidates);
         }
 
-        return "";
-    }
-
-    private static string FindExeInDirectory(string dir, string[] candidates)
-    {
-        try
-        {
-            foreach (var c in candidates)
-            {
-                var fileName = Path.GetFileName(Environment.ExpandEnvironmentVariables(c));
-                if (string.IsNullOrWhiteSpace(fileName)) continue;
-                var match = Directory.EnumerateFiles(dir, fileName, SearchOption.AllDirectories).FirstOrDefault();
-                if (!string.IsNullOrWhiteSpace(match)) return match;
-            }
-        }
-        catch (Exception) { }
         return "";
     }
 
@@ -439,68 +430,22 @@ public sealed class SystemToolCatalogService
         return null;
     }
 
-    private static List<(string Name, string Version, string Location, string IconExe)> LoadUninstallSnapshot()
-    {
-        var list = new List<(string, string, string, string)>();
-        foreach (var (hive, root) in new[]
-                 {
-                     (HiveKind.LocalMachine, $@"SOFTWARE\{UninstallRoot}"),
-                     (HiveKind.LocalMachine, $@"SOFTWARE\WOW6432Node\{UninstallRoot}"),
-                     (HiveKind.CurrentUser, $@"Software\{UninstallRoot}")
-                 })
+    private List<(string Name, string Version, string Location, string IconExe)> LoadUninstallSnapshot()
+        => _snapshot.GetUninstallEntries().Select(entry =>
         {
-            foreach (var key in Reg.SubKeyNames(RegPath.Of(hive, root)))
-            {
-                var p = RegPath.Of(hive, $@"{root}\{key}");
-                var name = Reg.GetString(p, "DisplayName")?.Trim();
-                if (string.IsNullOrWhiteSpace(name)) continue;
+            var icon = ContextMenuService.ExtractExecutable(entry.DisplayIcon) ?? "";
+            return (entry.Name, entry.Version, entry.InstallLocation,
+                icon.EndsWith(".exe", StringComparison.OrdinalIgnoreCase) ? icon : "");
+        }).ToList();
 
-                var ver = (Reg.GetString(p, "DisplayVersion") ?? "").Trim();
-                var loc = (Reg.GetString(p, "InstallLocation") ?? "").Trim().Trim('"');
-                var iconRaw = (Reg.GetString(p, "DisplayIcon") ?? "").Trim();
-                var iconExe = ContextMenuService.ExtractExecutable(iconRaw) ?? "";
-                if (!iconExe.EndsWith(".exe", StringComparison.OrdinalIgnoreCase)) iconExe = "";
-
-                list.Add((name!, ver, loc, iconExe));
-            }
-        }
-        return list;
-    }
-
-    private static List<(string Name, string Version, string Folder)> LoadStorePackagesSnapshot()
-    {
-        var list = new List<(string, string, string)>();
-        foreach (var hive in new[] { HiveKind.CurrentUser, HiveKind.LocalMachine })
+    private List<(string Name, string Version, string Folder)> LoadStorePackagesSnapshot()
+        => _snapshot.GetStorePackages().Select(package =>
         {
-            var root = RegPath.Of(hive, AppModelPackages);
-            foreach (var pkg in Reg.SubKeyNames(root))
-            {
-                var parts = pkg.Split('_');
-                var family = parts.Length > 0 ? parts[0] : pkg;
-                var ver = parts.Length > 1 ? parts[1] : "";
-                var p = RegPath.Of(hive, $@"{AppModelPackages}\{pkg}");
-                var folder = (Reg.GetString(p, "PackageRootFolder") ?? "").Trim();
-                list.Add((family, ver, folder));
-            }
-        }
-        return list;
-    }
+            var parts = package.PackageFullName.Split('_');
+            return (parts[0], parts.Length > 1 ? parts[1] : "", package.InstallLocation);
+        }).ToList();
 
-    private static Dictionary<string, string> LoadAppPathsSnapshot()
-    {
-        var map = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
-        foreach (var hive in new[] { HiveKind.CurrentUser, HiveKind.LocalMachine })
-        {
-            var root = RegPath.Of(hive, AppPathsRoot);
-            foreach (var sub in Reg.SubKeyNames(root))
-            {
-                var val = Reg.GetString(RegPath.Of(hive, $@"{AppPathsRoot}\{sub}"))?.Trim().Trim('"');
-                if (!string.IsNullOrWhiteSpace(val))
-                    map[sub] = Environment.ExpandEnvironmentVariables(val!);
-            }
-        }
-        return map;
-    }
+    private IReadOnlyDictionary<string, string> LoadAppPathsSnapshot() => _snapshot.GetAppPaths();
 
     public async Task<(bool Success, string Message)> InstallOrUpdateToolAsync(
         SystemToolItem tool,
@@ -554,6 +499,105 @@ public sealed class SystemToolCatalogService
         catch (Exception ex)
         {
             return (false, $"启动失败：{ex.Message}");
+        }
+    }
+}
+
+/// <summary>一次目录发现可供本次检测中的全部候选复用；只保留目录里少量目标文件名。</summary>
+internal sealed class ToolExecutableSearch : IDisposable
+{
+    private readonly HashSet<string> _wantedNames;
+    private readonly Func<string, IEnumerable<string>> _enumerateFiles;
+    private readonly Dictionary<string, DirectoryIndex> _directories = new(StringComparer.OrdinalIgnoreCase);
+
+    internal ToolExecutableSearch(IEnumerable<string> candidates,
+        Func<string, IEnumerable<string>>? enumerateFiles = null)
+    {
+        _wantedNames = new HashSet<string>(candidates
+            .Select(candidate => Path.GetFileName(Environment.ExpandEnvironmentVariables(candidate))),
+            StringComparer.OrdinalIgnoreCase);
+        _enumerateFiles = enumerateFiles ?? (directory => Directory.EnumerateFiles(directory, "*",
+            new EnumerationOptions
+            {
+                RecurseSubdirectories = true,
+                IgnoreInaccessible = true,
+                AttributesToSkip = FileAttributes.ReparsePoint
+            }));
+    }
+
+    internal string Find(string directory, IEnumerable<string> candidates)
+    {
+        if (string.IsNullOrWhiteSpace(directory)) return "";
+        try
+        {
+            var key = Path.TrimEndingDirectorySeparator(Path.GetFullPath(directory));
+            if (!_directories.TryGetValue(key, out var index))
+            {
+                index = new DirectoryIndex(directory, _enumerateFiles, _wantedNames);
+                _directories.Add(key, index);
+            }
+            foreach (var candidate in candidates)
+            {
+                var name = Path.GetFileName(Environment.ExpandEnvironmentVariables(candidate));
+                if (string.IsNullOrWhiteSpace(name)) continue;
+                var found = index.Find(name);
+                if (!string.IsNullOrWhiteSpace(found)) return found;
+            }
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or ArgumentException
+                                      or NotSupportedException or System.Security.SecurityException) { }
+        return "";
+    }
+
+    public void Dispose()
+    {
+        foreach (var index in _directories.Values) index.Dispose();
+        _directories.Clear();
+    }
+
+    private sealed class DirectoryIndex : IDisposable
+    {
+        private readonly string _directory;
+        private readonly Func<string, IEnumerable<string>> _enumerateFiles;
+        private readonly HashSet<string> _wantedNames;
+        private readonly Dictionary<string, string> _found = new(StringComparer.OrdinalIgnoreCase);
+        private IEnumerator<string>? _files;
+        private bool _finished;
+
+        internal DirectoryIndex(string directory, Func<string, IEnumerable<string>> enumerateFiles,
+            HashSet<string> wantedNames)
+        {
+            _directory = directory;
+            _enumerateFiles = enumerateFiles;
+            _wantedNames = wantedNames;
+        }
+
+        internal string Find(string name)
+        {
+            if (_found.TryGetValue(name, out var cached)) return cached;
+            if (_finished) return "";
+            try
+            {
+                _files ??= _enumerateFiles(_directory).GetEnumerator();
+                while (_files.MoveNext())
+                {
+                    var path = _files.Current;
+                    var fileName = Path.GetFileName(path);
+                    if (_wantedNames.Contains(fileName)) _found.TryAdd(fileName, path);
+                    if (fileName.Equals(name, StringComparison.OrdinalIgnoreCase)) return path;
+                }
+            }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or ArgumentException
+                                          or NotSupportedException or System.Security.SecurityException) { }
+            Dispose();
+            return "";
+        }
+
+        public void Dispose()
+        {
+            _finished = true;
+            _files?.Dispose();
+            _files = null;
         }
     }
 }

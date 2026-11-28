@@ -7,7 +7,7 @@ using WinKit.Views;
 
 namespace WinKit.ViewModels;
 
-public sealed class NavPaneViewModel : ObservableObject, IModule
+public sealed class NavPaneViewModel : ObservableObject, IModule, IModuleActivation
 {
     private readonly NavPaneService _service;
     private readonly NavPinnedService _pinnedService;
@@ -20,6 +20,12 @@ public sealed class NavPaneViewModel : ObservableObject, IModule
     private string _quickAccessStatus = "";
     private string _loadError = "";
     private bool _isLoading;
+    private bool _isActive = true;
+    private bool _refreshNeeded;
+    private int _dataVersion;
+    private NavigationSnapshot? _pendingSnapshot;
+    private sealed record NavigationSnapshot(List<QuickAccessItem> QuickAccess, string? Error,
+        List<PinnedFolderItem> Folders, List<NavToggleItem> Toggles, List<StubbornGroup> Stubborn);
     private string _subView = "navpane"; // navpane | taskbar
 
     public NavPaneViewModel(ChangeJournal journal, Action<string> status, Action<bool>? setBusy = null)
@@ -74,7 +80,13 @@ public sealed class NavPaneViewModel : ObservableObject, IModule
             if (!Set(ref _subView, value)) return;
             OnPropertyChanged(nameof(ShowNavPane));
             OnPropertyChanged(nameof(ShowTaskbar));
-            if (value == "taskbar") Taskbar.Refresh();
+            if (!_isActive) return;
+            if (ShowTaskbar) Taskbar.OnActivated();
+            else
+            {
+                Taskbar.OnDeactivated();
+                ShowNavigationSnapshot();
+            }
         }
     }
 
@@ -195,33 +207,57 @@ public sealed class NavPaneViewModel : ObservableObject, IModule
         UpdatePinState();
     }
 
+    public void OnActivated()
+    {
+        _isActive = true;
+        if (ShowTaskbar) Taskbar.OnActivated();
+        else ShowNavigationSnapshot();
+    }
+
+    public void OnDeactivated()
+    {
+        _isActive = false;
+        Taskbar.OnDeactivated();
+    }
+
+    private void ShowNavigationSnapshot()
+    {
+        if (_pendingSnapshot is { } snapshot)
+        {
+            _pendingSnapshot = null;
+            ApplySnapshot(snapshot);
+        }
+        if (_refreshNeeded) _ = RefreshNavigationAsync();
+    }
+
     public void Refresh()
     {
-        if (IsLoading) return;
-        IsLoading = true;
+        _dataVersion++;
+        _pendingSnapshot = null;
+        _refreshNeeded = true;
+        Taskbar.Invalidate();
+        if (!_isActive || IsLoading) return;
+        if (ShowTaskbar) Taskbar.EnsureLoaded();
+        else _ = RefreshNavigationAsync();
+    }
 
+    private async Task RefreshNavigationAsync()
+    {
+        if (IsLoading || !_isActive || !ShowNavPane) return;
+        IsLoading = true;
+        _refreshNeeded = false;
+        var version = _dataVersion;
         try
         {
-            var (items, error) = _service.LoadQuickAccess();
-            SetQuickAccessItems(items, error);
-
-            PinnedFolders.Clear();
-            foreach (var folder in _pinnedService.Load())
+            var snapshot = await ShellReadWorker.RunAsync(() =>
             {
-                folder.ToggleRequested = OnPinnedFolderToggled;
-                PinnedFolders.Add(folder);
-            }
-
-            Toggles.Clear();
-            foreach (var toggle in _service.LoadToggles())
-            {
-                toggle.ToggleRequested = OnToggleChanged;
-                Toggles.Add(toggle);
-            }
-
-            StubbornGroups.Clear();
-            foreach (var group in _stubbornService.Load())
-                StubbornGroups.Add(group);
+                var (items, error) = _service.LoadQuickAccess();
+                return new NavigationSnapshot(items, error, _pinnedService.Load(),
+                    _service.LoadToggles(), _stubbornService.Load());
+            });
+            if (version != _dataVersion) { _refreshNeeded = true; return; }
+            if (_isActive && ShowNavPane) ApplySnapshot(snapshot);
+            else _pendingSnapshot = snapshot;
         }
         catch (Exception ex)
         {
@@ -230,7 +266,34 @@ public sealed class NavPaneViewModel : ObservableObject, IModule
         finally
         {
             IsLoading = false;
+            if (_isActive && ShowNavPane && _refreshNeeded) _ = RefreshNavigationAsync();
         }
+    }
+
+    private void NoteDataChanged()
+    {
+        _dataVersion++;
+        _pendingSnapshot = null;
+        if (IsLoading) _refreshNeeded = true;
+    }
+
+    private void ApplySnapshot(NavigationSnapshot snapshot)
+    {
+        SetQuickAccessItems(snapshot.QuickAccess, snapshot.Error);
+        PinnedFolders.Clear();
+        foreach (var folder in snapshot.Folders)
+        {
+            folder.ToggleRequested = OnPinnedFolderToggled;
+            PinnedFolders.Add(folder);
+        }
+        Toggles.Clear();
+        foreach (var toggle in snapshot.Toggles)
+        {
+            toggle.ToggleRequested = OnToggleChanged;
+            Toggles.Add(toggle);
+        }
+        StubbornGroups.Clear();
+        foreach (var group in snapshot.Stubborn) StubbornGroups.Add(group);
     }
 
     private void OnPinnedFolderToggled(PinnedFolderItem item, bool visible)
@@ -238,6 +301,7 @@ public sealed class NavPaneViewModel : ObservableObject, IModule
         try
         {
             _pinnedService.SetVisible(item, visible);
+            NoteDataChanged();
             _status($"{(visible ? "已恢复" : "已隐藏")}：{item.DisplayName}");
         }
         catch (Exception ex)
@@ -264,6 +328,7 @@ public sealed class NavPaneViewModel : ObservableObject, IModule
         try
         {
             _service.SetToggle(item, value);
+            NoteDataChanged();
             _status($"{(value ? "已开启" : "已关闭")}：{item.Title}");
         }
         catch (Exception ex)
@@ -375,7 +440,7 @@ public sealed class NavPaneViewModel : ObservableObject, IModule
         ReportQuickAccess(progress);
         try
         {
-            var (result, items, error) = await Task.Run(() =>
+            var (result, items, error) = await ShellReadWorker.RunAsync(() =>
             {
                 PinChangeResult outcome;
                 try { outcome = change(); }

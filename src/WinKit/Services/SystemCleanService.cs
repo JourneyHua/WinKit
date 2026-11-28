@@ -78,6 +78,7 @@ public sealed class LargeFileItem : ObservableObject
 public sealed class SystemCleanService
 {
     public const int DefaultMinAgeMinutes = 120;
+    public const int MaxLargeFileResults = 300;
 
     [StructLayout(LayoutKind.Sequential, Pack = 4)]
     private struct SHQUERYRBINFO
@@ -499,12 +500,15 @@ public sealed class SystemCleanService
     public async Task<List<LargeFileItem>> ScanLargeFilesAsync(
         string rootScope,
         long minBytes = 100L * 1024 * 1024,
-        int maxResults = 300)
+        int maxResults = MaxLargeFileResults,
+        CancellationToken cancellationToken = default)
     {
+        var resultLimit = Math.Clamp(maxResults, 0, MaxLargeFileResults);
         return await Task.Run(() =>
         {
-            var found = new List<LargeFileItem>();
+            var found = new PriorityQueue<(LargeFileItem File, long Sequence), (long Size, long Sequence)>();
             var roots = new List<string>();
+            long sequence = 0;
 
             if (rootScope == "user")
             {
@@ -518,11 +522,15 @@ public sealed class SystemCleanService
             var winDir = Environment.GetFolderPath(Environment.SpecialFolder.Windows);
             var stack = new Stack<string>();
             foreach (var r in roots)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
                 if (!string.IsNullOrWhiteSpace(r) && Directory.Exists(r))
                     stack.Push(r);
+            }
 
             while (stack.Count > 0)
             {
+                cancellationToken.ThrowIfCancellationRequested();
                 var current = stack.Pop();
 
                 // 跳过系统受保护的 WinSxS / System32 内部文件，避免误导用户删除系统核心镜像
@@ -538,10 +546,12 @@ public sealed class SystemCleanService
                 {
                     foreach (var file in Directory.EnumerateFiles(current))
                     {
+                        cancellationToken.ThrowIfCancellationRequested();
                         try
                         {
                             var fi = new FileInfo(file);
-                            if (fi.Length < minBytes) continue;
+                            var size = fi.Length;
+                            if (size < minBytes) continue;
                             if (fi.Name.Equals("pagefile.sys", StringComparison.OrdinalIgnoreCase)
                                 || fi.Name.Equals("hiberfil.sys", StringComparison.OrdinalIgnoreCase)
                                 || fi.Name.Equals("swapfile.sys", StringComparison.OrdinalIgnoreCase))
@@ -549,40 +559,64 @@ public sealed class SystemCleanService
                                 continue;
                             }
 
-                            found.Add(new LargeFileItem
+                            var priority = (Size: size, Sequence: sequence++);
+                            if (resultLimit == 0 ||
+                                (found.Count >= resultLimit && found.TryPeek(out _, out var smallest) &&
+                                 Comparer<(long Size, long Sequence)>.Default.Compare(priority, smallest) <= 0))
+                            {
+                                continue;
+                            }
+
+                            var item = new LargeFileItem
                             {
                                 FilePath = fi.FullName,
                                 FileName = fi.Name,
                                 DirectoryPath = fi.DirectoryName ?? "",
                                 Extension = string.IsNullOrWhiteSpace(fi.Extension) ? "无扩展名" : fi.Extension.ToLowerInvariant(),
-                                SizeBytes = fi.Length,
-                                SizeText = ThisPcService.FormatSize(fi.Length),
+                                SizeBytes = size,
+                                SizeText = ThisPcService.FormatSize(size),
                                 LastModified = fi.LastWriteTime,
                                 LastModifiedText = fi.LastWriteTime.ToString("yyyy-MM-dd HH:mm")
-                            });
+                            };
+                            if (found.Count < resultLimit)
+                            {
+                                found.Enqueue((item, priority.Sequence), priority);
+                            }
+                            else
+                            {
+                                found.Dequeue();
+                                found.Enqueue((item, priority.Sequence), priority);
+                            }
                         }
+                        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested) { throw; }
                         catch (Exception) { }
                     }
 
                     foreach (var sub in Directory.EnumerateDirectories(current))
                     {
+                        cancellationToken.ThrowIfCancellationRequested();
                         try
                         {
                             var attr = File.GetAttributes(sub);
                             if ((attr & FileAttributes.ReparsePoint) == 0)
                                 stack.Push(sub);
                         }
+                        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested) { throw; }
                         catch (Exception) { }
                     }
                 }
+                catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested) { throw; }
                 catch (Exception) { }
             }
 
-            return found
-                .OrderByDescending(f => f.SizeBytes)
-                .Take(maxResults)
+            cancellationToken.ThrowIfCancellationRequested();
+            return found.UnorderedItems
+                .Select(entry => entry.Element)
+                .OrderByDescending(entry => entry.File.SizeBytes)
+                .ThenBy(entry => entry.Sequence)
+                .Select(entry => entry.File)
                 .ToList();
-        });
+        }, cancellationToken);
     }
 
     public async Task<(bool Success, string Message)> RunDismComponentCleanupAsync(Action<string>? progress = null)

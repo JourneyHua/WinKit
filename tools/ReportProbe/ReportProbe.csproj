@@ -1,0 +1,26 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net10.0-windows</TargetFramework>
+    <UseWPF>true</UseWPF>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <LangVersion>latest</LangVersion>
+    <EnableDefaultCompileItems>false</EnableDefaultCompileItems>
+    <WinKitAssemblyDir Condition="'$(WinKitAssemblyDir)' == ''">$(MSBuildThisFileDirectory)..\..\src\WinKit\bin\Release\net10.0-windows</WinKitAssemblyDir>
+    <!-- Compile the current ReportViewModel against an existing WinKit assembly. -->
+    <!-- Its local type intentionally takes precedence over the reference copy. -->
+    <NoWarn>$(NoWarn);CS0436</NoWarn>
+  </PropertyGroup>
+  <ItemGroup>
+    <Compile Include="Program.cs" />
+    <Compile Include="..\..\src\WinKit\ViewModels\ReportViewModel.cs" Link="ReportViewModel.cs" />
+    <Reference Include="WinKit">
+      <HintPath>$(WinKitAssemblyDir)\WinKit.dll</HintPath>
+      <Private>true</Private>
+    </Reference>
+  </ItemGroup>
+  <Target Name="RequireExistingWinKitAssembly" BeforeTargets="ResolveReferences">
+    <Error Condition="!Exists('$(WinKitAssemblyDir)\WinKit.dll')" Text="Provide an existing WinKit.dll through -p:WinKitAssemblyDir=... . This probe never builds the main project." />
+  </Target>
+</Project>

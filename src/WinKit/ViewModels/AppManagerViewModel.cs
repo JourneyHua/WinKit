@@ -8,11 +8,12 @@ using WinKit.Services;
 
 namespace WinKit.ViewModels;
 
-public sealed class AppManagerViewModel : ObservableObject, IModule
+public sealed class AppManagerViewModel : ObservableObject, IModule, IModuleActivation, IDisposable
 {
     private readonly AppManagerService _service;
-    private readonly RuntimeCheckService _runtimeService = new();
-    private readonly SystemToolCatalogService _toolService = new();
+    private readonly InstalledSoftwareSnapshotCache _snapshot = new();
+    private readonly RuntimeCheckService _runtimeService;
+    private readonly SystemToolCatalogService _toolService;
     private readonly UninstallService _uninstall = new();
     private readonly Action<string> _status;
     private readonly Action<bool>? _setBusy;
@@ -29,9 +30,24 @@ public sealed class AppManagerViewModel : ObservableObject, IModule
     private bool _onlyMissingRuntimes;
     private bool _onlyUninstalledTools;
     private bool _isBusy;
-    private string _summaryText = "";
-    private string _runtimeSummaryText = "";
-    private string _toolSummaryText = "";
+    private string _summaryText = "尚未加载应用列表";
+    private string _runtimeSummaryText = "尚未加载 · 打开运行库子页时检测";
+    private string _toolSummaryText = "尚未加载 · 打开工具子页时检测";
+    private bool _isActive = true;
+    private bool _disposed;
+    private bool _loadingApps, _loadingRuntimes, _loadingTools, _checkingUpdates;
+    private bool _appsDirty = true, _runtimesDirty = true, _toolsDirty = true;
+    private bool _appsPresentationDirty, _runtimesPresentationDirty, _toolsPresentationDirty;
+    private int _dataVersion;
+    private DateTime? _appsLoadedAt, _runtimesLoadedAt, _toolsLoadedAt;
+    private readonly Dictionary<InstalledAppItem, string> _appSearch = new();
+    private readonly Dictionary<RuntimeComponentItem, string> _runtimeSearch = new();
+    private readonly Dictionary<SystemToolItem, string> _toolSearch = new();
+    private NpmViewModel? _npm;
+    private InstalledAppItem? _pendingResidual;
+    private bool _checkingResidual;
+    private int _residualRequestVersion;
+    private DateTime _untrackedUninstallUntil;
     private string _hintText = "汇总本机已安装的传统桌面软件与 Microsoft Store / MSIX 打包应用。点「检查更新」将通过系统内置 winget 对比最新版本；卸载后自动扫描注册表残留（支持一键快照清理）与残留目录。";
 
     private DispatcherTimer? _uninstallTimer;
@@ -43,45 +59,50 @@ public sealed class AppManagerViewModel : ObservableObject, IModule
 
     public AppManagerViewModel(ChangeJournal journal, Action<string> status, Action<bool>? setBusy = null)
     {
-        _service = new AppManagerService(journal);
+        _service = new AppManagerService(journal, _snapshot);
+        _runtimeService = new RuntimeCheckService(_snapshot);
+        _toolService = new SystemToolCatalogService(_snapshot);
         _status = status;
         _setBusy = setBusy;
 
-        Apps = new ObservableCollection<InstalledAppItem>();
-        Runtimes = new ObservableCollection<RuntimeComponentItem>();
-        Tools = new ObservableCollection<SystemToolItem>();
-        UninstallCenter = new UninstallCenterViewModel(journal, status, setBusy);
+        Apps = new SnapshotCollection<InstalledAppItem>();
+        Runtimes = new SnapshotCollection<RuntimeComponentItem>();
+        Tools = new SnapshotCollection<SystemToolItem>();
+        UninstallCenter = new UninstallCenterViewModel(journal, status, value => IsBusy = value);
+        UninstallCenter.UninstallerLaunched += OnUninstallerLaunched;
+        UninstallCenter.SoftwareChanged += OnChildSoftwareChanged;
 
-        RefreshCommand = new RelayCommand(ManualRefresh, () => !IsBusy);
-        CheckUpdatesCommand = new RelayCommand(() => _ = CheckUpdatesAsync(), () => !IsBusy);
-        UpgradeAppCommand = new RelayCommand(p => _ = UpgradeAppAsync(p as InstalledAppItem), p => p is InstalledAppItem { HasUpdate: true } && !IsBusy);
-        UpgradeAllCommand = new RelayCommand(() => _ = UpgradeAllAsync(), () => HasUpdatable && !IsBusy);
-        UninstallAppCommand = new RelayCommand(p => _ = UninstallAppAsync(p as InstalledAppItem), p => p is InstalledAppItem && !IsBusy);
+        RefreshCommand = new RelayCommand(ManualRefresh, () => CanChangeSoftware);
+        CheckUpdatesCommand = new RelayCommand(() => _ = CheckUpdatesAsync(), () => CanChangeSoftware);
+        UpgradeAppCommand = new RelayCommand(p => _ = UpgradeAppAsync(p as InstalledAppItem), p => p is InstalledAppItem { HasUpdate: true } && CanChangeSoftware);
+        UpgradeAllCommand = new RelayCommand(() => _ = UpgradeAllAsync(), () => HasUpdatable && CanChangeSoftware);
+        UninstallAppCommand = new RelayCommand(p => _ = UninstallAppAsync(p as InstalledAppItem), p => p is InstalledAppItem && CanChangeSoftware);
         OpenLocationCommand = new RelayCommand(p => OpenLocation(p as InstalledAppItem));
         CopyPathCommand = new RelayCommand(p => CopyPath(p as InstalledAppItem));
         OpenRegeditCommand = new RelayCommand(p => OpenRegedit(p as InstalledAppItem));
-        RecheckResidualCommand = new RelayCommand(RecheckResidual, () => CanRecheckResidual && !IsBusy);
-        CleanResidualRegistryCommand = new RelayCommand(CleanResidualRegistry, () => HasRegistryResiduals && !IsBusy);
-        OpenResidualFolderCommand = new RelayCommand(OpenResidualFolder, () => HasResidualFolder && !IsBusy);
-        ScanResidualCommand = new RelayCommand(p => ScanItemResidual(p as InstalledAppItem), p => p is InstalledAppItem && !IsBusy);
+        RecheckResidualCommand = new RelayCommand(RecheckResidual, () => CanRecheckResidual && CanChangeSoftware);
+        CleanResidualRegistryCommand = new RelayCommand(CleanResidualRegistry, () => HasRegistryResiduals && CanChangeSoftware);
+        OpenResidualFolderCommand = new RelayCommand(OpenResidualFolder, () => HasResidualFolder && CanChangeSoftware);
+        ScanResidualCommand = new RelayCommand(p => ScanItemResidual(p as InstalledAppItem), p => p is InstalledAppItem && CanChangeSoftware);
 
         FilterAllCommand = new RelayCommand(() => SourceFilter = "all");
         FilterDesktopCommand = new RelayCommand(() => SourceFilter = "desktop");
         FilterStoreCommand = new RelayCommand(() => SourceFilter = "store");
         FilterScoopCommand = new RelayCommand(() => SourceFilter = "scoop");
 
-        ShowAppsViewCommand = new RelayCommand(() => SubView = "apps");
-        ShowRuntimesViewCommand = new RelayCommand(() => SubView = "runtimes");
-        ShowToolsViewCommand = new RelayCommand(() => SubView = "tools");
-        ShowUninstallCenterCommand = new RelayCommand(() => SubView = "uninstall");
-        CheckRuntimesCommand = new RelayCommand(RefreshRuntimes);
-        InstallRuntimeCommand = new RelayCommand(p => _ = InstallRuntimeAsync(p as RuntimeComponentItem));
-        InstallAllMissingRuntimesCommand = new RelayCommand(() => _ = InstallAllMissingRuntimesAsync());
+        ShowAppsViewCommand = new RelayCommand(() => SubView = "apps", () => !IsBusy);
+        ShowRuntimesViewCommand = new RelayCommand(() => SubView = "runtimes", () => !IsBusy);
+        ShowToolsViewCommand = new RelayCommand(() => SubView = "tools", () => !IsBusy);
+        ShowUninstallCenterCommand = new RelayCommand(() => SubView = "uninstall", () => !IsBusy);
+        ShowNpmViewCommand = new RelayCommand(() => SubView = "npm", () => !IsBusy);
+        CheckRuntimesCommand = new RelayCommand(RefreshRuntimes, () => CanChangeSoftware);
+        InstallRuntimeCommand = new RelayCommand(p => _ = InstallRuntimeAsync(p as RuntimeComponentItem), p => p is RuntimeComponentItem && CanChangeSoftware);
+        InstallAllMissingRuntimesCommand = new RelayCommand(() => _ = InstallAllMissingRuntimesAsync(), () => HasMissingRuntimes && CanChangeSoftware);
 
-        RefreshToolsCommand = new RelayCommand(RefreshTools);
+        RefreshToolsCommand = new RelayCommand(RefreshTools, () => CanChangeSoftware);
         LaunchToolCommand = new RelayCommand(p => LaunchTool(p as SystemToolItem));
-        InstallToolCommand = new RelayCommand(p => _ = InstallToolAsync(p as SystemToolItem));
-        InstallSelectedToolsCommand = new RelayCommand(() => _ = InstallSelectedToolsAsync());
+        InstallToolCommand = new RelayCommand(p => _ = InstallToolAsync(p as SystemToolItem), p => p is SystemToolItem && CanChangeSoftware);
+        InstallSelectedToolsCommand = new RelayCommand(() => _ = InstallSelectedToolsAsync(), () => HasSelectedTools && CanChangeSoftware);
         SelectUninstalledToolsCommand = new RelayCommand(SelectUninstalledTools);
         OpenToolLocationCommand = new RelayCommand(p => OpenToolLocation(p as SystemToolItem));
     }
@@ -112,6 +133,8 @@ public sealed class AppManagerViewModel : ObservableObject, IModule
     public RelayCommand ShowRuntimesViewCommand { get; }
     public RelayCommand ShowToolsViewCommand { get; }
     public RelayCommand ShowUninstallCenterCommand { get; }
+    public RelayCommand ShowNpmViewCommand { get; }
+    public NpmViewModel Npm => _npm ??= new NpmViewModel(_status, value => IsBusy = value);
     public RelayCommand CheckRuntimesCommand { get; }
     public RelayCommand InstallRuntimeCommand { get; }
     public RelayCommand InstallAllMissingRuntimesCommand { get; }
@@ -128,19 +151,36 @@ public sealed class AppManagerViewModel : ObservableObject, IModule
         get => _subView;
         set
         {
-            if (!Set(ref _subView, value)) return;
+            if (IsBusy || !Set(ref _subView, value)) return;
             OnPropertyChanged(nameof(ShowInstalledApps));
             OnPropertyChanged(nameof(ShowRuntimes));
             OnPropertyChanged(nameof(ShowTools));
             OnPropertyChanged(nameof(ShowUninstallCenter));
-            if (value == "runtimes" && _allRuntimes.Count == 0)
-                RefreshRuntimes();
-            if (value == "tools" && _allTools.Count == 0)
-                RefreshTools();
+            OnPropertyChanged(nameof(ShowNpm));
+            OnPropertyChanged(nameof(CacheText));
+            if (DateTime.UtcNow < _untrackedUninstallUntil) InvalidateSoftware();
+            EnsureCurrentLoaded();
         }
     }
 
     public bool ShowInstalledApps => _subView == "apps";
+    public bool ShowNpm => _subView == "npm";
+    public bool IsLoading => _loadingApps || _loadingRuntimes || _loadingTools || _checkingUpdates;
+    public bool IsCheckingUpdates => _checkingUpdates;
+    private bool CanChangeSoftware => !IsBusy && !IsLoading;
+    public string CacheText
+    {
+        get
+        {
+            if (ShowNpm) return "npm 全局包 · 本地列表与更新检查分别执行";
+            if (ShowUninstallCenter) return "按需识别和扫描卸载残留";
+            var loading = ShowRuntimes ? _loadingRuntimes : ShowTools ? _loadingTools : _loadingApps;
+            var at = ShowRuntimes ? _runtimesLoadedAt : ShowTools ? _toolsLoadedAt : _appsLoadedAt;
+            var dirty = ShowRuntimes ? _runtimesDirty : ShowTools ? _toolsDirty : _appsDirty;
+            if (loading) return "正在后台读取本机数据…可切换页面";
+            return at is null ? "尚未加载 · 首次进入时读取" : $"本次会话数据 · 采集于 {at:HH:mm:ss}" + (dirty ? " · 待刷新" : " · 可手动重新扫描");
+        }
+    }
     public bool ShowRuntimes
     {
         get => _subView == "runtimes";
@@ -258,20 +298,34 @@ public sealed class AppManagerViewModel : ObservableObject, IModule
         get => _isBusy;
         private set
         {
-            if (Set(ref _isBusy, value))
+            if (!Set(ref _isBusy, value)) return;
+            if (value)
             {
-                _setBusy?.Invoke(value);
-                RefreshCommand.RaiseCanExecuteChanged();
-                CheckUpdatesCommand.RaiseCanExecuteChanged();
-                UpgradeAppCommand.RaiseCanExecuteChanged();
-                UpgradeAllCommand.RaiseCanExecuteChanged();
-                UninstallAppCommand.RaiseCanExecuteChanged();
-                RecheckResidualCommand.RaiseCanExecuteChanged();
-                CleanResidualRegistryCommand.RaiseCanExecuteChanged();
-                OpenResidualFolderCommand.RaiseCanExecuteChanged();
-                ScanResidualCommand.RaiseCanExecuteChanged();
+                // 软件发生写入后，之前启动的残留只读结果不能覆盖新的清理状态。
+                _residualRequestVersion++;
+                _pendingResidual = null;
+            }
+            _setBusy?.Invoke(value);
+            NotifyWorkState();
+            if (!value && _isActive)
+            {
+                DrainPendingResidual();
+                EnsureCurrentLoaded();
             }
         }
+    }
+
+    private void NotifyWorkState()
+    {
+        OnPropertyChanged(nameof(IsLoading));
+        OnPropertyChanged(nameof(IsCheckingUpdates));
+        OnPropertyChanged(nameof(CacheText));
+        foreach (var command in new[] { RefreshCommand, CheckUpdatesCommand, UpgradeAppCommand,
+                     UpgradeAllCommand, UninstallAppCommand, RecheckResidualCommand, CleanResidualRegistryCommand,
+                     OpenResidualFolderCommand, ScanResidualCommand, CheckRuntimesCommand, RefreshToolsCommand,
+                     InstallRuntimeCommand, InstallAllMissingRuntimesCommand, InstallToolCommand, InstallSelectedToolsCommand,
+                     ShowAppsViewCommand, ShowRuntimesViewCommand, ShowToolsViewCommand, ShowUninstallCenterCommand, ShowNpmViewCommand })
+            command.RaiseCanExecuteChanged();
     }
 
     public string SummaryText
@@ -330,59 +384,151 @@ public sealed class AppManagerViewModel : ObservableObject, IModule
         OpenResidualFolderCommand.RaiseCanExecuteChanged();
     }
 
-    private void ManualRefresh()
-    {
-        Refresh();
-    }
+    private bool _hasRequestedRefresh;
+
+    private void ManualRefresh() => Refresh();
 
     public void Refresh()
     {
-        if (IsBusy) return;
-        IsBusy = true;
+        if (_disposed) return;
+        _hasRequestedRefresh = true;
+        InvalidateSoftware();
+        if (!IsBusy && _isActive) EnsureCurrentLoaded();
+    }
 
+    public void OnActivated()
+    {
+        _isActive = true;
+        if (DateTime.UtcNow < _untrackedUninstallUntil) InvalidateSoftware();
+        DrainPendingResidual();
+        if (_hasRequestedRefresh) EnsureCurrentLoaded();
+    }
+
+    public void OnDeactivated() => _isActive = false;
+
+    public void Dispose()
+    {
+        _disposed = true;
+        _isActive = false;
+        _dataVersion++;
+        StopWatch();
+        UninstallCenter.UninstallerLaunched -= OnUninstallerLaunched;
+        UninstallCenter.SoftwareChanged -= OnChildSoftwareChanged;
+        foreach (var tool in _allTools) tool.SelectionChanged = null;
+    }
+
+    private void OnChildSoftwareChanged()
+    {
+        if (!_disposed) InvalidateSoftware();
+    }
+
+    private void OnUninstallerLaunched(UninstallEntry? entry)
+    {
+        if (_disposed) return;
+        InvalidateSoftware();
+        if (entry is not null)
+        {
+            var separator = entry.RegistryPath.IndexOf((char)92);
+            var prefix = separator > 0 ? entry.RegistryPath[..separator] : "";
+            if (prefix is "HKEY_CURRENT_USER" or "HKEY_LOCAL_MACHINE")
+            {
+                var app = _all.FirstOrDefault(x => string.Equals(x.RegistryPath, entry.RegistryPath, StringComparison.OrdinalIgnoreCase))
+                    ?? new InstalledAppItem
+                    {
+                        Id = entry.RegistryPath, Name = entry.Name, Version = entry.Version,
+                        Kind = AppSourceKind.Desktop, RegistryPath = entry.RegistryPath,
+                        Hive = prefix == "HKEY_CURRENT_USER" ? HiveKind.CurrentUser : HiveKind.LocalMachine,
+                        SubKey = entry.RegistryPath[(separator + 1)..],
+                        UninstallString = entry.UninstallString, InstallLocation = entry.InstallLocation
+                    };
+                StartUninstallWatch(app);
+                return;
+            }
+        }
+        // 未登记的候选无法可靠判断卸载完成；有限时间内返回时重读，不在隐藏页轮询列表。
+        _untrackedUninstallUntil = DateTime.UtcNow.AddMinutes(10);
+    }
+
+    private void InvalidateSoftware()
+    {
+        _snapshot.Invalidate();
+        _dataVersion++;
+        _appsDirty = _runtimesDirty = _toolsDirty = true;
+        OnPropertyChanged(nameof(CacheText));
+    }
+
+    private void EnsureCurrentLoaded()
+    {
+        if (_disposed || IsBusy || !_isActive) return;
+        switch (_subView)
+        {
+            case "apps":
+                if (_appsDirty) _ = LoadAppsAsync();
+                else if (_appsPresentationDirty) ApplyFilter();
+                break;
+            case "runtimes":
+                if (_runtimesDirty) _ = LoadRuntimesAsync();
+                else if (_runtimesPresentationDirty) ApplyRuntimeFilter();
+                break;
+            case "tools":
+                if (_toolsDirty) _ = LoadToolsAsync();
+                else if (_toolsPresentationDirty) ApplyToolFilter();
+                break;
+            case "npm": Npm.EnsureLoaded(); break;
+        }
+    }
+
+    private async Task LoadAppsAsync()
+    {
+        if (_loadingApps || _checkingUpdates) return;
+        _loadingApps = true;
+        var version = _dataVersion;
+        NotifyWorkState();
         try
         {
-            var previousUpdates = _all
-                .Where(a => a.HasUpdate)
-                .ToDictionary(a => a.Id, a => (a.LatestVersion, a.WingetId), StringComparer.OrdinalIgnoreCase);
-
-            _all = _service.LoadAll();
-
-            foreach (var item in _all)
-            {
-                if (previousUpdates.TryGetValue(item.Id, out var prev)
-                    && !string.Equals(item.Version, prev.LatestVersion, StringComparison.OrdinalIgnoreCase))
+            var previous = _all.Where(x => x.HasUpdate)
+                .GroupBy(x => x.Id, StringComparer.OrdinalIgnoreCase)
+                .ToDictionary(x => x.Key, x => (x.First().LatestVersion, x.First().WingetId), StringComparer.OrdinalIgnoreCase);
+            var items = await Task.Run(() => _service.LoadAll());
+            if (version != _dataVersion) return;
+            foreach (var item in items)
+                if (previous.TryGetValue(item.Id, out var old) && !string.Equals(item.Version, old.LatestVersion, StringComparison.OrdinalIgnoreCase))
                 {
-                    item.LatestVersion = prev.LatestVersion;
-                    item.WingetId = prev.WingetId;
+                    item.LatestVersion = old.LatestVersion;
+                    item.WingetId = old.WingetId;
                 }
-            }
-
-            ApplyFilter();
-            if (_allRuntimes.Count == 0)
+            _all = items;
+            PrepareApps();
+            _appsDirty = false;
+            _appsLoadedAt = DateTime.Now;
+            _appsPresentationDirty = true;
+            if (_isActive && ShowInstalledApps)
             {
-                _allRuntimes = _runtimeService.CheckAll();
-                ApplyRuntimeFilter();
+                ApplyFilter();
+                _status($"已加载 {_all.Count} 个应用 · 其他子页按需加载");
             }
-            if (_allTools.Count == 0)
-            {
-                LoadToolsInternal();
-            }
-            _status($"已加载 {_all.Count} 个应用 · 运行库就绪 {_allRuntimes.Count(r => r.IsInstalled)}/{_allRuntimes.Count} · 常用工具已装 {_allTools.Count(t => t.IsInstalled)}/{_allTools.Count}");
         }
-        catch (Exception ex)
-        {
-            SetError($"加载应用列表失败：{ex.Message}");
-        }
+        catch (Exception ex) { SetError($"加载应用列表失败：{ex.Message}"); }
         finally
         {
-            IsBusy = false;
+            _loadingApps = false;
+            NotifyWorkState();
+            if (version != _dataVersion) EnsureCurrentLoaded();
         }
+    }
+
+    private void PrepareApps()
+    {
+        _all = _all.OrderByDescending(x => x.HasUpdate)
+            .ThenBy(x => x.Kind == AppSourceKind.Desktop ? 0 : x.Kind == AppSourceKind.Scoop ? 1 : 2)
+            .ThenBy(x => x.Name, StringComparer.CurrentCulture).ToList();
+        _appSearch.Clear();
+        foreach (var item in _all) _appSearch[item] = item.SearchBlob;
     }
 
     private void ApplyFilter()
     {
-        Apps.Clear();
+        _appsPresentationDirty = false;
         var kw = _searchText.Trim().ToLowerInvariant();
 
         var query = _all
@@ -394,12 +540,9 @@ public sealed class AppManagerViewModel : ObservableObject, IModule
                 _ => true
             })
             .Where(a => !_onlyUpdatable || a.HasUpdate)
-            .Where(a => kw.Length == 0 || a.SearchBlob.Contains(kw))
-            .OrderByDescending(a => a.HasUpdate)
-            .ThenBy(a => a.Kind == AppSourceKind.Desktop ? 0 : a.Kind == AppSourceKind.Scoop ? 1 : 2)
-            .ThenBy(a => a.Name, StringComparer.CurrentCulture);
+            .Where(a => kw.Length == 0 || _appSearch.GetValueOrDefault(a, "").Contains(kw));
 
-        foreach (var item in query) Apps.Add(item);
+        ((SnapshotCollection<InstalledAppItem>)Apps).ReplaceWith(query);
 
         var desktopCount = _all.Count(a => a.Kind == AppSourceKind.Desktop);
         var storeCount = _all.Count(a => a.Kind == AppSourceKind.Store);
@@ -414,8 +557,9 @@ public sealed class AppManagerViewModel : ObservableObject, IModule
 
     private async Task CheckUpdatesAsync()
     {
-        if (IsBusy) return;
-        IsBusy = true;
+        if (!CanChangeSoftware || _appsDirty) return;
+        _checkingUpdates = true;
+        NotifyWorkState();
 
         try
         {
@@ -429,7 +573,9 @@ public sealed class AppManagerViewModel : ObservableObject, IModule
                 return;
             }
 
-            ApplyFilter();
+            PrepareApps();
+            _appsPresentationDirty = true;
+            if (_isActive && ShowInstalledApps) ApplyFilter();
             _status(matched > 0
                 ? $"发现 {matched} 个可更新应用（winget 共返回 {raw.Count} 条升级记录）"
                 : "所有已匹配软件均为最新版本");
@@ -440,13 +586,15 @@ public sealed class AppManagerViewModel : ObservableObject, IModule
         }
         finally
         {
-            IsBusy = false;
+            _checkingUpdates = false;
+            NotifyWorkState();
+            if (_appsDirty) EnsureCurrentLoaded();
         }
     }
 
     private async Task UpgradeAppAsync(InstalledAppItem? app)
     {
-        if (app is null || IsBusy) return;
+        if (app is null || !CanChangeSoftware) return;
 
         var confirm = MessageBox.Show(
             $"将通过 winget 更新「{app.Name}」：\n\n" +
@@ -488,7 +636,7 @@ public sealed class AppManagerViewModel : ObservableObject, IModule
     {
         var targets = Apps.Where(a => a.HasUpdate).ToList();
         if (targets.Count == 0) targets = _all.Where(a => a.HasUpdate).ToList();
-        if (targets.Count == 0 || IsBusy) return;
+        if (targets.Count == 0 || !CanChangeSoftware) return;
 
         var names = string.Join("\n• ", targets.Take(10).Select(t => $"{t.Name} ({t.VersionText})"));
         if (targets.Count > 10) names += $"\n…等共 {targets.Count} 个应用";
@@ -542,7 +690,7 @@ public sealed class AppManagerViewModel : ObservableObject, IModule
             SetError(adminNeeded);
             return;
         }
-        if (app is null || IsBusy) return;
+        if (app is null || !CanChangeSoftware) return;
 
         if (app.Kind == AppSourceKind.Scoop)
         {
@@ -640,12 +788,22 @@ public sealed class AppManagerViewModel : ObservableObject, IModule
     private void StartUninstallWatch(InstalledAppItem app)
     {
         StopWatch();
+        _residualRequestVersion++;
+        _pendingResidual = null;
         SetResidualResult(app, "已启动卸载程序，正在等待卸载完成。完成后将在此显示复查结果，也可随时手动复查残留。");
         _uninstallDeadline = DateTime.UtcNow.AddMinutes(10);
 
         _uninstallTimer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(3) };
         _uninstallTimer.Tick += (_, _) =>
         {
+            if (DateTime.UtcNow > _uninstallDeadline)
+            {
+                StopWatch();
+                InvalidateSoftware();
+                SetResidualResult(app, "等待卸载超时，尚未确认卸载完成。若已完成卸载，可点「复查残留」手动检查。");
+                _status($"等待「{app.Name}」卸载超时，可在应用页手动复查残留。");
+                return;
+            }
             if (IsBusy) return;
             try
             {
@@ -658,7 +816,9 @@ public sealed class AppManagerViewModel : ObservableObject, IModule
                 if (regGone || exeGone)
                 {
                     StopWatch();
-                    HandleResidualCheck(app);
+                    InvalidateSoftware();
+                    if (_isActive) HandleResidualCheck(app);
+                    else _pendingResidual = app;
                 }
                 else if (DateTime.UtcNow > _uninstallDeadline)
                 {
@@ -696,7 +856,7 @@ public sealed class AppManagerViewModel : ObservableObject, IModule
 
     private void ScanItemResidual(InstalledAppItem? app)
     {
-        if (app is null || IsBusy) return;
+        if (app is null || !CanChangeSoftware) return;
 
         // 用户在列表上点「扫描残留」是想清干净的，直接把他带到能清干净的地方，
         // 而不是弹一串「这个目录 WinKit 不代删」的提示
@@ -724,11 +884,26 @@ public sealed class AppManagerViewModel : ObservableObject, IModule
 
     private void HandleResidualCheck(InstalledAppItem app)
     {
-        if (IsBusy) return;
+        if (_disposed) return;
+        _residualRequestVersion++;
+        _pendingResidual = app;
+        DrainPendingResidual();
+    }
 
+    private void DrainPendingResidual()
+    {
+        if (_disposed || IsBusy || _checkingResidual || !_isActive || _pendingResidual is not { } app) return;
+        _pendingResidual = null;
+        _ = LoadResidualAsync(app, _residualRequestVersion);
+    }
+
+    private async Task LoadResidualAsync(InstalledAppItem app, int version)
+    {
+        _checkingResidual = true;
         try
         {
-            var report = _service.ScanResiduals(app);
+            var report = await Task.Run(() => _service.ScanResiduals(app));
+            if (_disposed || version != _residualRequestVersion) return;
             SetResidualResult(app, BuildResidualDetails(report), report);
             SetError(null);
             _status(report.HasAny
@@ -738,10 +913,17 @@ public sealed class AppManagerViewModel : ObservableObject, IModule
         }
         catch (Exception ex)
         {
-            SetResidualResult(app, $"残留扫描失败：{ex.Message}\n可点「复查残留」重试。");
+            if (_disposed || version != _residualRequestVersion) return;
+            SetResidualResult(app, $"残留扫描失败：{ex.Message}{Environment.NewLine}可点「复查残留」重试。");
             SetError($"扫描「{app.Name}」卸载残留失败：{ex.Message}");
         }
+        finally
+        {
+            _checkingResidual = false;
+            DrainPendingResidual();
+        }
     }
+
 
     private static string BuildResidualDetails(AppResidualReport report)
     {
@@ -771,6 +953,8 @@ public sealed class AppManagerViewModel : ObservableObject, IModule
         if (IsBusy || _lastUninstalled is not { } app
                    || _residualReport is not { RegistryResiduals.Count: > 0 } report) return;
 
+        _residualRequestVersion++;
+        _pendingResidual = null;
         try
         {
             report = _service.ScanResiduals(app);
@@ -896,32 +1080,52 @@ public sealed class AppManagerViewModel : ObservableObject, IModule
 
     public void RefreshRuntimes()
     {
+        if (IsBusy || _loadingRuntimes) return;
+        InvalidateSoftware();
+        _ = LoadRuntimesAsync();
+    }
+
+    private async Task LoadRuntimesAsync()
+    {
+        if (_loadingRuntimes) return;
+        _loadingRuntimes = true;
+        var version = _dataVersion;
+        NotifyWorkState();
         try
         {
-            _allRuntimes = _runtimeService.CheckAll();
-            ApplyRuntimeFilter();
-            var installed = _allRuntimes.Count(r => r.IsInstalled);
-            _status($"运行库体检完成：共 {_allRuntimes.Count} 项，已安装 {installed} 项，缺失 {_allRuntimes.Count - installed} 项");
+            var items = await Task.Run(() => _runtimeService.CheckAll());
+            if (version != _dataVersion) return;
+            _allRuntimes = items.OrderBy(x => x.IsInstalled ? 1 : 0).ThenBy(x => x.Category).ThenBy(x => x.Name).ToList();
+            _runtimeSearch.Clear();
+            foreach (var item in _allRuntimes) _runtimeSearch[item] = item.SearchBlob;
+            _runtimesDirty = false;
+            _runtimesLoadedAt = DateTime.Now;
+            _runtimesPresentationDirty = true;
+            if (_isActive && ShowRuntimes)
+            {
+                ApplyRuntimeFilter();
+                _status($"运行库体检完成：共 {_allRuntimes.Count} 项，已安装 {_allRuntimes.Count(x => x.IsInstalled)} 项");
+            }
         }
-        catch (Exception ex)
+        catch (Exception ex) { SetError($"运行库检测失败：{ex.Message}"); }
+        finally
         {
-            SetError($"运行库检测失败：{ex.Message}");
+            _loadingRuntimes = false;
+            NotifyWorkState();
+            if (version != _dataVersion) EnsureCurrentLoaded();
         }
     }
 
     private void ApplyRuntimeFilter()
     {
-        Runtimes.Clear();
+        _runtimesPresentationDirty = false;
         var kw = _runtimeSearchText.Trim().ToLowerInvariant();
 
         var query = _allRuntimes
             .Where(r => !_onlyMissingRuntimes || !r.IsInstalled)
-            .Where(r => kw.Length == 0 || r.SearchBlob.Contains(kw))
-            .OrderBy(r => r.IsInstalled ? 1 : 0)
-            .ThenBy(r => r.Category)
-            .ThenBy(r => r.Name);
+            .Where(r => kw.Length == 0 || _runtimeSearch.GetValueOrDefault(r, "").Contains(kw));
 
-        foreach (var item in query) Runtimes.Add(item);
+        ((SnapshotCollection<RuntimeComponentItem>)Runtimes).ReplaceWith(query);
 
         var installedCount = _allRuntimes.Count(r => r.IsInstalled);
         var missingCount = _allRuntimes.Count - installedCount;
@@ -934,7 +1138,7 @@ public sealed class AppManagerViewModel : ObservableObject, IModule
 
     private async Task InstallRuntimeAsync(RuntimeComponentItem? item)
     {
-        if (item is null || IsBusy) return;
+        if (item is null || !CanChangeSoftware) return;
 
         var actionName = item.IsInstalled ? "重新安装 / 修复" : "安装";
         var sourceDesc = item.InstallId.StartsWith("DISM:", StringComparison.OrdinalIgnoreCase)
@@ -957,7 +1161,8 @@ public sealed class AppManagerViewModel : ObservableObject, IModule
         {
             var (ok, msg) = await _runtimeService.InstallRuntimeAsync(item, s => _status(s));
             _status(msg);
-            RefreshRuntimes();
+            InvalidateSoftware();
+            await LoadRuntimesAsync();
 
             if (!ok)
             {
@@ -973,7 +1178,7 @@ public sealed class AppManagerViewModel : ObservableObject, IModule
     private async Task InstallAllMissingRuntimesAsync()
     {
         var missing = _allRuntimes.Where(r => !r.IsInstalled).ToList();
-        if (missing.Count == 0 || IsBusy) return;
+        if (missing.Count == 0 || !CanChangeSoftware) return;
 
         var listPreview = string.Join("\n• ", missing.Take(10).Select(m => $"{m.Name} ({m.Architecture})"));
         if (missing.Count > 10) listPreview += $"\n…等共 {missing.Count} 项";
@@ -1000,7 +1205,8 @@ public sealed class AppManagerViewModel : ObservableObject, IModule
                 else failed.Add($"{item.Name}：{msg}");
             }
 
-            RefreshRuntimes();
+            InvalidateSoftware();
+            await LoadRuntimesAsync();
             _status($"运行库批量补齐完成：成功 {okCount} 项，失败 {failed.Count} 项");
 
             if (failed.Count > 0)
@@ -1016,26 +1222,47 @@ public sealed class AppManagerViewModel : ObservableObject, IModule
 
     public void RefreshTools()
     {
-        try
-        {
-            LoadToolsInternal();
-            var installed = _allTools.Count(t => t.IsInstalled);
-            _status($"系统工具库检测完成：收录 {_allTools.Count} 款，已安装 {installed} 款，未安装 {_allTools.Count - installed} 款");
-        }
-        catch (Exception ex)
-        {
-            SetError($"检测系统工具库失败：{ex.Message}");
-        }
+        if (IsBusy || _loadingTools) return;
+        InvalidateSoftware();
+        _ = LoadToolsAsync();
     }
 
-    private void LoadToolsInternal()
+    private async Task LoadToolsAsync()
     {
-        _allTools = _toolService.LoadCatalog();
-        foreach (var tool in _allTools)
+        if (_loadingTools) return;
+        _loadingTools = true;
+        var version = _dataVersion;
+        NotifyWorkState();
+        try
         {
-            tool.SelectionChanged = OnToolSelectionChanged;
+            var selected = _allTools.Where(x => x.IsSelected).Select(x => x.Id).ToHashSet(StringComparer.OrdinalIgnoreCase);
+            var items = await Task.Run(() => _toolService.LoadCatalog());
+            if (version != _dataVersion) return;
+            foreach (var old in _allTools) old.SelectionChanged = null;
+            _allTools = items;
+            _toolSearch.Clear();
+            foreach (var item in _allTools)
+            {
+                item.IsSelected = selected.Contains(item.Id);
+                item.SelectionChanged = OnToolSelectionChanged;
+                _toolSearch[item] = item.SearchBlob;
+            }
+            _toolsDirty = false;
+            _toolsLoadedAt = DateTime.Now;
+            _toolsPresentationDirty = true;
+            if (_isActive && ShowTools)
+            {
+                ApplyToolFilter();
+                _status($"系统工具库检测完成：收录 {_allTools.Count} 款，已安装 {_allTools.Count(x => x.IsInstalled)} 款");
+            }
         }
-        ApplyToolFilter();
+        catch (Exception ex) { SetError($"检测系统工具库失败：{ex.Message}"); }
+        finally
+        {
+            _loadingTools = false;
+            NotifyWorkState();
+            if (version != _dataVersion) EnsureCurrentLoaded();
+        }
     }
 
     private void OnToolSelectionChanged()
@@ -1043,18 +1270,19 @@ public sealed class AppManagerViewModel : ObservableObject, IModule
         OnPropertyChanged(nameof(SelectedToolsCount));
         OnPropertyChanged(nameof(HasSelectedTools));
         OnPropertyChanged(nameof(InstallSelectedToolsText));
+        InstallSelectedToolsCommand.RaiseCanExecuteChanged();
     }
 
     private void ApplyToolFilter()
     {
-        Tools.Clear();
+        _toolsPresentationDirty = false;
         var kw = _toolSearchText.Trim().ToLowerInvariant();
 
         var query = _allTools
             .Where(t => !_onlyUninstalledTools || !t.IsInstalled)
-            .Where(t => kw.Length == 0 || t.SearchBlob.Contains(kw));
+            .Where(t => kw.Length == 0 || _toolSearch.GetValueOrDefault(t, "").Contains(kw));
 
-        foreach (var item in query) Tools.Add(item);
+        ((SnapshotCollection<SystemToolItem>)Tools).ReplaceWith(query);
 
         var installedCount = _allTools.Count(t => t.IsInstalled);
         ToolSummaryText = $"共收录 {_allTools.Count} 款纯净系统与装机工具 · 已安装 {installedCount} 款 · 未安装 {_allTools.Count - installedCount} 款 · 当前显示 {Tools.Count} 款";
@@ -1098,7 +1326,7 @@ public sealed class AppManagerViewModel : ObservableObject, IModule
 
     private async Task InstallToolAsync(SystemToolItem? tool)
     {
-        if (tool is null || IsBusy) return;
+        if (tool is null || !CanChangeSoftware) return;
 
         var actionName = tool.IsInstalled ? "更新 / 重装" : "安装";
         var confirm = MessageBox.Show(
@@ -1116,7 +1344,8 @@ public sealed class AppManagerViewModel : ObservableObject, IModule
         {
             var (ok, msg) = await _toolService.InstallOrUpdateToolAsync(tool, s => _status(s));
             _status(msg);
-            RefreshTools();
+            InvalidateSoftware();
+            await LoadToolsAsync();
             if (!ok)
             {
                 SetError(msg);
@@ -1131,7 +1360,7 @@ public sealed class AppManagerViewModel : ObservableObject, IModule
     private async Task InstallSelectedToolsAsync()
     {
         var targets = _allTools.Where(t => t.IsSelected).ToList();
-        if (targets.Count == 0 || IsBusy) return;
+        if (targets.Count == 0 || !CanChangeSoftware) return;
 
         var preview = string.Join("\n• ", targets.Take(10).Select(t => $"{t.Name} ({t.WingetId})"));
         if (targets.Count > 10) preview += $"\n…等共 {targets.Count} 款工具";
@@ -1157,7 +1386,8 @@ public sealed class AppManagerViewModel : ObservableObject, IModule
                 else failed.Add($"{item.Name}：{msg}");
             }
 
-            RefreshTools();
+            InvalidateSoftware();
+            await LoadToolsAsync();
             _status($"批量安装系统工具完成：成功 {okCount} 款，失败 {failed.Count} 款");
 
             if (failed.Count > 0)
@@ -1185,4 +1415,20 @@ public sealed class AppManagerViewModel : ObservableObject, IModule
 
     public bool HasError => !string.IsNullOrWhiteSpace(_errorText);
 
-    public void SetError(string? message) => ErrorText = message ?? "";}
+    public void SetError(string? message) => ErrorText = message ?? "";
+
+    private sealed class SnapshotCollection<T> : ObservableCollection<T>
+    {
+        public void ReplaceWith(IEnumerable<T> values)
+        {
+            var items = values.ToList();
+            if (Count == items.Count && this.SequenceEqual(items)) return;
+            CheckReentrancy();
+            Items.Clear();
+            foreach (var item in items) Items.Add(item);
+            OnPropertyChanged(new System.ComponentModel.PropertyChangedEventArgs(nameof(Count)));
+            OnPropertyChanged(new System.ComponentModel.PropertyChangedEventArgs("Item[]"));
+            OnCollectionChanged(new System.Collections.Specialized.NotifyCollectionChangedEventArgs(System.Collections.Specialized.NotifyCollectionChangedAction.Reset));
+        }
+    }
+}

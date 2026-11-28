@@ -1,0 +1,26 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net10.0-windows</TargetFramework>
+    <UseWPF>true</UseWPF>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <LangVersion>latest</LangVersion>
+    <EnableDefaultCompileItems>false</EnableDefaultCompileItems>
+    <!-- Link the changed production types; the built app supplies unrelated public dependencies. -->
+    <NoWarn>$(NoWarn);CS0436</NoWarn>
+    <WinKitAssemblyPath Condition="'$(WinKitAssemblyPath)' == ''">$(MSBuildThisFileDirectory)..\..\src\WinKit\bin\Release\net10.0-windows\WinKit.dll</WinKitAssemblyPath>
+  </PropertyGroup>
+  <ItemGroup>
+    <Reference Include="WinKit"><HintPath>$(WinKitAssemblyPath)</HintPath></Reference>
+    <Compile Include="Program.cs" />
+    <Compile Include="ProbeContracts.cs" />
+    <Compile Include="..\..\src\WinKit\Core\ShellReadWorker.cs" Link="Core\ShellReadWorker.cs" />
+    <Compile Include="..\..\src\WinKit\Services\AppxManifest.cs" Link="Services\AppxManifest.cs" />
+    <Compile Include="..\..\src\WinKit\Services\StubbornNodeService.cs" Link="Services\StubbornNodeService.cs" />
+    <Compile Include="..\..\src\WinKit\Services\NavPaneService.cs" Link="Services\NavPaneService.cs" />
+    <Compile Include="..\..\src\WinKit\ViewModels\NavPaneViewModel.cs" Link="ViewModels\NavPaneViewModel.cs" />
+    <Compile Include="..\..\src\WinKit\ViewModels\TaskbarViewModel.cs" Link="ViewModels\TaskbarViewModel.cs" />
+    <Compile Include="..\..\src\WinKit\ViewModels\ContextMenuViewModel.cs" Link="ViewModels\ContextMenuViewModel.cs" />
+  </ItemGroup>
+</Project>

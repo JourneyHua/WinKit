@@ -23,7 +23,7 @@ public sealed class DomainNode : ObservableObject
     }
 }
 
-public sealed class ContextMenuViewModel : ObservableObject, IModule
+public sealed class ContextMenuViewModel : ObservableObject, IModule, IModuleActivation, IDisposable
 {
     private readonly ContextMenuService _service;
     private readonly NewMenuService _newService;
@@ -51,6 +51,16 @@ public sealed class ContextMenuViewModel : ObservableObject, IModule
     private bool _useClassicMenuByDefault;
     private string _newMenuHint = "";
     private bool _isLoading;
+    private bool _isActive = true;
+    private bool _refreshNeeded;
+    private bool _disposed;
+    private bool _watchReadInProgress;
+    private int _watchGeneration;
+    private int _dataVersion;
+    private MenuSnapshot? _pendingSnapshot;
+    private (int Found, int Total) _manifestStats;
+    private sealed record MenuSnapshot(List<MenuEntry> Entries, List<NewMenuItem> NewItems,
+        bool Classic, (int Found, int Total) ManifestStats);
 
     public ContextMenuViewModel(ChangeJournal journal, Action<string> status)
     {
@@ -196,6 +206,7 @@ public sealed class ContextMenuViewModel : ObservableObject, IModule
             try
             {
                 _newService.SetForcedClassicMenu(value);
+                NoteDataChanged();
                 _useClassicMenuByDefault = value;
                 OnPropertyChanged();
                 UpdateNewMenuHint();
@@ -276,6 +287,7 @@ public sealed class ContextMenuViewModel : ObservableObject, IModule
 
     private void ManualRefresh()
     {
+        if (IsLoading) return;
         Refresh();
     }
 
@@ -287,55 +299,99 @@ public sealed class ContextMenuViewModel : ObservableObject, IModule
         ReportResidual(pending);
     }
 
+    public void OnActivated()
+    {
+        if (_disposed) return;
+        _isActive = true;
+        if (_pendingSnapshot is { } snapshot)
+        {
+            _pendingSnapshot = null;
+            ApplySnapshot(snapshot);
+        }
+        if (_refreshNeeded) _ = RefreshAsync();
+    }
+
+    public void OnDeactivated() => _isActive = false;
+
+    public void Dispose()
+    {
+        _disposed = true;
+        _isActive = false;
+        _pendingSnapshot = null;
+        StopWatch();
+    }
+
     public void Refresh()
     {
-        if (IsLoading) return;
-        IsLoading = true;
+        if (_disposed) return;
+        _dataVersion++;
+        _pendingSnapshot = null;
+        _refreshNeeded = true;
+        if (_isActive && !IsLoading) _ = RefreshAsync();
+    }
 
+    private void NoteDataChanged()
+    {
+        _dataVersion++;
+        _pendingSnapshot = null;
+        if (IsLoading) _refreshNeeded = true;
+    }
+
+    private async Task RefreshAsync()
+    {
+        if (_disposed || !_isActive || IsLoading) return;
+        _refreshNeeded = false;
+        var version = _dataVersion;
+        IsLoading = true;
         try
         {
-            _useClassicMenuByDefault = _newService.ForcedClassicMenuState() == 1;
-            OnPropertyChanged(nameof(UseClassicMenuByDefault));
-
-            _all = new List<MenuEntry>();
-            foreach (var domain in MenuDomain.All)
+            // 纯注册表/文件读取；不把 UI 集合、回调或 COM 对象带入后台线程。
+            var snapshot = await Task.Run(() =>
             {
-                var items = _service.Load(domain.Kind);
-                foreach (var item in items)
-                {
-                    item.ToggleRequested = OnToggleEntry;
-                    _all.Add(item);
-                }
-
-                var node = Domains.FirstOrDefault(d => d.Kind == domain.Kind);
-                if (node is not null) node.Count = items.Count;
-            }
-
-            var newItems = _newService.Load();
-            NewMenuItems.Clear();
-            foreach (var item in newItems)
-            {
-                item.ToggleRequested = OnToggleNewMenuItem;
-                NewMenuItems.Add(item);
-            }
-
-            BuildNewDomains();
-            UpdateNewMenuHint();
-            ApplyFilter();
+                var entries = new List<MenuEntry>();
+                foreach (var domain in MenuDomain.All) entries.AddRange(_service.Load(domain.Kind));
+                var newItems = _newService.Load();
+                return new MenuSnapshot(entries, newItems, _newService.ForcedClassicMenuState() == 1,
+                    _newService.LastManifestStats);
+            });
+            if (_disposed) return;
+            if (version != _dataVersion) { _refreshNeeded = true; return; }
+            if (_isActive) ApplySnapshot(snapshot);
+            else _pendingSnapshot = snapshot;
         }
         catch (Exception ex)
         {
-            SetError("加载右键菜单失败：" + ex.Message);
+            if (!_disposed) SetError("加载右键菜单失败：" + ex.Message);
         }
         finally
         {
             IsLoading = false;
+            if (_isActive && !_disposed && _refreshNeeded) _ = RefreshAsync();
         }
+    }
+
+    private void ApplySnapshot(MenuSnapshot snapshot)
+    {
+        _useClassicMenuByDefault = snapshot.Classic;
+        _manifestStats = snapshot.ManifestStats;
+        OnPropertyChanged(nameof(UseClassicMenuByDefault));
+        _all = snapshot.Entries;
+        foreach (var item in _all) item.ToggleRequested = OnToggleEntry;
+        foreach (var node in Domains) node.Count = _all.Count(e => e.Domain == node.Kind);
+        NewMenuItems.Clear();
+        foreach (var item in snapshot.NewItems)
+        {
+            item.ToggleRequested = OnToggleNewMenuItem;
+            NewMenuItems.Add(item);
+        }
+        BuildNewDomains();
+        UpdateNewMenuHint();
+        ApplyFilter();
     }
 
     private void UpdateNewMenuHint()
     {
-        var (found, total) = _newService.LastManifestStats;
+        var (found, total) = _manifestStats;
         var classicPrefix = _useClassicMenuByDefault
             ? "【当前已开启“默认直接展开经典菜单”（需重启资源管理器生效），系统右键会跳过一级菜单；你仍可在此管理一级菜单项】 "
             : "";
@@ -450,8 +506,9 @@ public sealed class ContextMenuViewModel : ObservableObject, IModule
         try
         {
             _newService.SetBlocked(item, target);
+            NoteDataChanged();
             _status(target ? $"已屏蔽：{item.DisplayName}（重启资源管理器后生效）" : $"已恢复：{item.DisplayName}");
-            Refresh();
+            ApplyNewMenuFilter();
         }
         catch (Exception ex)
         {
@@ -459,12 +516,23 @@ public sealed class ContextMenuViewModel : ObservableObject, IModule
         }
     }
 
-    private void Uninstall(NewMenuItem? item)
+    private async void Uninstall(NewMenuItem? item)
     {
-        if (item is null) return;
-
-        var all = _uninstall.LoadAll();
-        var candidates = _uninstall.Match(item.Location, item.DisplayName, all);
+        if (item is null || IsLoading || _disposed) return;
+        List<UninstallEntry> candidates;
+        IsLoading = true;
+        try
+        {
+            candidates = await Task.Run(() =>
+                _uninstall.Match(item.Location, item.DisplayName, _uninstall.LoadAll()));
+        }
+        catch (Exception ex)
+        {
+            SetError($"读取卸载信息失败：{ex.Message}");
+            return;
+        }
+        finally { IsLoading = false; }
+        if (!_isActive || _disposed) return;
 
         if (candidates.Count == 0)
         {
@@ -521,59 +589,72 @@ public sealed class ContextMenuViewModel : ObservableObject, IModule
         _uninstallDeadline = DateTime.UtcNow.AddMinutes(10);
 
         _uninstallTimer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(3) };
-        _uninstallTimer.Tick += (_, _) =>
-        {
-            if (IsLoading) return;
-            var watching = _watching;
-            if (watching is null)
-            {
-                StopWatch();
-                return;
-            }
-
-            try
-            {
-                var still = _uninstall.FindStillRegistered(watching.Clsids);
-                if (still.Count == 0)
-                {
-                    StopWatch();
-                    ReportResidual(watching);
-                }
-                else if (DateTime.UtcNow > _uninstallDeadline)
-                {
-                    StopWatch();
-                    SetResidualResult(watching, "等待卸载超时，尚未确认卸载完成。若已完成卸载，可点「复查残留」手动检查。");
-                    _status($"等待「{watching.DisplayName}」卸载超时，可在本页手动复查。");
-                }
-            }
-            catch (Exception ex)
-            {
-                StopWatch();
-                SetResidualResult(watching, $"卸载监测失败：{ex.Message}\n可点「复查残留」重试。");
-                SetError($"监测「{watching.DisplayName}」卸载状态失败：{ex.Message}");
-            }
-        };
+        _uninstallTimer.Tick += async (_, _) => await CheckWatchAsync();
         _uninstallTimer.Start();
         _status($"正在等待「{item.DisplayName}」卸载完成（最多等 10 分钟，也可随时点「复查残留」）…");
     }
 
+    private async Task CheckWatchAsync()
+    {
+        var watching = _watching;
+        if (_disposed || watching is null) return;
+        // 期限独立于页面加载和可见性；一次显式卸载最多观察十分钟。
+        if (DateTime.UtcNow >= _uninstallDeadline)
+        {
+            StopWatch();
+            SetResidualResult(watching, "等待卸载超时，尚未确认卸载完成。若已完成卸载，可点「复查残留」手动检查。");
+            _status($"等待「{watching.DisplayName}」卸载超时，可在本页手动复查。");
+            return;
+        }
+        if (IsLoading || _watchReadInProgress) return;
+        var generation = _watchGeneration;
+        _watchReadInProgress = true;
+        try
+        {
+            var still = await Task.Run(() => _uninstall.FindStillRegistered(watching.Clsids));
+            if (_disposed || generation != _watchGeneration) return;
+            if (still.Count == 0)
+            {
+                StopWatch();
+                await ReportResidualAsync(watching);
+            }
+        }
+        catch (Exception ex)
+        {
+            if (_disposed || generation != _watchGeneration) return;
+            StopWatch();
+            SetResidualResult(watching, $"卸载监测失败：{ex.Message}\n可点「复查残留」重试。");
+            SetError($"监测「{watching.DisplayName}」卸载状态失败：{ex.Message}");
+        }
+        finally { _watchReadInProgress = false; }
+    }
+
     private void StopWatch()
     {
+        _watchGeneration++;
         _uninstallTimer?.Stop();
         _uninstallTimer = null;
         _watching = null;
     }
 
-    private void ReportResidual(NewMenuItem item)
-    {
-        if (IsLoading) return;
+    private void ReportResidual(NewMenuItem item) => _ = ReportResidualAsync(item);
 
+    private async Task ReportResidualAsync(NewMenuItem item)
+    {
+        if (IsLoading || _disposed) return;
+        IsLoading = true;
         try
         {
-            var issues = _uninstall.CheckResidual(item.DisplayName, item.Location, item.Clsids);
-            var hasFolder = issues.Any(i => i.StartsWith("安装目录仍然存在且非空：", StringComparison.Ordinal));
-            var hasRegistry = _uninstall.FindStillRegistered(item.Clsids).Count > 0
-                              || item.Clsids.Any(ContextMenuService.IsBlocked);
+            var result = await Task.Run(() =>
+            {
+                var found = _uninstall.CheckResidual(item.DisplayName, item.Location, item.Clsids);
+                var folder = found.Any(i => i.StartsWith("安装目录仍然存在且非空：", StringComparison.Ordinal));
+                var registry = _uninstall.FindStillRegistered(item.Clsids).Count > 0
+                               || item.Clsids.Any(ContextMenuService.IsBlocked);
+                return (issues: found, hasFolder: folder, hasRegistry: registry);
+            });
+            if (_disposed) return;
+            var (issues, hasFolder, hasRegistry) = result;
             var details = issues.Count == 0
                 ? "已卸载，未发现明显残留。"
                 : $"发现 {issues.Count} 处残留：\n• " + string.Join("\n• ", issues)
@@ -584,12 +665,22 @@ public sealed class ContextMenuViewModel : ObservableObject, IModule
             _status(issues.Count == 0
                 ? $"「{item.DisplayName}」已卸载，未发现残留"
                 : $"「{item.DisplayName}」复查完成，发现 {issues.Count} 处残留");
-            Refresh();
+            // 隐藏时仅使相关列表失效；回到本页才重新读取并提交集合。
+            _pendingSnapshot = null;
+            _refreshNeeded = true;
         }
         catch (Exception ex)
         {
-            SetResidualResult(item, $"残留复查失败：{ex.Message}\n可点「复查残留」重试。");
-            SetError($"复查「{item.DisplayName}」卸载残留失败：{ex.Message}");
+            if (!_disposed)
+            {
+                SetResidualResult(item, $"残留复查失败：{ex.Message}\n可点「复查残留」重试。");
+                SetError($"复查「{item.DisplayName}」卸载残留失败：{ex.Message}");
+            }
+        }
+        finally
+        {
+            IsLoading = false;
+            if (_isActive && !_disposed && _refreshNeeded) _ = RefreshAsync();
         }
     }
 
@@ -679,6 +770,8 @@ public sealed class ContextMenuViewModel : ObservableObject, IModule
         try
         {
             _service.SetEnabled(entry, enabled);
+            NoteDataChanged();
+            ApplyFilter();
             _status($"{(enabled ? "已启用" : "已禁用")}：{entry.DisplayName}");
             OnPropertyChanged(nameof(EntryCountText));
         }
@@ -701,6 +794,8 @@ public sealed class ContextMenuViewModel : ObservableObject, IModule
         try
         {
             _newService.SetBlocked(item, blocked);
+            NoteDataChanged();
+            ApplyNewMenuFilter();
             _status($"{(blocked ? "已屏蔽" : "已恢复")}：{item.DisplayName}");
         }
         catch (Exception ex)
@@ -752,8 +847,11 @@ public sealed class ContextMenuViewModel : ObservableObject, IModule
         try
         {
             _service.Delete(entry);
+            NoteDataChanged();
             _all.Remove(entry);
             Entries.Remove(entry);
+            var domain = Domains.FirstOrDefault(d => d.Kind == entry.Domain);
+            if (domain is not null) domain.Count = _all.Count(e => e.Domain == entry.Domain);
             _status($"已删除：{entry.DisplayName}");
             OnPropertyChanged(nameof(EntryCountText));
         }
@@ -774,9 +872,21 @@ public sealed class ContextMenuViewModel : ObservableObject, IModule
 
         try
         {
+            var renamed = new MenuEntry
+            {
+                Id = entry.Id, DisplayName = name.Trim(), KeyName = entry.KeyName,
+                Kind = entry.Kind, Domain = entry.Domain, DomainTitle = entry.DomainTitle,
+                HiveText = entry.HiveText, Publisher = entry.Publisher, IsSystem = entry.IsSystem,
+                RegistryPath = entry.RegistryPath, CommandPath = entry.CommandPath, Clsid = entry.Clsid,
+                Note = entry.Note, CanToggle = entry.CanToggle, CanDelete = entry.CanDelete,
+                CanRename = entry.CanRename, IsDisabled = entry.IsDisabled, ToggleRequested = OnToggleEntry
+            };
             _service.Rename(entry, name.Trim());
+            NoteDataChanged();
+            var index = _all.IndexOf(entry);
+            if (index >= 0) _all[index] = renamed;
+            ApplyFilter();
             _status($"已重命名：{name}");
-            Refresh();
         }
         catch (Exception ex)
         {

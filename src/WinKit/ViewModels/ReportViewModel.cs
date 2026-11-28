@@ -11,6 +11,8 @@ public sealed class ReportViewModel : ObservableObject, IModule
 {
     private readonly HealthReportService _service = new();
     private readonly MaintenanceService _maintenance = new();
+    private readonly Func<Action<string>, HealthReport> _buildReport;
+    private readonly Func<MaintenanceStatus> _loadMaintenanceStatus;
     private readonly Action<string> _status;
     private readonly Action<bool>? _setBusy;
     private HealthReport? _report;
@@ -27,10 +29,18 @@ public sealed class ReportViewModel : ObservableObject, IModule
     private bool _hasReportFolder;
 
     public ReportViewModel(Action<string> status, Action<bool>? setBusy = null)
+        : this(status, setBusy, null, null)
+    {
+    }
+
+    internal ReportViewModel(Action<string> status, Action<bool>? setBusy,
+        Func<Action<string>, HealthReport>? buildReport, Func<MaintenanceStatus>? loadMaintenanceStatus)
     {
         _status = status;
         _setBusy = setBusy;
-        GenerateCommand = new RelayCommand(Refresh, () => !_generating && !_saving);
+        _buildReport = buildReport ?? (progress => _service.Build(progress));
+        _loadMaintenanceStatus = loadMaintenanceStatus ?? _maintenance.LoadStatus;
+        GenerateCommand = new RelayCommand(Regenerate, () => !_generating && !_saving);
         ExportMarkdownCommand = new RelayCommand(() => _ = ExportAsync(true), CanSave);
         ExportJsonCommand = new RelayCommand(() => _ = ExportAsync(false), CanSave);
         OpenReportFolderCommand = new RelayCommand(OpenReportFolder, () => HasReportFolder);
@@ -117,6 +127,15 @@ public sealed class ReportViewModel : ObservableObject, IModule
 
     public void Refresh()
     {
+        // 导航复用当前会话的报告和生成时间；首次读取仍在后台完成。
+        // 未知维护状态也保留，交给显式刷新重试，避免反复进页查询任务计划程序。
+        if (_report is null) _ = GenerateAsync();
+        if (_maintenanceStatus is null) _ = RefreshMaintenanceAsync();
+    }
+
+    private void Regenerate()
+    {
+        // “重新体检”始终重新采集；不把会话快照作为最新系统状态。
         _ = GenerateAsync();
         _ = RefreshMaintenanceAsync();
     }
@@ -132,7 +151,7 @@ public sealed class ReportViewModel : ObservableObject, IModule
 
         try
         {
-            var report = await Task.Run(() => _service.Build(((IProgress<string>)progress).Report));
+            var report = await Task.Run(() => _buildReport(((IProgress<string>)progress).Report));
             _report = report;
             Sections.Clear();
             foreach (var section in report.Sections) Sections.Add(section);
@@ -220,7 +239,7 @@ public sealed class ReportViewModel : ObservableObject, IModule
     }
 
     private async Task<MaintenanceStatus> ReadTaskStateAsync() =>
-        _maintenanceStatus = await Task.Run(_maintenance.LoadStatus);
+        _maintenanceStatus = await Task.Run(_loadMaintenanceStatus);
 
     private async Task RegisterTaskAsync()
     {

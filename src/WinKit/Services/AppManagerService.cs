@@ -117,10 +117,6 @@ public sealed class AppResidualReport
 
 public sealed class AppManagerService
 {
-    private const string UninstallRoot = @"Microsoft\Windows\CurrentVersion\Uninstall";
-    private const string AppModelPackages =
-        @"Software\Classes\Local Settings\Software\Microsoft\Windows\CurrentVersion\AppModel\Repository\Packages";
-
     private static readonly string[] InfraMarkers =
     {
         "WinAppRuntime", "DDLM", "VCLibs", "UI.Xaml", "NET.Native",
@@ -138,132 +134,108 @@ public sealed class AppManagerService
     };
 
     private readonly ChangeJournal _journal;
+    private readonly InstalledSoftwareSnapshotCache _snapshot;
+    private readonly bool _refreshSnapshotOnRead;
+    private readonly Func<List<ScoopPackage>> _readScoopPackages;
 
-    public AppManagerService(ChangeJournal journal) => _journal = journal;
+    public AppManagerService(ChangeJournal journal) : this(journal, new InstalledSoftwareSnapshotCache())
+        => _refreshSnapshotOnRead = true;
+
+    public AppManagerService(ChangeJournal journal, InstalledSoftwareSnapshotCache snapshot)
+        : this(journal, snapshot, () => new ScoopService().Load()) { }
+
+    internal AppManagerService(ChangeJournal journal, InstalledSoftwareSnapshotCache snapshot,
+        Func<List<ScoopPackage>> readScoopPackages)
+    {
+        _journal = journal;
+        _snapshot = snapshot;
+        _readScoopPackages = readScoopPackages;
+    }
 
     public List<InstalledAppItem> LoadAll()
     {
+        if (_refreshSnapshotOnRead) _snapshot.Invalidate();
         var list = new List<InstalledAppItem>();
         var seenDesktop = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
 
-        foreach (var (hive, root) in new[]
-                 {
-                     (HiveKind.LocalMachine, $@"SOFTWARE\{UninstallRoot}"),
-                     (HiveKind.LocalMachine, $@"SOFTWARE\WOW6432Node\{UninstallRoot}"),
-                     (HiveKind.CurrentUser, $@"Software\{UninstallRoot}")
-                 })
+        foreach (var entry in _snapshot.GetUninstallEntries())
         {
-            foreach (var key in Reg.SubKeyNames(RegPath.Of(hive, root)))
+            if (string.IsNullOrWhiteSpace(entry.UninstallString) || entry.IsSystemComponent
+                || !string.IsNullOrWhiteSpace(entry.ParentKeyName)) continue;
+            if (!seenDesktop.Add($"{entry.Name}|{entry.Version}")) continue;
+
+            var location = entry.InstallLocation;
+            if (string.IsNullOrWhiteSpace(location))
             {
-                var subKey = $@"{root}\{key}";
-                var path = RegPath.Of(hive, subKey);
-                var name = Reg.GetString(path, "DisplayName")?.Trim();
-                if (string.IsNullOrWhiteSpace(name)) continue;
-
-                var uninstall = (Reg.GetString(path, "UninstallString") ?? "").Trim();
-                if (string.IsNullOrWhiteSpace(uninstall)) continue;
-
-                if ((Reg.GetInt(path, "SystemComponent") ?? 0) == 1) continue;
-                if (!string.IsNullOrWhiteSpace(Reg.GetString(path, "ParentKeyName"))) continue;
-
-                var version = (Reg.GetString(path, "DisplayVersion") ?? "").Trim();
-                var dedupKey = $"{name}|{version}";
-                if (!seenDesktop.Add(dedupKey)) continue;
-
-                var publisher = (Reg.GetString(path, "Publisher") ?? "未知").Trim();
-                var location = (Reg.GetString(path, "InstallLocation") ?? "").Trim().Trim('"');
-                if (string.IsNullOrWhiteSpace(location))
+                var exe = ContextMenuService.ExtractExecutable(entry.UninstallString);
+                if (!string.IsNullOrWhiteSpace(exe) && !exe.EndsWith("msiexec.exe", StringComparison.OrdinalIgnoreCase))
                 {
-                    var exe = ContextMenuService.ExtractExecutable(uninstall);
-                    if (!string.IsNullOrWhiteSpace(exe) && !exe.EndsWith("msiexec.exe", StringComparison.OrdinalIgnoreCase))
-                    {
-                        try { location = Path.GetDirectoryName(exe) ?? ""; }
-                        catch (Exception) { location = ""; }
-                    }
+                    try { location = Path.GetDirectoryName(exe) ?? ""; }
+                    catch (Exception) { location = ""; }
                 }
-
-                var sizeKb = Reg.GetInt(path, "EstimatedSize") ?? 0;
-                var sizeBytes = sizeKb > 0 ? (long)sizeKb * 1024L : 0L;
-
-                list.Add(new InstalledAppItem
-                {
-                    Id = $"desktop:{hive}:{subKey}",
-                    Name = name!,
-                    Publisher = string.IsNullOrWhiteSpace(publisher) ? "未知" : publisher,
-                    Version = version,
-                    Kind = AppSourceKind.Desktop,
-                    InstallLocation = location,
-                    UninstallString = uninstall,
-                    RegistryPath = path.FullPath,
-                    Hive = hive,
-                    SubKey = subKey,
-                    SizeBytes = sizeBytes,
-                    SizeText = sizeBytes > 0 ? ThisPcService.FormatSize(sizeBytes) : "—",
-                    InstallDate = (Reg.GetString(path, "InstallDate") ?? "").Trim()
-                });
             }
+            var path = RegPath.Of(entry.Hive, entry.SubKey);
+            list.Add(new InstalledAppItem
+            {
+                Id = $"desktop:{entry.Hive}:{entry.SubKey}",
+                Name = entry.Name,
+                Publisher = string.IsNullOrWhiteSpace(entry.Publisher) ? "未知" : entry.Publisher,
+                Version = entry.Version,
+                Kind = AppSourceKind.Desktop,
+                InstallLocation = location,
+                UninstallString = entry.UninstallString,
+                RegistryPath = path.FullPath,
+                Hive = entry.Hive,
+                SubKey = entry.SubKey,
+                SizeBytes = entry.SizeBytes,
+                SizeText = entry.SizeBytes > 0 ? ThisPcService.FormatSize(entry.SizeBytes) : "—",
+                InstallDate = entry.InstallDate
+            });
         }
 
-        // 读取 Store / MSIX 打包应用
+        // 保留应用列表原来的筛选；同一份原始快照仍可供运行库和工具库使用。
         var seenFamilies = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-        foreach (var hive in new[] { HiveKind.CurrentUser, HiveKind.LocalMachine })
+        var seenNames = new HashSet<string>(list.Select(app => app.Name), StringComparer.OrdinalIgnoreCase);
+        foreach (var package in _snapshot.GetStorePackages())
         {
-            var root = RegPath.Of(hive, AppModelPackages);
-            foreach (var pkg in Reg.SubKeyNames(root))
+            var pkg = package.PackageFullName;
+            if (IsSystemOrInfraPackage(pkg)) continue;
+            var parts = pkg.Split('_');
+            var familyPrefix = parts.Length > 0 ? parts[0] : pkg;
+            var version = parts.Length > 1 ? parts[1] : "";
+            var rawDisplay = package.DisplayName;
+            var display = Native.ResolveIndirectString(rawDisplay);
+            if (string.IsNullOrWhiteSpace(display))
             {
-                if (IsSystemOrInfraPackage(pkg)) continue;
-
-                var parts = pkg.Split('_');
-                var familyPrefix = parts.Length > 0 ? parts[0] : pkg;
-                var version = parts.Length > 1 ? parts[1] : "";
-
-                // 如果同名桌面应用已存在，避免重复列出稀疏包
-                var pkgPath = RegPath.Of(hive, $@"{AppModelPackages}\{pkg}");
-                var rawDisplay = Reg.GetString(pkgPath, "DisplayName");
-                var display = Native.ResolveIndirectString(rawDisplay);
-                if (string.IsNullOrWhiteSpace(display))
-                {
-                    if (!string.IsNullOrWhiteSpace(rawDisplay)
-                        && !rawDisplay!.StartsWith('@')
-                        && !rawDisplay.StartsWith("ms-resource:", StringComparison.OrdinalIgnoreCase))
-                    {
-                        display = rawDisplay.Trim();
-                    }
-                    else
-                    {
-                        display = HumanizePackageName(familyPrefix);
-                    }
-                }
-
-                if (string.IsNullOrWhiteSpace(display)) continue;
-                if (!seenFamilies.Add(display!)) continue;
-                if (list.Any(d => d.Name.Equals(display, StringComparison.OrdinalIgnoreCase))) continue;
-
-                var rootFolder = (Reg.GetString(pkgPath, "PackageRootFolder") ?? "").Trim();
-                var publisher = GuessStorePublisher(familyPrefix);
-
-                list.Add(new InstalledAppItem
-                {
-                    Id = $"store:{pkg}",
-                    Name = display!,
-                    Publisher = publisher,
-                    Version = version,
-                    Kind = AppSourceKind.Store,
-                    InstallLocation = rootFolder,
-                    PackageFullName = pkg,
-                    RegistryPath = pkgPath.FullPath,
-                    Hive = hive,
-                    SubKey = $@"{AppModelPackages}\{pkg}",
-                    SizeText = "打包应用"
-                });
+                display = !string.IsNullOrWhiteSpace(rawDisplay)
+                          && !rawDisplay.StartsWith('@')
+                          && !rawDisplay.StartsWith("ms-resource:", StringComparison.OrdinalIgnoreCase)
+                    ? rawDisplay.Trim()
+                    : HumanizePackageName(familyPrefix);
             }
+            if (string.IsNullOrWhiteSpace(display) || !seenFamilies.Add(display)
+                || !seenNames.Add(display)) continue;
+            var pkgPath = RegPath.Of(package.Hive, package.SubKey);
+            list.Add(new InstalledAppItem
+            {
+                Id = $"store:{pkg}",
+                Name = display,
+                Publisher = GuessStorePublisher(familyPrefix),
+                Version = version,
+                Kind = AppSourceKind.Store,
+                InstallLocation = package.InstallLocation,
+                PackageFullName = pkg,
+                RegistryPath = pkgPath.FullPath,
+                Hive = package.Hive,
+                SubKey = package.SubKey,
+                SizeText = "打包应用"
+            });
         }
 
         // Scoop 包：直接读本地目录，已装版本 vs 本地 bucket 清单（离线，不跑 scoop 命令）
         try
         {
-            var scoop = new ScoopService();
-            foreach (var pkg in scoop.Load())
+            foreach (var pkg in _readScoopPackages())
             {
                 // 同名桌面软件已列出时标注来源即可，避免一行两遍
                 var existing = list.FirstOrDefault(a =>

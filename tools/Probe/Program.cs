@@ -701,8 +701,14 @@ internal static class Program
             Check("托盘路径都已解析 KnownFolder",
                 tray.All(t => string.IsNullOrWhiteSpace(t.ResolvedPath) || !t.ResolvedPath.Contains('{')),
                 "解析后不该残留 GUID 前缀");
+            // 非空路径也可能因权限不足而未知；用确定性记录覆盖三态，避免依赖本机访问权限。
             Check("托盘记录的失效判定为三态",
-                tray.All(t => t.IsMissing is not null || string.IsNullOrWhiteSpace(t.ResolvedPath)));
+                new TrayIconItem { IsMissing = true }.IsMissingFile
+                && new TrayIconItem { IsMissing = true }.StatusText == "目标已失效"
+                && !new TrayIconItem { IsMissing = null, ResolvedPath = "protected-app.exe" }.IsMissingFile
+                && new TrayIconItem { IsMissing = null, ResolvedPath = "protected-app.exe" }.StatusText == "无法解析"
+                && new TrayIconItem { IsMissing = false, IsPromoted = true }.StatusText == "已显示"
+                && new TrayIconItem { IsMissing = false, IsPromoted = false }.StatusText == "已折叠");
 
             // ---------- 卸载器候选扫描 ----------
             var fakeApp = Path.Combine(workDir, "FakeApp");

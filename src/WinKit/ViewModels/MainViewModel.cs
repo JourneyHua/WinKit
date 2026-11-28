@@ -10,6 +10,13 @@ public interface IModule
     void Refresh();
 }
 
+/// <summary>缓存模块的可见性通知；进入不等于强制刷新。</summary>
+public interface IModuleActivation
+{
+    void OnActivated();
+    void OnDeactivated();
+}
+
 public sealed class NavItem : ObservableObject
 {
     private bool _isSelected;
@@ -429,6 +436,11 @@ public sealed class MainViewModel : ObservableObject
 
     public void OnWindowClosed()
     {
+        foreach (var item in NavItems)
+        {
+            if (item.Instance is IModuleActivation activation) activation.OnDeactivated();
+            if (item.Instance is IDisposable disposable) disposable.Dispose();
+        }
         Updater.Dispose();
         if (_updateRestartSession is not null) _ = DisposeUpdateSessionAsync(_updateRestartSession);
     }
@@ -561,10 +573,16 @@ public sealed class MainViewModel : ObservableObject
             var previous = _selectedNav;
             if (!Set(ref _selectedNav, value)) return;
             if (previous is not null) previous.IsSelected = false;
-            if (value is null) return;
+            if (previous?.Instance is IModuleActivation oldModule) oldModule.OnDeactivated();
+            if (value is null)
+            {
+                CurrentViewModel = null;
+                return;
+            }
             value.IsSelected = true;
             StatusText = _moduleStatuses.GetValueOrDefault(value.Key, "就绪");
             CurrentViewModel = value.ViewModel;
+            if (CurrentViewModel is IModuleActivation activeModule) activeModule.OnActivated();
             OnPropertyChanged(nameof(CurrentTitle));
             OnPropertyChanged(nameof(CurrentSubtitle));
             OnPropertyChanged(nameof(ElevationBannerText));

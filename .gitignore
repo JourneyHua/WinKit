@@ -17,3 +17,4 @@ dist-next/
 # 输入法/其它程序在当前目录生成的日志，不属于源码
 debug.log
 *.log
+tools/ReportProbe/results.json

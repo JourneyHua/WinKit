@@ -31,6 +31,7 @@
     <Compile Include="..\..\src\WinKit\Services\UninstallService.cs" Link="Services\UninstallService.cs" />
     <Compile Include="..\..\src\WinKit\Services\ResidualScanService.cs" Link="Services\ResidualScanService.cs" />
     <Compile Include="..\..\src\WinKit\Services\TaskbarService.cs" Link="Services\TaskbarService.cs" />
+    <Compile Include="..\..\src\WinKit\Services\InstalledSoftwareSnapshot.cs" Link="Services\InstalledSoftwareSnapshot.cs" />
     <Compile Include="..\..\src\WinKit\Services\AppManagerService.cs" Link="Services\AppManagerService.cs" />
     <Compile Include="..\..\src\WinKit\Services\ScoopService.cs" Link="Services\ScoopService.cs" />
     <Compile Include="..\..\src\WinKit\Services\FileAssocService.cs" Link="Services\FileAssocService.cs" />

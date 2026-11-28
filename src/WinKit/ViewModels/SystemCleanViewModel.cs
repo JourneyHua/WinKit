@@ -22,6 +22,12 @@ public sealed class SystemCleanViewModel : ObservableObject, IModule
     private readonly List<CleanupTargetItem> _scanTargets;
     private readonly CleanupTargetItem _recycleBin;
 
+    private const long LargeFileMinimumBytes = 100L * 1024 * 1024;
+    private const int LargeFileResultLimit = SystemCleanService.MaxLargeFileResults;
+    private readonly Dictionary<LargeFileScanRequest, Task> _largeScanTasks = [];
+    private readonly Dictionary<LargeFileScanRequest, CancellationTokenSource> _largeScanCancellation = [];
+    private readonly Dictionary<string, List<LargeFileItem>> _largeFilesByScope = new(StringComparer.OrdinalIgnoreCase);
+
     private List<LargeFileItem> _allLargeFiles = [];
     private bool _showLargeView;
     private string _largeSearchText = "";
@@ -61,15 +67,16 @@ public sealed class SystemCleanViewModel : ObservableObject, IModule
             Targets.Add(target);
         }
 
-        ShowJunkViewCommand = new RelayCommand(() => ShowView(false), () => !IsBusy);
-        ShowLargeViewCommand = new RelayCommand(() => ShowView(true), () => !IsBusy);
+        ShowJunkViewCommand = new RelayCommand(() => ShowView(false));
+        ShowLargeViewCommand = new RelayCommand(() => ShowView(true));
         ScanJunkCommand = new RelayCommand(() => Run(ScanJunkAsync), () => !IsBusy);
         CleanSelectedCommand = new RelayCommand(() => RunWrite(CleanSelectedAsync), () => !IsBusy && HasSelectedFiles);
         EmptyRecycleBinCommand = new RelayCommand(() => RunWrite(EmptyRecycleBinAsync), () => !IsBusy && HasRecycleBinItems);
         RunDismCleanCommand = new RelayCommand(() => RunWrite(RunDismCleanAsync), () => !IsBusy);
         OpenStorageSenseCommand = new RelayCommand(() => Native.OpenPath("ms-settings:storagesense"));
         OpenTargetFolderCommand = new RelayCommand(p => OpenTargetFolder(p as CleanupTargetItem));
-        ScanLargeFilesCommand = new RelayCommand(() => Run(ScanLargeFilesAsync), () => !IsBusy && SelectedScope is not null);
+        ScanLargeFilesCommand = new RelayCommand(() => _ = ScanLargeFilesAsync(), () => !IsBusy && SelectedScope is not null);
+        CancelLargeFilesCommand = new RelayCommand(CancelLargeFileScan, () => CanCancelLargeFileScan(null));
         OpenLargeFileFolderCommand = new RelayCommand(p => OpenLargeFileFolder((LargeFileItem)p!), CanUseLargeResult);
         CopyLargeFilePathCommand = new RelayCommand(p => CopyLargeFilePath((LargeFileItem)p!), CanUseLargeResult);
         RecycleLargeFileCommand = new RelayCommand(p => RunWrite(() => RecycleLargeFileAsync((LargeFileItem)p!)), CanUseLargeResult);
@@ -88,6 +95,7 @@ public sealed class SystemCleanViewModel : ObservableObject, IModule
     public RelayCommand OpenStorageSenseCommand { get; }
     public RelayCommand OpenTargetFolderCommand { get; }
     public RelayCommand ScanLargeFilesCommand { get; }
+    public RelayCommand CancelLargeFilesCommand { get; }
     public RelayCommand OpenLargeFileFolderCommand { get; }
     public RelayCommand CopyLargeFilePathCommand { get; }
     public RelayCommand RecycleLargeFileCommand { get; }
@@ -100,7 +108,7 @@ public sealed class SystemCleanViewModel : ObservableObject, IModule
         _showLargeView = large;
         OnPropertyChanged(nameof(ShowJunkView));
         OnPropertyChanged(nameof(ShowLargeView));
-        if (large && _largeResultsScope is null) Run(ScanLargeFilesAsync);
+        if (large && _largeResultsScope is null) _ = ScanLargeFilesAsync();
     }
 
     public ScopeOption? SelectedScope
@@ -110,7 +118,22 @@ public sealed class SystemCleanViewModel : ObservableObject, IModule
         {
             if (IsBusy) { OnPropertyChanged(); return; }
             if (!Set(ref _selectedScope, value)) return;
-            ClearLargeResults(value is null ? "请选择扫描范围。" : $"尚未扫描「{value.Title}」。");
+            if (value is not null && _largeFilesByScope.TryGetValue(value.Key, out var cached))
+            {
+                _allLargeFiles = cached;
+                _largeResultsScope = value;
+                ApplyLargeFilter();
+            }
+            else
+            {
+                var message = value is null ? "请选择扫描范围。" : HasLargeScanRequest(value)
+                    ? $"正在扫描「{value.Title}」… 切换模块后扫描仍会继续。"
+                    : $"尚未扫描「{value.Title}」。";
+                ClearLargeResults(message);
+            }
+            OnPropertyChanged(nameof(IsLargeScanRunning));
+            CancelLargeFilesCommand.RaiseCanExecuteChanged();
+            ScanLargeFilesCommand.RaiseCanExecuteChanged();
             SetError(null);
         }
     }
@@ -164,7 +187,16 @@ public sealed class SystemCleanViewModel : ObservableObject, IModule
     private IEnumerable<CleanupTargetItem> SelectedTargets => Targets.Where(t => t.CanSelect && t.IsSelected && t.FileCount > 0);
     public bool HasSelectedFiles => SelectedTargets.Any();
 
-    public void Refresh() => Run(ShowLargeView ? ScanLargeFilesAsync : ScanJunkAsync);
+    public void Refresh()
+    {
+        if (ShowLargeView)
+        {
+            if (_largeResultsScope is null) _ = ScanLargeFilesAsync();
+            return;
+        }
+
+        Run(ScanJunkAsync);
+    }
 
     // 扫描与写入不能在同一页重叠，但只有写入会阻止切换模块或关闭窗口。
     private async void Run(Func<Task> action)
@@ -283,27 +315,92 @@ public sealed class SystemCleanViewModel : ObservableObject, IModule
         if (item is { HasDirectory: true }) Native.OpenPath(item.PrimaryPath);
     }
 
-    private async Task ScanLargeFilesAsync()
+    private Task ScanLargeFilesAsync()
     {
-        if (SelectedScope is not { } scope) return;
-        ClearLargeResults($"正在扫描「{scope.Title}」… 切换模块后扫描仍会继续。");
+        if (SelectedScope is not { } scope || IsBusy) return Task.CompletedTask;
+        var request = new LargeFileScanRequest(scope.Key, LargeFileMinimumBytes, LargeFileResultLimit);
+        if (_largeScanTasks.TryGetValue(request, out var running) && !running.IsCompleted)
+            return running;
+
+        var cancellation = new CancellationTokenSource();
+        _largeFilesByScope.Remove(scope.Key);
+        if (ReferenceEquals(SelectedScope, scope))
+            ClearLargeResults($"正在扫描「{scope.Title}」… 切换模块后扫描仍会继续。");
+
+        var task = RunLargeFileScanAsync(scope, request, cancellation);
+        _largeScanTasks[request] = task;
+        _largeScanCancellation[request] = cancellation;
+        OnPropertyChanged(nameof(IsLargeScanRunning));
+        CancelLargeFilesCommand.RaiseCanExecuteChanged();
+        return task;
+    }
+
+    private async Task RunLargeFileScanAsync(
+        ScopeOption scope, LargeFileScanRequest request, CancellationTokenSource cancellation)
+    {
+        await Task.Yield(); // 先登记请求，再允许快速空扫描完成并回收状态。
         try
         {
-            _allLargeFiles = await _service.ScanLargeFilesAsync(scope.Key);
-            _largeResultsScope = scope;
-            ApplyLargeFilter();
+            var files = await _service.ScanLargeFilesAsync(
+                scope.Key, request.MinimumBytes, request.MaxResults, cancellation.Token);
+            _largeFilesByScope[scope.Key] = files;
+            if (ReferenceEquals(SelectedScope, scope))
+            {
+                _allLargeFiles = files;
+                _largeResultsScope = scope;
+                ApplyLargeFilter();
+            }
+        }
+        catch (OperationCanceledException) when (cancellation.IsCancellationRequested)
+        {
+            if (ReferenceEquals(SelectedScope, scope))
+                LargeSummaryText = $"已取消「{scope.Title}」的大文件扫描。";
+            _status($"已取消「{scope.Title}」的大文件扫描");
         }
         catch (Exception ex)
         {
-            LargeSummaryText = $"未能扫描「{scope.Title}」。";
+            if (ReferenceEquals(SelectedScope, scope))
+                LargeSummaryText = $"未能扫描「{scope.Title}」。";
             SetError(ex.Message);
         }
+        finally
+        {
+            _largeScanTasks.Remove(request);
+            _largeScanCancellation.Remove(request);
+            cancellation.Dispose();
+            OnPropertyChanged(nameof(IsLargeScanRunning));
+            CancelLargeFilesCommand.RaiseCanExecuteChanged();
+        }
     }
+
+    private void CancelLargeFileScan()
+    {
+        if (SelectedScope is not { } scope ||
+            !_largeScanCancellation.TryGetValue(CreateLargeFileScanRequest(scope), out var cancellation) ||
+            cancellation.IsCancellationRequested) return;
+
+        cancellation.Cancel();
+        LargeSummaryText = $"正在取消「{scope.Title}」的大文件扫描…";
+        _status($"已请求取消「{scope.Title}」的大文件扫描");
+        CancelLargeFilesCommand.RaiseCanExecuteChanged();
+    }
+
+    private bool CanCancelLargeFileScan(object? _) => SelectedScope is { } scope &&
+        _largeScanCancellation.TryGetValue(CreateLargeFileScanRequest(scope), out var cancellation) &&
+        !cancellation.IsCancellationRequested;
+
+    private bool HasLargeScanRequest(ScopeOption scope) =>
+        _largeScanTasks.TryGetValue(CreateLargeFileScanRequest(scope), out var task) && !task.IsCompleted;
+
+    public bool IsLargeScanRunning => SelectedScope is { } scope && HasLargeScanRequest(scope);
+
+    private static LargeFileScanRequest CreateLargeFileScanRequest(ScopeOption scope) =>
+        new(scope.Key, LargeFileMinimumBytes, LargeFileResultLimit);
 
     private void ClearLargeResults(string message)
     {
         _largeResultsScope = null;
-        _allLargeFiles.Clear();
+        _allLargeFiles = [];
         LargeFiles.Clear();
         LargeSummaryText = message;
         CommandManager.InvalidateRequerySuggested();
@@ -373,4 +470,6 @@ public sealed class SystemCleanViewModel : ObservableObject, IModule
 
     public bool HasError => !string.IsNullOrWhiteSpace(_errorText);
     public void SetError(string? message) => ErrorText = message ?? "";
+
+    private readonly record struct LargeFileScanRequest(string ScopeKey, long MinimumBytes, int MaxResults);
 }

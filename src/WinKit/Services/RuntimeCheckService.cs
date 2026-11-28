@@ -52,10 +52,17 @@ public sealed class RuntimeComponentItem : ObservableObject
 
 public sealed class RuntimeCheckService
 {
-    private const string UninstallRoot = @"Microsoft\Windows\CurrentVersion\Uninstall";
+    private readonly InstalledSoftwareSnapshotCache _snapshot;
+    private readonly bool _refreshSnapshotOnRead;
+
+    public RuntimeCheckService() : this(new InstalledSoftwareSnapshotCache())
+        => _refreshSnapshotOnRead = true;
+
+    public RuntimeCheckService(InstalledSoftwareSnapshotCache snapshot) => _snapshot = snapshot;
 
     public List<RuntimeComponentItem> CheckAll()
     {
+        if (_refreshSnapshotOnRead) _snapshot.Invalidate();
         var allUninstall = LoadAllUninstallEntriesIncludingSystem();
         var dotnetDesktopVersions = LoadDotNetDesktopRuntimeVersions();
         var list = new List<RuntimeComponentItem>();
@@ -339,21 +346,15 @@ public sealed class RuntimeCheckService
         });
     }
 
-    private static void AddWindowsAppRuntime(List<RuntimeComponentItem> list)
+    private void AddWindowsAppRuntime(List<RuntimeComponentItem> list)
     {
-        const string appModelRoot =
-            @"Software\Classes\Local Settings\Software\Microsoft\Windows\CurrentVersion\AppModel\Repository\Packages";
-
         var versions = new List<string>();
-        foreach (var hive in new[] { HiveKind.CurrentUser, HiveKind.LocalMachine })
+        foreach (var package in _snapshot.GetStorePackages())
         {
-            foreach (var pkg in Reg.SubKeyNames(RegPath.Of(hive, appModelRoot)))
-            {
-                if (!pkg.StartsWith("Microsoft.WindowsAppRuntime.", StringComparison.OrdinalIgnoreCase))
-                    continue;
-                var parts = pkg.Split('_');
-                if (parts.Length > 1) versions.Add(parts[1]);
-            }
+            var pkg = package.PackageFullName;
+            if (!pkg.StartsWith("Microsoft.WindowsAppRuntime.", StringComparison.OrdinalIgnoreCase)) continue;
+            var parts = pkg.Split('_');
+            if (parts.Length > 1) versions.Add(parts[1]);
         }
 
         var best = versions.OrderByDescending(v => v, StringComparer.OrdinalIgnoreCase).FirstOrDefault() ?? "";
@@ -370,29 +371,8 @@ public sealed class RuntimeCheckService
         });
     }
 
-    private static List<(string Name, string Version)> LoadAllUninstallEntriesIncludingSystem()
-    {
-        var list = new List<(string Name, string Version)>();
-
-        foreach (var (hive, root) in new[]
-                 {
-                     (HiveKind.LocalMachine, $@"SOFTWARE\{UninstallRoot}"),
-                     (HiveKind.LocalMachine, $@"SOFTWARE\WOW6432Node\{UninstallRoot}"),
-                     (HiveKind.CurrentUser, $@"Software\{UninstallRoot}")
-                 })
-        {
-            foreach (var key in Reg.SubKeyNames(RegPath.Of(hive, root)))
-            {
-                var path = RegPath.Of(hive, $@"{root}\{key}");
-                var name = Reg.GetString(path, "DisplayName")?.Trim();
-                if (string.IsNullOrWhiteSpace(name)) continue;
-                var ver = (Reg.GetString(path, "DisplayVersion") ?? "").Trim();
-                list.Add((name!, ver));
-            }
-        }
-
-        return list;
-    }
+    private List<(string Name, string Version)> LoadAllUninstallEntriesIncludingSystem()
+        => _snapshot.GetUninstallEntries().Select(entry => (entry.Name, entry.Version)).ToList();
 
     private static List<string> LoadDotNetDesktopRuntimeVersions()
     {

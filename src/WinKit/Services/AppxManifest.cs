@@ -18,6 +18,54 @@ public sealed class ManifestScopeInfo
 /// </summary>
 public static class AppxManifest
 {
+    private const int CacheLimit = 256;
+    private static readonly object CacheGate = new();
+    private static readonly Dictionary<string, CachedManifest> Cache = new(StringComparer.OrdinalIgnoreCase);
+    private static long _cacheSequence;
+    private sealed record CachedManifest(long LastWriteTicks, long Length, ManifestScopeInfo Info, long Used);
+
+    private static ManifestScopeInfo Copy(ManifestScopeInfo info) => new()
+    {
+        Found = info.Found,
+        Path = info.Path,
+        DeclaresContextMenu = info.DeclaresContextMenu,
+        Clsids = new List<string>(info.Clsids),
+        ScopeTypes = new List<string>(info.ScopeTypes)
+    };
+
+    private static ManifestScopeInfo? ReadCached(string candidate)
+    {
+        var path = System.IO.Path.GetFullPath(candidate);
+        var file = new FileInfo(path);
+        lock (CacheGate)
+        {
+            if (!file.Exists)
+            {
+                Cache.Remove(path);
+                return null; // 不缓存缺失/拒绝访问，下一次手动刷新仍可重试。
+            }
+            var stamp = file.LastWriteTimeUtc.Ticks;
+            var length = file.Length;
+            if (Cache.TryGetValue(path, out var cached)
+                && cached.LastWriteTicks == stamp && cached.Length == length)
+            {
+                Cache[path] = cached with { Used = ++_cacheSequence };
+                return Copy(cached.Info);
+            }
+            Cache.Remove(path);
+            var parsed = Parse(path);
+            if (parsed is null) return null;
+            file.Refresh();
+            if (file.Exists && file.LastWriteTimeUtc.Ticks == stamp && file.Length == length)
+            {
+                if (Cache.Count >= CacheLimit)
+                    Cache.Remove(Cache.MinBy(p => p.Value.Used).Key);
+                Cache[path] = new CachedManifest(stamp, length, parsed, ++_cacheSequence);
+            }
+            // NewMenuService 会合并 ScopeTypes；不能把缓存中的可变列表交出去。
+            return Copy(parsed);
+        }
+    }
     private static readonly string[] CandidateRoots =
     {
         @"C:\ProgramData\Microsoft\Windows\AppRepository\Packages",
@@ -30,8 +78,7 @@ public static class AppxManifest
         {
             try
             {
-                if (!File.Exists(candidate)) continue;
-                var info = Parse(candidate);
+                var info = ReadCached(candidate);
                 if (info is not null) return info;
             }
             catch (Exception)

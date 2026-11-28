@@ -5,30 +5,9 @@
              FontFamily="Microsoft YaHei UI, Segoe UI">
 
 
-    <Grid Margin="24,16,24,16">
-        <Grid.RowDefinitions>
-            <RowDefinition Height="Auto" />
-            <RowDefinition Height="Auto" />
-            <RowDefinition Height="*" />
-        </Grid.RowDefinitions>
-
-        <StackPanel Grid.Row="0" Orientation="Horizontal" Margin="0,0,0,10">
-            <ToggleButton Content="已安装应用" Style="{StaticResource Chip}" Margin="0,0,6,0"
-                          IsChecked="{Binding ShowInstalledApps, Mode=OneWay}"
-                          Command="{Binding ShowAppsViewCommand}" />
-            <ToggleButton Content="常用运行库体检与安装" Style="{StaticResource Chip}" Margin="0,0,6,0"
-                          IsChecked="{Binding ShowRuntimes, Mode=OneWay}"
-                          Command="{Binding ShowRuntimesViewCommand}" />
-            <ToggleButton Content="常用系统工具库" Style="{StaticResource Chip}" Margin="0,0,6,0"
-                          IsChecked="{Binding ShowTools, Mode=OneWay}"
-                          Command="{Binding ShowToolsViewCommand}" />
-            <ToggleButton Content="卸载残留清理" Style="{StaticResource Chip}"
-                          IsChecked="{Binding ShowUninstallCenter, Mode=OneWay}"
-                          Command="{Binding ShowUninstallCenterCommand}" />
-        </StackPanel>
-
-        <!-- 子视图 1：已安装应用 -->
-        <Grid Grid.Row="2" Visibility="{Binding ShowInstalledApps, Converter={StaticResource BoolToVis}}">
+    <UserControl.Resources>
+        <DataTemplate x:Key="InstalledAppsTemplate">
+        <Grid>
             <Grid.RowDefinitions>
                 <RowDefinition Height="Auto" />
                 <RowDefinition Height="Auto" />
@@ -62,7 +41,7 @@
 
                 <Grid Grid.Column="1" Margin="0,0,12,0">
                     <TextBox Style="{StaticResource SearchBox}"
-                             Text="{Binding SearchText, UpdateSourceTrigger=PropertyChanged}"
+                             Text="{Binding SearchText, UpdateSourceTrigger=PropertyChanged, Delay=180}"
                              ToolTip="按软件名称、发布者、包名或安装路径搜索" />
                     <TextBlock Text="搜索软件名称 / 发布者 / 安装路径…" Margin="12,0,0,0"
                                VerticalAlignment="Center" IsHitTestVisible="False"
@@ -230,9 +209,9 @@
                 </Grid>
             </Border>
         </Grid>
-
-        <!-- 子视图 2：常用运行库体检与安装 -->
-        <Grid Grid.Row="2" Visibility="{Binding ShowRuntimes, Converter={StaticResource BoolToVis}}">
+        </DataTemplate>
+        <DataTemplate x:Key="RuntimesTemplate">
+        <Grid>
             <Grid.RowDefinitions>
                 <RowDefinition Height="Auto" />
                 <RowDefinition Height="Auto" />
@@ -253,7 +232,7 @@
 
                 <Grid Grid.Column="1" Margin="0,0,12,0">
                     <TextBox Style="{StaticResource SearchBox}"
-                             Text="{Binding RuntimeSearchText, UpdateSourceTrigger=PropertyChanged}"
+                             Text="{Binding RuntimeSearchText, UpdateSourceTrigger=PropertyChanged, Delay=180}"
                              ToolTip="按运行库名称、分类、架构或用途搜索" />
                     <TextBlock Text="搜索 VC++ / .NET / DirectX / WebView2…" Margin="12,0,0,0"
                                VerticalAlignment="Center" IsHitTestVisible="False"
@@ -359,9 +338,9 @@
                 </Grid>
             </Border>
         </Grid>
-
-        <!-- 子视图 3：常用系统工具库 -->
-        <Grid Grid.Row="2" Visibility="{Binding ShowTools, Converter={StaticResource BoolToVis}}">
+        </DataTemplate>
+        <DataTemplate x:Key="ToolsTemplate">
+        <Grid>
             <Grid.RowDefinitions>
                 <RowDefinition Height="Auto" />
                 <RowDefinition Height="Auto" />
@@ -384,7 +363,7 @@
 
                 <Grid Grid.Column="1" Margin="0,0,12,0">
                     <TextBox Style="{StaticResource SearchBox}"
-                             Text="{Binding ToolSearchText, UpdateSourceTrigger=PropertyChanged}"
+                             Text="{Binding ToolSearchText, UpdateSourceTrigger=PropertyChanged, Delay=180}"
                              ToolTip="按工具名称、分类、Winget ID 或用途搜索" />
                     <TextBlock Text="搜索 PowerToys / Everything / WizTree / 7-Zip / CPU-Z…" Margin="12,0,0,0"
                                VerticalAlignment="Center" IsHitTestVisible="False"
@@ -500,13 +479,60 @@
                 </Grid>
             </Border>
         </Grid>
-        <!-- 子视图 4：卸载残留清理（拖入文件夹 / 快捷方式 → 识别 → 扫残留 → 清理）
-             Visibility 必须在外面这层容器上求值：一旦同一个元素上再写 DataContext，
-             {Binding ShowUninstallCenter} 就会跑去子 ViewModel 上找，属性不存在 →
-             绑定失败 → BoolToVis 拿到 UnsetValue → 子视图永远显示，叠在应用列表上面。 -->
-        <Grid Grid.Row="2" Visibility="{Binding ShowUninstallCenter, Converter={StaticResource BoolToVis}}">
+        </DataTemplate>
+        <DataTemplate x:Key="UninstallTemplate">
+        <Grid>
             <local:UninstallCenterView DataContext="{Binding UninstallCenter}" />
         </Grid>
+        </DataTemplate>
+        <DataTemplate x:Key="NpmTemplate">
+            <local:NpmView DataContext="{Binding Npm}" />
+        </DataTemplate>
+    </UserControl.Resources>
+
+    <Grid Margin="24,16,24,16">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="*" />
+        </Grid.RowDefinitions>
+
+        <StackPanel Grid.Row="0" Margin="0,0,0,10">
+        <WrapPanel>
+            <ToggleButton Content="已安装应用" Style="{StaticResource Chip}" Margin="0,0,6,0"
+                          IsChecked="{Binding ShowInstalledApps, Mode=OneWay}"
+                          Command="{Binding ShowAppsViewCommand}" />
+            <ToggleButton Content="常用运行库体检与安装" Style="{StaticResource Chip}" Margin="0,0,6,0"
+                          IsChecked="{Binding ShowRuntimes, Mode=OneWay}"
+                          Command="{Binding ShowRuntimesViewCommand}" />
+            <ToggleButton Content="常用系统工具库" Style="{StaticResource Chip}" Margin="0,0,6,0"
+                          IsChecked="{Binding ShowTools, Mode=OneWay}"
+                          Command="{Binding ShowToolsViewCommand}" />
+            <ToggleButton Content="npm 全局包" Style="{StaticResource Chip}" Margin="0,0,6,0"
+                          IsChecked="{Binding ShowNpm, Mode=OneWay}"
+                          Command="{Binding ShowNpmViewCommand}" />
+            <ToggleButton Content="卸载残留清理" Style="{StaticResource Chip}"
+                          IsChecked="{Binding ShowUninstallCenter, Mode=OneWay}"
+                          Command="{Binding ShowUninstallCenterCommand}" />
+        </WrapPanel>
+        <TextBlock Text="{Binding CacheText}" Foreground="{DynamicResource Brush.TextMuted}" FontSize="12" Margin="0,8,0,0" />
+        </StackPanel>
+
+        <ContentControl Grid.Row="2" Content="{Binding}" HorizontalContentAlignment="Stretch" VerticalContentAlignment="Stretch">
+            <ContentControl.Style>
+                <Style TargetType="ContentControl">
+                    <Setter Property="ContentTemplate" Value="{StaticResource InstalledAppsTemplate}" />
+                    <Style.Triggers>
+                        <DataTrigger Binding="{Binding SubView}" Value="runtimes"><Setter Property="ContentTemplate" Value="{StaticResource RuntimesTemplate}" /></DataTrigger>
+                        <DataTrigger Binding="{Binding SubView}" Value="tools"><Setter Property="ContentTemplate" Value="{StaticResource ToolsTemplate}" /></DataTrigger>
+                        <DataTrigger Binding="{Binding SubView}" Value="uninstall"><Setter Property="ContentTemplate" Value="{StaticResource UninstallTemplate}" /></DataTrigger>
+                        <DataTrigger Binding="{Binding SubView}" Value="npm"><Setter Property="ContentTemplate" Value="{StaticResource NpmTemplate}" /></DataTrigger>
+                    </Style.Triggers>
+                </Style>
+            </ContentControl.Style>
+        </ContentControl>
+
+        <!-- 仅创建当前子视图，数据由所属 ViewModel 在本次会话中复用。 -->
 
         <!-- 页面级错误条：失败时统一展示，替代原先只靠底部状态栏 -->
         <Border Grid.Row="1" Style="{StaticResource ErrorBar}" Margin="0,0,0,10"

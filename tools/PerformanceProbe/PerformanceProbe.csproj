@@ -1,0 +1,20 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net10.0-windows</TargetFramework>
+    <UseWPF>true</UseWPF>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <EnableDefaultApplicationDefinition>false</EnableDefaultApplicationDefinition>
+    <WinKitAssemblyDir Condition="'$(WinKitAssemblyDir)' == ''">$(MSBuildThisFileDirectory)..\..\src\WinKit\bin\Release\net10.0-windows</WinKitAssemblyDir>
+  </PropertyGroup>
+  <ItemGroup>
+    <Reference Include="WinKit">
+      <HintPath>$(WinKitAssemblyDir)\WinKit.dll</HintPath>
+      <Private>true</Private>
+    </Reference>
+  </ItemGroup>
+  <Target Name="RequireWinKitAssembly" BeforeTargets="ResolveReferences">
+    <Error Condition="!Exists('$(WinKitAssemblyDir)\WinKit.dll')" Text="WinKitAssemblyDir must contain an already built WinKit.dll; this probe never builds the main project." />
+  </Target>
+</Project>

@@ -43,11 +43,12 @@ try {
         # Test the actual delivery name. Motion smoke does not treat this EXE as the canonical updater asset.
         $variant.Staged = Join-Path $scratch $variant.FileName
         [IO.File]::Move($files[0].FullName, $variant.Staged)
+        & (Join-Path $PSScriptRoot 'tools/StartupProbe/Set-ArtifactIntegrity.ps1') -ExecutablePath $variant.Staged
+        $startupReport = Join-Path $output "$($variant.Name)-startup.json"
+        & (Join-Path $PSScriptRoot 'tools/StartupProbe/Invoke-StartupProbe.ps1') -ExecutablePath $variant.Staged -ExpectedVersion $version -ReportPath $startupReport
+        if ($LASTEXITCODE -ne 0) { throw "Ordinary startup for $($variant.Name) failed." }
         $smoke = Join-Path $scratch "$($variant.Name)-smoke"
-        $environment = @{
-            DOTNET_BUNDLE_EXTRACT_BASE_DIR = (Join-Path $scratch 'bundle')
-            DOTNET_DISABLE_GUI_ERRORS = '1'
-        }
+        $environment = @{ DOTNET_DISABLE_GUI_ERRORS = '1' }
         if ($variant.SelfContained -eq 'true') {
             # If the supposedly self-contained app consults a machine runtime, the empty root prevents fallback.
             $emptyRuntime = Join-Path $scratch 'empty-dotnet'

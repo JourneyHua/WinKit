@@ -4,6 +4,52 @@
              FontFamily="Microsoft YaHei UI, Segoe UI">
 
 
+    <UserControl.Resources>
+        <DataTemplate x:Key="DuplicateFilesTemplate">
+            <ListBox ItemsSource="{Binding Files}" MaxHeight="360" BorderThickness="0"
+                     Background="Transparent" Padding="0"
+                     ScrollViewer.VerticalScrollBarVisibility="Auto"
+                     ScrollViewer.HorizontalScrollBarVisibility="Disabled"
+                     ScrollViewer.CanContentScroll="True"
+                     VirtualizingPanel.IsVirtualizing="True"
+                     VirtualizingPanel.VirtualizationMode="Recycling">
+                <ListBox.ItemContainerStyle>
+                    <Style TargetType="ListBoxItem">
+                        <Setter Property="HorizontalContentAlignment" Value="Stretch" />
+                        <Setter Property="Padding" Value="0" />
+                        <Setter Property="Focusable" Value="False" />
+                    </Style>
+                </ListBox.ItemContainerStyle>
+                <ListBox.ItemTemplate>
+                    <DataTemplate>
+                        <Border BorderBrush="{DynamicResource Brush.Border}" BorderThickness="0,0,0,1"
+                                Padding="0,6">
+                            <Grid>
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="*" />
+                                    <ColumnDefinition Width="Auto" />
+                                </Grid.ColumnDefinitions>
+                                <StackPanel Grid.Column="0">
+                                    <TextBlock Text="{Binding FullPath}" Style="{StaticResource CellText}"
+                                               ToolTip="{Binding FullPath}" />
+                                    <TextBlock Text="{Binding ModifiedText}" Style="{StaticResource CellMuted}" />
+                                </StackPanel>
+                                <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Center">
+                                    <Button Content="定位" Style="{StaticResource BtnSmall}" Margin="0,0,6,0"
+                                            Command="{Binding DataContext.OpenFileFolderCommand, RelativeSource={RelativeSource AncestorType=UserControl}}"
+                                            CommandParameter="{Binding}" />
+                                    <Button Content="删除这份" Style="{StaticResource BtnSmall}"
+                                            Command="{Binding DataContext.DeleteFileCommand, RelativeSource={RelativeSource AncestorType=UserControl}}"
+                                            CommandParameter="{Binding}" />
+                                </StackPanel>
+                            </Grid>
+                        </Border>
+                    </DataTemplate>
+                </ListBox.ItemTemplate>
+            </ListBox>
+        </DataTemplate>
+    </UserControl.Resources>
+
     <Grid Margin="24,16,24,16">
         <Grid.RowDefinitions>
             <RowDefinition Height="Auto" />
@@ -42,6 +88,8 @@
                                 Command="{Binding ClearRootsCommand}" />
                         <Button Content="开始扫描" Style="{StaticResource BtnPrimary}" Margin="0,0,8,0"
                                 Command="{Binding ScanCommand}" />
+                        <Button Content="清空结果" Style="{StaticResource BtnSmall}" Margin="0,0,8,0"
+                                Command="{Binding ClearResultsCommand}" />
                         <Button Content="取消" Style="{StaticResource BtnSmall}"
                                 Command="{Binding CancelCommand}" />
                     </StackPanel>
@@ -86,18 +134,33 @@
         <TextBlock Grid.Row="2" Style="{StaticResource Muted}" Margin="0,0,0,8"
                    Text="只有「大小 → 头部 64KB → 全文件 SHA-256」三级校验都相同的文件才会被列为重复。清理一律移入回收站，可还原。" />
 
-        <ScrollViewer Grid.Row="3" VerticalScrollBarVisibility="Auto">
-            <ItemsControl ItemsSource="{Binding Groups}">
-                <ItemsControl.ItemTemplate>
-                    <DataTemplate>
-                        <Border Style="{StaticResource Card}" Margin="0,0,0,10" Padding="14,12">
-                            <StackPanel>
+        <ListBox Grid.Row="3" ItemsSource="{Binding Groups}" BorderThickness="0"
+                 Background="Transparent" Padding="0"
+                 ScrollViewer.VerticalScrollBarVisibility="Auto"
+                 ScrollViewer.HorizontalScrollBarVisibility="Disabled"
+                 ScrollViewer.CanContentScroll="True"
+                 VirtualizingPanel.IsVirtualizing="True"
+                 VirtualizingPanel.VirtualizationMode="Recycling">
+            <ListBox.ItemContainerStyle>
+                <Style TargetType="ListBoxItem">
+                    <Setter Property="HorizontalContentAlignment" Value="Stretch" />
+                    <Setter Property="Padding" Value="0" />
+                    <Setter Property="Margin" Value="0" />
+                    <Setter Property="BorderThickness" Value="0" />
+                    <Setter Property="Background" Value="Transparent" />
+                    <Setter Property="Focusable" Value="False" />
+                </Style>
+            </ListBox.ItemContainerStyle>
+            <ListBox.ItemTemplate>
+                <DataTemplate>
+                    <Border Style="{StaticResource Card}" Margin="0,0,0,10" Padding="14,12">
+                        <Expander IsExpanded="{Binding IsExpanded, Mode=TwoWay}">
+                            <Expander.Header>
                                 <Grid Margin="0,0,0,8">
                                     <Grid.ColumnDefinitions>
                                         <ColumnDefinition Width="*" />
                                         <ColumnDefinition Width="Auto" />
                                     </Grid.ColumnDefinitions>
-
                                     <StackPanel Grid.Column="0" Orientation="Horizontal" VerticalAlignment="Center">
                                         <TextBlock Text="{Binding SizeText}" Style="{StaticResource H2}" />
                                         <TextBlock Text="{Binding CountText}" Style="{StaticResource Muted}"
@@ -106,46 +169,28 @@
                                                    Style="{StaticResource Muted}" VerticalAlignment="Center"
                                                    Margin="10,0,0,0" />
                                     </StackPanel>
-
                                     <Button Grid.Column="1" Content="保留首份，其余移入回收站"
                                             Style="{StaticResource BtnDanger}"
                                             Command="{Binding DataContext.DeleteGroupDuplicatesCommand, RelativeSource={RelativeSource AncestorType=UserControl}}"
                                             CommandParameter="{Binding}" />
                                 </Grid>
-
-                                <ItemsControl ItemsSource="{Binding Files}">
-                                    <ItemsControl.ItemTemplate>
-                                        <DataTemplate>
-                                            <Border BorderBrush="{DynamicResource Brush.Border}" BorderThickness="0,0,0,1"
-                                                    Padding="0,6">
-                                                <Grid>
-                                                    <Grid.ColumnDefinitions>
-                                                        <ColumnDefinition Width="*" />
-                                                        <ColumnDefinition Width="Auto" />
-                                                    </Grid.ColumnDefinitions>
-                                                    <StackPanel Grid.Column="0">
-                                                        <TextBlock Text="{Binding FullPath}" Style="{StaticResource CellText}"
-                                                                   ToolTip="{Binding FullPath}" />
-                                                        <TextBlock Text="{Binding ModifiedText}" Style="{StaticResource CellMuted}" />
-                                                    </StackPanel>
-                                                    <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Center">
-                                                        <Button Content="定位" Style="{StaticResource BtnSmall}" Margin="0,0,6,0"
-                                                                Command="{Binding DataContext.OpenFileFolderCommand, RelativeSource={RelativeSource AncestorType=UserControl}}"
-                                                                CommandParameter="{Binding}" />
-                                                        <Button Content="删除这份" Style="{StaticResource BtnSmall}"
-                                                                Command="{Binding DataContext.DeleteFileCommand, RelativeSource={RelativeSource AncestorType=UserControl}}"
-                                                                CommandParameter="{Binding}" />
-                                                    </StackPanel>
-                                                </Grid>
-                                            </Border>
-                                        </DataTemplate>
-                                    </ItemsControl.ItemTemplate>
-                                </ItemsControl>
-                            </StackPanel>
-                        </Border>
-                    </DataTemplate>
-                </ItemsControl.ItemTemplate>
-            </ItemsControl>
-        </ScrollViewer>
+                            </Expander.Header>
+                            <ContentControl Content="{Binding}">
+                                <ContentControl.Style>
+                                    <Style TargetType="ContentControl">
+                                        <Setter Property="ContentTemplate" Value="{x:Null}" />
+                                        <Style.Triggers>
+                                            <DataTrigger Binding="{Binding IsExpanded}" Value="True">
+                                                <Setter Property="ContentTemplate" Value="{StaticResource DuplicateFilesTemplate}" />
+                                            </DataTrigger>
+                                        </Style.Triggers>
+                                    </Style>
+                                </ContentControl.Style>
+                            </ContentControl>
+                        </Expander>
+                    </Border>
+                </DataTemplate>
+            </ListBox.ItemTemplate>
+        </ListBox>
     </Grid>
 </UserControl>

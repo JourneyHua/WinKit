@@ -39,6 +39,8 @@ public sealed class ScoopService
         @"C:\ProgramData\scoop"
     };
 
+    private readonly Func<string, string> _readManifestText;
+
     public string? Root { get; }
     public bool IsInstalled => Root is not null;
 
@@ -47,8 +49,11 @@ public sealed class ScoopService
     }
 
     /// <summary>传入 roots 便于自测用临时目录；正常调用走默认的 user / global 两个位置。</summary>
-    public ScoopService(IEnumerable<string>? roots)
+    public ScoopService(IEnumerable<string>? roots) : this(roots, File.ReadAllText) { }
+
+    internal ScoopService(IEnumerable<string>? roots, Func<string, string> readManifestText)
     {
+        _readManifestText = readManifestText;
         var candidates = roots?.ToArray() ?? ScoopRoots;
 
         foreach (var candidate in candidates)
@@ -70,7 +75,8 @@ public sealed class ScoopService
         var appsDir = Path.Combine(Root, "apps");
         if (!Directory.Exists(appsDir)) return packages;
 
-        var latest = LoadBucketVersions();
+        var bucketsDir = Path.Combine(Root, "buckets");
+        var bucketDirs = Directory.Exists(bucketsDir) ? Directory.GetDirectories(bucketsDir) : Array.Empty<string>();
 
         foreach (var appDir in Directory.GetDirectories(appsDir))
         {
@@ -84,7 +90,7 @@ public sealed class ScoopService
             if (string.IsNullOrWhiteSpace(version)) version = "版本未知";
 
             // bucket 清单里找不到时按当前版本处理（不虚报可升级）
-            latest.TryGetValue(name, out var info);
+            var info = FindLatestVersion(name, bucket, bucketDirs);
             var latestVersion = info.Version ?? version;
             var bucketName = !string.IsNullOrWhiteSpace(info.Bucket) ? info.Bucket! : bucket;
 
@@ -109,7 +115,7 @@ public sealed class ScoopService
         => Root is not null &&
            Root.StartsWith(@"C:\ProgramData", StringComparison.OrdinalIgnoreCase);
 
-    private static (string Version, string Bucket) ReadManifest(string currentDir, string name)
+    private (string Version, string Bucket) ReadManifest(string currentDir, string name)
     {
         // 两种文件名并存：老包是 manifest.json，新包（7zip/git/go/nodejs 等）是 scoop-manifest.json。
         // 只认前者会让十几个包的版本读成空，进而误报“可升级到空版本”。
@@ -120,7 +126,7 @@ public sealed class ScoopService
 
             try
             {
-                using var doc = JsonDocument.Parse(File.ReadAllText(path));
+                using var doc = JsonDocument.Parse(_readManifestText(path));
                 var root = doc.RootElement;
 
                 var version = root.TryGetProperty("version", out var v) ? v.GetString() ?? "" : "";
@@ -142,14 +148,14 @@ public sealed class ScoopService
     }
 
     /// <summary>scoop-install.json 记录了真正来源的 bucket（比清单里的 bucket 字段可靠）。</summary>
-    private static string ReadInstallBucket(string currentDir)
+    private string ReadInstallBucket(string currentDir)
     {
         var installFile = Path.Combine(currentDir, "scoop-install.json");
         if (!File.Exists(installFile)) return "";
 
         try
         {
-            using var doc = JsonDocument.Parse(File.ReadAllText(installFile));
+            using var doc = JsonDocument.Parse(_readManifestText(installFile));
             return doc.RootElement.TryGetProperty("bucket", out var b) ? b.GetString() ?? "" : "";
         }
         catch (Exception)
@@ -158,40 +164,34 @@ public sealed class ScoopService
         }
     }
 
-    /// <summary>扫描所有 bucket 的清单文件，得到 name → 最新版本。</summary>
-    private Dictionary<string, (string? Version, string? Bucket)> LoadBucketVersions()
+    /// <summary>只读已安装包的同名清单；已知来源时不从别的 bucket 借用版本。</summary>
+    private (string? Version, string? Bucket) FindLatestVersion(
+        string name, string bucket, IEnumerable<string> bucketDirs)
     {
-        var map = new Dictionary<string, (string? Version, string? Bucket)>(StringComparer.OrdinalIgnoreCase);
-        if (Root is null) return map;
+        if (Root is null) return (null, null);
+        if (!string.IsNullOrWhiteSpace(bucket)
+            && (bucket is "." or ".." || bucket.IndexOfAny(Path.GetInvalidFileNameChars()) >= 0))
+            return (null, null);
 
-        var bucketsDir = Path.Combine(Root, "buckets");
-        if (!Directory.Exists(bucketsDir)) return map;
-
-        foreach (var bucketDir in Directory.GetDirectories(bucketsDir))
+        var candidates = string.IsNullOrWhiteSpace(bucket)
+            ? bucketDirs
+            : new[] { Path.Combine(Root, "buckets", bucket) };
+        foreach (var bucketDir in candidates)
         {
-            var bucketName = Path.GetFileName(bucketDir);
-            var manifestDir = Path.Combine(bucketDir, "bucket");
-            if (!Directory.Exists(manifestDir)) continue;
-
-            foreach (var file in Directory.GetFiles(manifestDir, "*.json"))
+            var file = Path.Combine(bucketDir, "bucket", name + ".json");
+            if (!File.Exists(file)) continue;
+            try
             {
-                var name = Path.GetFileNameWithoutExtension(file);
-                if (map.ContainsKey(name)) continue;
-
-                try
-                {
-                    using var doc = JsonDocument.Parse(File.ReadAllText(file));
-                    var version = doc.RootElement.TryGetProperty("version", out var v) ? v.GetString() : null;
-                    map[name] = (version, bucketName);
-                }
-                catch (Exception)
-                {
-                    // 损坏的清单跳过
-                }
+                using var doc = JsonDocument.Parse(_readManifestText(file));
+                var version = doc.RootElement.TryGetProperty("version", out var value) ? value.GetString() : null;
+                if (!string.IsNullOrWhiteSpace(version)) return (version, Path.GetFileName(bucketDir));
+            }
+            catch (Exception)
+            {
+                // 损坏的目标清单不应妨碍枚举其它已装包。
             }
         }
-
-        return map;
+        return (null, null);
     }
 
     /// <summary>执行 scoop 命令（update/uninstall/cleanup）。需要网络，且 scoop 必须在 PATH 里。</summary>

@@ -616,6 +616,13 @@ public partial class App : Application
 
                 if (vm.CurrentViewModel is AppManagerViewModel appVm)
                 {
+                    WaitWhileBusy(() => appVm.IsLoading, 60000);
+                    if (appVm.IsLoading) throw new TimeoutException("应用列表后台读取超时");
+                    if (!vm.IsNavigationEnabled) throw new InvalidOperationException("只读应用列表不应锁定全局导航");
+                    if (appVm.Runtimes.Count != 0 || appVm.Tools.Count != 0)
+                        throw new InvalidOperationException("应用列表首次进入提前检测了隐藏运行库或工具页");
+                    var appCacheSample = appVm.Apps.FirstOrDefault();
+                    log.AppendLine($"  apps-lazy: runtimes={appVm.Runtimes.Count} tools={appVm.Tools.Count} navigation={vm.IsNavigationEnabled}");
                     // 默认停在「已安装应用」时，卸载清理面板必须是隐藏的
                     // （v1.8.0 的 bug 就是它一直可见，叠在应用列表上面）
                     Pump();
@@ -626,6 +633,8 @@ public partial class App : Application
                     log.AppendLine("  columns-apps: " + ColumnLayoutCheck(window));
 
                     appVm.ShowRuntimes = true;
+                    WaitWhileBusy(() => appVm.IsLoading, 60000);
+                    if (appVm.IsLoading) throw new TimeoutException("运行库后台检测超时");
                     Pump();
                     UpdateLayoutSafe(window);
                     Pump();
@@ -633,12 +642,25 @@ public partial class App : Application
                     log.AppendLine("  columns-runtimes: " + ColumnLayoutCheck(window));
 
                     appVm.ShowTools = true;
+                    WaitWhileBusy(() => appVm.IsLoading, 60000);
+                    if (appVm.IsLoading) throw new TimeoutException("系统工具后台检测超时");
                     Pump();
                     UpdateLayoutSafe(window);
                     Pump();
                     Capture(window, outputDir, "apps-tools", log);
                     log.AppendLine("  columns-tools: " + ColumnLayoutCheck(window));
                     appVm.ShowTools = false;
+                    if (appCacheSample is not null && !appVm.Apps.Contains(appCacheSample))
+                        throw new InvalidOperationException("切换已缓存子页时重复构建了应用列表");
+                    appVm.SubView = "npm";
+                    WaitWhileBusy(() => appVm.Npm.IsLoading, 90000);
+                    if (appVm.Npm.IsLoading) throw new TimeoutException("npm 本地列表读取超时");
+                    if (!vm.IsNavigationEnabled) throw new InvalidOperationException("npm 只读列表不应锁定全局导航");
+                    Pump();
+                    UpdateLayoutSafe(window);
+                    Capture(window, outputDir, "apps-npm", log);
+                    log.AppendLine($"  npm-readonly: loadedAt={appVm.Npm.LoadedAt:O} loading={appVm.Npm.IsLoading} mutating={appVm.Npm.IsMutating} navigation={vm.IsNavigationEnabled}");
+                    appVm.SubView = "apps";
 
                     // 卸载残留清理：喂一个真实安装目录，走完整的识别链路
                     var smokeTarget = SmokeUninstallTarget(outputDir);
@@ -694,7 +716,9 @@ public partial class App : Application
                 if (vm.CurrentViewModel is NavPaneViewModel navPaneVm)
                 {
                     navPaneVm.ShowTaskbar = true;
-                    Pump(1500);
+                    WaitWhileBusy(() => navPaneVm.Taskbar.IsLoading, 60000);
+                    if (navPaneVm.Taskbar.IsLoading) throw new TimeoutException("任务栏后台读取超时");
+                    Pump();
                     UpdateLayoutSafe(window);
                     Pump();
                     Capture(window, outputDir, "navpane-taskbar", log);
@@ -906,6 +930,15 @@ public partial class App : Application
         if (!ReferenceEquals(vm.SelectedNav, nav)) throw new InvalidOperationException($"未能进入 {nav.Key}");
         WaitWhileBusy(() => vm.IsGlobalBusy, 60000);
         if (vm.IsGlobalBusy) throw new TimeoutException($"{nav.Key} 加载未完成");
+        Func<bool> isReading = vm.CurrentViewModel switch
+        {
+            ContextMenuViewModel menu => () => menu.IsLoading,
+            NavPaneViewModel pane => () => pane.IsLoading,
+            AppManagerViewModel apps => () => apps.IsLoading,
+            _ => () => false
+        };
+        WaitWhileBusy(isReading, 60000);
+        if (isReading()) throw new TimeoutException($"{nav.Key} 后台读取超时");
         Pump();
     }
 

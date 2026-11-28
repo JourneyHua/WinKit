@@ -103,8 +103,12 @@ public sealed class StubbornNodeService
         // 只有“同一名字出现多个 GUID”才说明它在自我重建
         var result = byName.Values.Where(g => g.Guids.Count >= 2).ToList();
 
+        // 一轮刷新只取一次进程路径；无可匹配目录时连快照也不取。
+        var processes = result.Any(g => !string.IsNullOrWhiteSpace(g.OwnerFolder))
+            ? ReadProcessSnapshot()
+            : [];
         foreach (var group in result)
-            group.Processes = FindProcesses(group.OwnerFolder);
+            group.Processes = FindProcesses(group.OwnerFolder, processes);
 
         return result.OrderByDescending(g => g.GuidCount).ToList();
     }
@@ -133,40 +137,39 @@ public sealed class StubbornNodeService
         return "";
     }
 
-    private static List<string> FindProcesses(string folder)
+    private static List<(string Path, string Label)> ReadProcessSnapshot()
     {
-        var result = new List<string>();
-        if (string.IsNullOrWhiteSpace(folder)) return result;
-
-        var root = folder.TrimEnd('\\');
+        var result = new List<(string, string)>();
         foreach (var process in Process.GetProcesses())
         {
             try
             {
                 var file = process.MainModule?.FileName;
-                if (string.IsNullOrWhiteSpace(file)) continue;
-                if (!file.StartsWith(root, StringComparison.OrdinalIgnoreCase)) continue;
-
-                var label = $"{process.ProcessName}.exe ({process.Id})";
-                if (!result.Contains(label)) result.Add(label);
+                if (!string.IsNullOrWhiteSpace(file))
+                    result.Add((file, $"{process.ProcessName}.exe ({process.Id})"));
             }
             catch (Exception)
             {
-                // 受保护进程读不到路径，跳过
+                // 受保护进程读不到路径，跳过。
             }
-            finally
-            {
-                process.Dispose();
-            }
+            finally { process.Dispose(); }
         }
+        return result;
+    }
 
-        // 重建节点的通常是带 cloud/svr/spatial 字样的后台服务，主程序（wps.exe 等）排后面
-        return result
+    private static List<string> FindProcesses(string folder, IReadOnlyList<(string Path, string Label)> processes)
+    {
+        if (string.IsNullOrWhiteSpace(folder)) return [];
+        var root = folder.TrimEnd('\\') + "\\";
+        // 目录边界避免 C:\App 误命中 C:\AppOther；后台服务排在主程序前。
+        return processes.Where(p => p.Path.StartsWith(root, StringComparison.OrdinalIgnoreCase))
+            .Select(p => p.Label).Distinct(StringComparer.OrdinalIgnoreCase)
             .OrderByDescending(n => n.Contains("cloudsvr", StringComparison.OrdinalIgnoreCase))
             .ThenByDescending(n => n.Contains("svr", StringComparison.OrdinalIgnoreCase))
             .ThenBy(n => n, StringComparer.OrdinalIgnoreCase)
             .ToList();
     }
+
 
     /// <summary>按 "name.exe (1234)" 结束单个进程；返回是否成功。</summary>
     public bool StopProcess(string label)
