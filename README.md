@@ -365,11 +365,11 @@ dotnet publish src/WinKit/WinKit.csproj -c Release -r win-x64 --self-contained t
 .\build.cmd
 
 # 界面自检：用发布的单 EXE 渲染各模块，并短时打开窗口验证真实交互
-dist\WinKit-v1.14.0-win-x64.exe --smoke C:\temp\smoke
+dist\WinKit-v1.14.1-win-x64.exe --smoke C:\temp\smoke
 
 # 动效专项：真实 WPF 窗口、普通/减少动态效果、6000 行滚动、窄/宽和浅/深截图
 # motion.log 的帧间隔是 WPF 渲染回调，不是显示器实际呈现间隔。
-dist\WinKit-v1.14.0-win-x64.exe --motion-smoke C:\temp\smoke-motion
+dist\WinKit-v1.14.1-win-x64.exe --motion-smoke C:\temp\smoke-motion
 
 # 只读探测：枚举全部菜单项/节点/驱动器/快速访问，落一份报告
 dotnet run --project tools/Probe -- report.txt
@@ -401,13 +401,13 @@ WinKit.exe --maintain
 
 ### 无参数直接启动验收
 
-`build.cmd` 在最终命名的 EXE 上设置普通 Medium 完整性标签，再以默认环境、不带参数打开真实主窗口，验证导航可交互、连续稳定至少 3 秒并正常关闭。它不请求管理员权限，不修改 TEMP 或目录的权限；标签处理只针对本次指定的输出 EXE，并核对文件字节、DACL、所有者和组保持不变。
+`build.cmd` 在最终命名的 EXE 上设置普通 Medium 完整性标签，再以默认环境、不带参数打开真实主窗口，验证导航可交互、连续稳定至少 3 秒并正常关闭。它不请求管理员权限，不修改 TEMP 或目录的权限；标签处理只针对本次指定的输出 EXE，并核对文件字节、实际 DACL 规则、所有者和组保持不变。Windows 可能在设置标签时更新 `AutoInherited` 状态位；校验仅允许该位归一化，仍严格检查访问规则及继承保护等其余设置。
 
 某些构建工作区会让文件继承 Low 完整性标签；这样的 EXE 启动后进程也会降为 Low，无法向普通 Medium TEMP 解包，可能在进入托管代码前报 `Failure processing application bundle` / `Error code: 5`。旧的特殊 smoke 入口或自定义解包目录不能替代普通启动验收。使用裸 `dotnet publish` 时，请对最终交付副本执行以下步骤；复制到另一个继承 Low 的目录后也应重新检查。
 
 ```powershell
 powershell -NoProfile -ExecutionPolicy Bypass -File tools/StartupProbe/Set-ArtifactIntegrity.ps1 -ExecutablePath dist/publish/WinKit.exe
-powershell -NoProfile -ExecutionPolicy Bypass -File tools/StartupProbe/Invoke-StartupProbe.ps1 -ExecutablePath dist/publish/WinKit.exe -ExpectedVersion 1.14.0 -ReportPath dist/startup.json -RequireMediumIntegrity
+powershell -NoProfile -ExecutionPolicy Bypass -File tools/StartupProbe/Invoke-StartupProbe.ps1 -ExecutablePath dist/publish/WinKit.exe -ExpectedVersion 1.14.1 -ReportPath dist/startup.json -RequireMediumIntegrity
 ```
 
 `-RequireMediumIntegrity` 用于普通桌面本地验收；CI 记录实际身份和完整性，要求子进程与观察器保持一致。探针记录实际 EXE 路径、SHA-256、版本、进程身份、UI Automation 交互、标准错误和关闭结果，失败返回非零。详见 [普通启动探针](tools/StartupProbe/README.md)。

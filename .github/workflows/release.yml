@@ -63,6 +63,10 @@ jobs:
       # ---- 质量门槛 2：界面离屏渲染 + 每个模块的数据断言 ----
       # 主清单本身就是 asInvoker（见 src/WinKit/app.manifest 的注释），
       # 所以界面自检和发布用的是同一份权限模型，不再需要为 smoke 单独换清单。
+      - name: Artifact integrity label regression
+        shell: pwsh
+        run: ./tools/StartupProbe/Test-ArtifactIntegrity.ps1
+
       - name: Publish single EXE for smoke and release (asInvoker)
         shell: pwsh
         run: |

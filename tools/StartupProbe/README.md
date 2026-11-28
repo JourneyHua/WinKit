@@ -5,7 +5,7 @@
 在仓库根目录、可交互的 Windows 桌面中执行：
 
 ~~~powershell
-powershell.exe -NoProfile -ExecutionPolicy Bypass -File tools/StartupProbe/Invoke-StartupProbe.ps1 -ExecutablePath "dist/WinKit-v1.14.0-win-x64.exe" -ExpectedVersion 1.14.0 -RequireMediumIntegrity -ReportPath "dist/startup-probe/release-default.json"
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File tools/StartupProbe/Invoke-StartupProbe.ps1 -ExecutablePath "dist/WinKit-v1.14.1-win-x64.exe" -ExpectedVersion 1.14.1 -RequireMediumIntegrity -ReportPath "dist/startup-probe/release-default.json"
 ~~~
 
 将路径替换为真正准备交付的 EXE。不要用另一次构建、框架依赖 DLL 或已有的 WinKit 窗口替代。未指定报告位置时，脚本在仓库的 `dist/startup-probe/<unique-id>/report.json` 写入报告；具体路径会以 `STARTUP_PROBE_REPORT=...` 输出。帮助命令为 `-Help`。
@@ -25,7 +25,7 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File tools/StartupProbe/Invok
 
 JSON 包含 SHA-256、ProductVersion、FileVersion、继承的相关环境变量、观察器/子进程 token、窗口与导航检查结果、稳定时间、原生输出、十进制/十六进制退出码、正常关闭与失败清理结果。进程若过早退出而无法查询 token，对应字段可能为空；原生输出和退出码仍会保留。
 
-指定 `-ExpectedVersion 1.14.0` 时，ProductVersion 必须恰为 `1.14.0`，FileVersion 必须恰为 `1.14.0.0`。版本参数只接受规范的稳定版 `major.minor.patch`。未指定时只记录版本，不检查版本相等。
+指定 `-ExpectedVersion 1.14.1` 时，ProductVersion 必须恰为 `1.14.1`，FileVersion 必须恰为 `1.14.1.0`。版本参数只接受规范的稳定版 `major.minor.patch`。未指定时只记录版本，不检查版本相等。
 
 本地普通用户验收应在未提升的 Medium 桌面运行，并使用 `-RequireMediumIntegrity`。CI 若以 High 运行，可在不传此开关时检查同级启动，但这份报告只证明 High 环境启动；它不能代替普通用户的 Medium 验收。脚本会明确记录实际级别。
 
@@ -36,3 +36,11 @@ JSON 包含 SHA-256、ProductVersion、FileVersion、继承的相关环境变量
 把 `DOTNET_BUNDLE_EXTRACT_BASE_DIR` 改到可写的 Low 工作区，可以让该 EXE 启动，却掩盖了默认临时目录下的交付缺陷。发布前应核对最终 EXE 的完整性标签，并使用未覆写临时目录/解包路径的环境对同一个文件重新验收；构建与发布门槛应保证交付物具有预期的 Medium 标签。不要通过放宽用户临时目录权限来替代修正交付物。
 
 本脚本只观察，不修改 EXE 的完整性标签、DACL、临时目录权限、环境变量或用户 token。若调用者本身已设置解包路径或临时目录变量，脚本会如实继承并记录；这种结果应注明为诊断环境，不能作为默认环境普通启动通过的证据。
+
+`Set-ArtifactIntegrity.ps1` 只调整明确指定的输出 EXE 的标签，并核对 SHA-256、所有者、组、原始 DACL 规则字节与控制标志。Windows 设置标签时可能将 `DiscretionaryAclAutoInherited` 从未设置归一化为已设置；检查仅忽略这一状态位，访问规则、顺序、继承保护等实质变化仍视为失败。
+
+标签校验回归使用隔离文件夹具，可在 Windows PowerShell 5.1 或 PowerShell 7 下运行：
+
+~~~powershell
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File tools/StartupProbe/Test-ArtifactIntegrity.ps1
+~~~
