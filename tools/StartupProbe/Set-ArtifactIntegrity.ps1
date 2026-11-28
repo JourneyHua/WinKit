@@ -66,11 +66,51 @@ if ($artifact.PSIsContainer -or $artifact.Extension -ine '.exe' -or
 $beforeAccess = [Security.AccessControl.RawSecurityDescriptor]::new(
     (Get-Acl -LiteralPath $artifact.FullName).GetSecurityDescriptorBinaryForm(), 0)
 $beforeHash = (Get-FileHash -LiteralPath $artifact.FullName -Algorithm SHA256).Hash
-$icacls = Join-Path $env:SystemRoot 'System32/icacls.exe'
-& $icacls $artifact.FullName /setintegritylevel medium /Q
-if ($LASTEXITCODE -ne 0) {
-    throw 'Could not set the output EXE to ordinary Medium integrity. Use an ordinary Medium-integrity build session; no elevation is requested.'
+# Submit LABEL_SECURITY_INFORMATION only. The command-line label tool can also
+# reapply inherited DACL entries on some Windows builds; this API does not submit
+# owner, group, DACL, or audit-SACL changes. Keep the independent checks below.
+if (-not ('WinKit.ArtifactIntegrity.NativeLabel' -as [type])) {
+    Add-Type -TypeDefinition @'
+using System;
+using System.ComponentModel;
+using System.Runtime.InteropServices;
+namespace WinKit.ArtifactIntegrity {
+    public static class NativeLabel {
+        [DllImport("advapi32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
+        private static extern bool ConvertStringSecurityDescriptorToSecurityDescriptor(
+            string value, uint revision, out IntPtr descriptor, out uint size);
+        [DllImport("advapi32.dll", SetLastError = true)]
+        private static extern bool GetSecurityDescriptorSacl(
+            IntPtr descriptor, out bool present, out IntPtr sacl, out bool defaulted);
+        [DllImport("advapi32.dll", CharSet = CharSet.Unicode)]
+        private static extern uint SetNamedSecurityInfo(
+            string name, int objectType, uint securityInfo,
+            IntPtr owner, IntPtr group, IntPtr dacl, IntPtr sacl);
+        [DllImport("kernel32.dll")]
+        private static extern IntPtr LocalFree(IntPtr memory);
+        public static void SetMedium(string path) {
+            IntPtr descriptor;
+            uint size;
+            if (!ConvertStringSecurityDescriptorToSecurityDescriptor(
+                "S:(ML;;NW;;;ME)", 1, out descriptor, out size))
+                throw new Win32Exception(Marshal.GetLastWin32Error());
+            try {
+                bool present, defaulted;
+                IntPtr sacl;
+                if (!GetSecurityDescriptorSacl(descriptor, out present, out sacl, out defaulted))
+                    throw new Win32Exception(Marshal.GetLastWin32Error());
+                if (!present || sacl == IntPtr.Zero)
+                    throw new InvalidOperationException("Missing output integrity label.");
+                uint error = SetNamedSecurityInfo(path, 1, 0x10,
+                    IntPtr.Zero, IntPtr.Zero, IntPtr.Zero, sacl);
+                if (error != 0) throw new Win32Exception((int)error);
+            } finally { LocalFree(descriptor); }
+        }
+    }
 }
+'@
+}
+[WinKit.ArtifactIntegrity.NativeLabel]::SetMedium($artifact.FullName)
 $afterAccess = [Security.AccessControl.RawSecurityDescriptor]::new(
     (Get-Acl -LiteralPath $artifact.FullName).GetSecurityDescriptorBinaryForm(), 0)
 $afterHash = (Get-FileHash -LiteralPath $artifact.FullName -Algorithm SHA256).Hash
